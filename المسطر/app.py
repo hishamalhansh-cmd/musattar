@@ -7,7 +7,7 @@ import uuid
 import json
 import datetime
 import time
-import imghdr
+
 from flask import Flask, render_template_string, request, redirect, session, url_for, send_from_directory
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
