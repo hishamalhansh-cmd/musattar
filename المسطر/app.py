@@ -25,8 +25,8 @@ def env_flag(name, default=False):
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-SENDER_EMAIL = os.environ.get("MAIL_EMAIL")"
-SENDER_APP_PASSWORD = os.environ.get("MAIL_PASSWORD")"
+SENDER_EMAIL = os.environ.get("MAIL_EMAIL")
+SENDER_APP_PASSWORD = os.environ.get("MAIL_PASSWORD")
 MAIL_REQUIRED_FOR_REGISTER = True
 DEV_CONSOLE_OTP_FALLBACK = False
 OTP_EXPIRY_SECONDS = 10 * 60
