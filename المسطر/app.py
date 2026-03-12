@@ -41,14 +41,14 @@ app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = None  # no size limit
 app.config["PERMANENT_SESSION_LIFETIME"] = 60 * 30
 
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
-ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
-MAX_SINGLE_FILE_SIZE = 3 * 1024 * 1024
+ALLOWED_EXTENSIONS = None  # allow any file type
+MAX_SINGLE_FILE_SIZE = None  # no limit
 MAX_WORK_IMAGES = 10
 
 IRAQ_GOVERNORATES = [
@@ -222,17 +222,6 @@ def detect_real_image_type(file_obj):
 def validate_uploaded_image(file_obj):
     if not file_obj or file_obj.filename == "":
         return False, "لا يوجد ملف"
-
-    if not allowed_file(file_obj.filename):
-        return False, "نوع الملف غير مسموح"
-
-    if not file_size_ok(file_obj):
-        return False, "حجم الصورة أكبر من المسموح"
-
-    real_type = detect_real_image_type(file_obj)
-    if real_type not in ALLOWED_EXTENSIONS:
-        return False, "الملف المرفوع ليس صورة صحيحة"
-
     return True, ""
 
 
@@ -338,7 +327,7 @@ def build_whatsapp_link(phone):
 
 
 def allowed_file(filename):
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+    return True
 
 
 def save_uploaded_file(file_obj):
