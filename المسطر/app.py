@@ -41,14 +41,14 @@ app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = None  # unlimited upload size
 app.config["PERMANENT_SESSION_LIFETIME"] = 60 * 30
 
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
-ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
-MAX_SINGLE_FILE_SIZE = 3 * 1024 * 1024
+ALLOWED_EXTENSIONS = None  # allow any file extension
+MAX_SINGLE_FILE_SIZE = None  # unlimited single file size
 MAX_WORK_IMAGES = 10
 
 IRAQ_GOVERNORATES = [
@@ -195,14 +195,7 @@ def valid_password(password):
 
 
 def file_size_ok(file_obj):
-    try:
-        current_pos = file_obj.stream.tell()
-        file_obj.stream.seek(0, os.SEEK_END)
-        size = file_obj.stream.tell()
-        file_obj.stream.seek(current_pos)
-        return size <= MAX_SINGLE_FILE_SIZE
-    except Exception:
-        return False
+    return True
 
 
 def detect_real_image_type(file_obj):
@@ -220,20 +213,11 @@ def detect_real_image_type(file_obj):
 
 
 def validate_uploaded_image(file_obj):
+    # قبول أي ملف بدون تحقق
     if not file_obj or file_obj.filename == "":
         return False, "لا يوجد ملف"
-
-    if not allowed_file(file_obj.filename):
-        return False, "نوع الملف غير مسموح"
-
-    if not file_size_ok(file_obj):
-        return False, "حجم الصورة أكبر من المسموح"
-
-    real_type = detect_real_image_type(file_obj)
-    if real_type not in ALLOWED_EXTENSIONS:
-        return False, "الملف المرفوع ليس صورة صحيحة"
-
     return True, ""
+
 
 
 def get_main_group_by_specialty(specialty):
@@ -338,7 +322,7 @@ def build_whatsapp_link(phone):
 
 
 def allowed_file(filename):
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+    return True
 
 
 def save_uploaded_file(file_obj):
@@ -556,7 +540,7 @@ STYLE = """
 <title>المسطر</title>
 <style>
 :root{
-    --primary:#f2c400;
+    --primary:#ffd700;
     --bg:#f8f3d8;
     --panel:#fff9df;
     --card:#ffffff;
@@ -568,7 +552,7 @@ STYLE = """
 }
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
-body{margin:0;padding:0;font-family:Tahoma,Arial,sans-serif;background:linear-gradient(180deg,#efc300 0%, #f4de72 20%, #f8f3d8 100%);color:var(--text)}
+body{margin:0;padding:0;font-family:Tahoma,Arial,sans-serif;background:linear-gradient(160deg,#0f0f0f,#1a1a1a); color:#fff;color:var(--text)}
 a{text-decoration:none;color:inherit}
 .container{width:min(94%,1120px);margin:24px auto;background:rgba(255,249,223,.88);backdrop-filter:blur(8px);border:1px solid rgba(234,213,106,.9);border-radius:30px;padding:22px;box-shadow:var(--shadow)}
 .narrow-container{width:min(94%,620px)}
