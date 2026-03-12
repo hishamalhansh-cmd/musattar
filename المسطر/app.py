@@ -7,7 +7,6 @@ import uuid
 import json
 import datetime
 import time
-import imghdr
 
 from flask import Flask, render_template_string, request, redirect, session, url_for, send_from_directory
 from email.mime.text import MIMEText
@@ -215,21 +214,24 @@ def detect_real_image_type(file_obj):
 
 
 def validate_uploaded_image(file_obj):
+
     if not file_obj or file_obj.filename == "":
         return False, "لا يوجد ملف"
 
     try:
-        pos = file_obj.stream.tell()
-        file_obj.stream.seek(0)
-        header = file_obj.stream.read(512)
-        file_obj.stream.seek(pos)
+        filename = file_obj.filename.lower()
 
-        detected = imghdr.what(None, header)
-        if not detected:
-            return False, "الملف المرفوع ليس صورة صحيحة"
+        if not (
+            filename.endswith(".jpg")
+            or filename.endswith(".jpeg")
+            or filename.endswith(".png")
+            or filename.endswith(".webp")
+            or filename.endswith(".gif")
+        ):
+            return False, "الملف ليس صورة"
 
     except Exception:
-        return False, "خطأ في قراءة الصورة"
+        return False, "خطأ في الملف"
 
     return True, ""
 
@@ -337,7 +339,6 @@ def build_whatsapp_link(phone):
 
 
 def allowed_file(filename):
-    return True
     return True
 
 
@@ -897,7 +898,7 @@ def verify():
                     con.execute("""
                     INSERT INTO users
                     (name, phone, email, password, role, birthdate, section, governorate, city, exp, bio, profile_pic, work_images, is_verified)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1)
                     """, (
                         d["name"], d["phone"], d["email"], d["password"], d["role"], d["birthdate"], d["section"],
                         d["governorate"], d["city"], d["exp"], d["bio"], d["profile_pic"], d["work_images"]
