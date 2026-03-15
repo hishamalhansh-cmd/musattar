@@ -27,8 +27,9 @@ def env_flag(name, default=False):
 
 SENDER_EMAIL = "hishamalhansh@gmail.com"
 SENDER_APP_PASSWORD = "dnwu yrac sbxs cplk"
-MAIL_REQUIRED_FOR_REGISTER = True
-DEV_CONSOLE_OTP_FALLBACK = False
+MAIL_REQUIRED_FOR_REGISTER = False
+DEV_CONSOLE_OTP_FALLBACK = True
+MAIL_ENABLED = env_flag("MAIL_ENABLED", False)
 OTP_EXPIRY_SECONDS = 10 * 60
 
 CONTACT_PHONE = "009647864145165"
@@ -220,7 +221,6 @@ def detect_real_image_type(file_obj):
 
 
 def validate_uploaded_image(file_obj):
-    # السماح برفع أي صورة/ملف بدون تحقق من النوع أو الامتداد أو الحجم
     if not file_obj or file_obj.filename == "":
         return False, "لا يوجد ملف"
     return True, ""
@@ -340,16 +340,12 @@ def save_uploaded_file(file_obj):
     if not is_valid:
         return ""
 
-    original = secure_filename(file_obj.filename or "")
-
-    ext = ""
-    if "." in original:
-        ext = original.rsplit(".", 1)[1].lower().strip()
-
+    original = secure_filename(file_obj.filename)
+    ext = original.rsplit(".", 1)[1].lower()
     if ext == "jpeg":
         ext = "jpg"
 
-    unique_name = f"{uuid.uuid4().hex}.{ext}" if ext else uuid.uuid4().hex
+    unique_name = f"{uuid.uuid4().hex}.{ext}"
     save_path = os.path.join(app.config["UPLOAD_FOLDER"], unique_name)
 
     try:
@@ -495,6 +491,10 @@ init_db()
 
 
 def send_mail(to_email, subject, body):
+    if not MAIL_ENABLED:
+        print(f"MAIL DISABLED: to={to_email} subject={subject} body={body}")
+        return True
+
     if not SENDER_EMAIL or not SENDER_APP_PASSWORD:
         print("MAIL ERROR: missing SENDER_EMAIL or SENDER_APP_PASSWORD")
         return False
@@ -784,7 +784,10 @@ def register():
         session["pending_user"] = d
         session["otp"] = otp
         session["otp_created_at"] = time.time()
-        session.pop("otp_console_notice", None)
+        if DEV_CONSOLE_OTP_FALLBACK and not MAIL_ENABLED:
+            session["otp_console_notice"] = f"تم تعطيل إرسال البريد مؤقتًا. كود التفعيل الخاص بك هو: {otp}"
+        else:
+            session.pop("otp_console_notice", None)
 
         sent = send_mail(d["email"], "كود التفعيل", f"كود التفعيل الخاص بك هو: {otp}")
 
@@ -985,7 +988,10 @@ def forgot():
         session["reset_email"] = email
         session["reset_otp"] = otp
         session["reset_otp_created_at"] = time.time()
-        session.pop("reset_console_notice", None)
+        if DEV_CONSOLE_OTP_FALLBACK and not MAIL_ENABLED:
+            session["reset_console_notice"] = f"تم تعطيل إرسال البريد مؤقتًا. كود الاستعادة الخاص بك هو: {otp}"
+        else:
+            session.pop("reset_console_notice", None)
 
         sent = send_mail(email, "استعادة كلمة السر", f"كود استعادة كلمة السر هو: {otp}")
         if not sent:
