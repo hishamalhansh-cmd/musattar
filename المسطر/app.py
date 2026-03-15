@@ -622,6 +622,18 @@ hr{border:none;border-top:1px solid var(--border);margin:18px 0}
 @media (max-width:960px){.home-grid,.home-features-grid,.home-stats-grid,.admin-stats-grid,.admin-users-grid,.specialties-grid{grid-template-columns:1fr}.search-inline-grid{grid-template-columns:1fr}}
 @media (max-width:720px){h1{font-size:28px}h2{font-size:24px}.container{padding:16px;border-radius:24px}.worker-card,.worker-hero-grid,.settings-profile-wrap{grid-template-columns:1fr;display:grid}.worker-info-grid,.detail-grid,.work-grid,.specialty-items{grid-template-columns:1fr 1fr}}
 @media (max-width:520px){.work-grid,.worker-info-grid,.detail-grid,.specialty-items{grid-template-columns:1fr}.bottom-corner-link{font-size:13px;min-width:74px;padding:0 12px}}
+
+/* UI size tuning (professional compact layout) */
+body{font-size:14px}
+.container{margin:12px auto;padding:14px;border-radius:18px}
+h1{font-size:22px}
+h2{font-size:18px}
+h3{font-size:16px}
+p{font-size:13px;line-height:1.5}
+button,.btn{font-size:13px;padding:6px 10px;border-radius:8px}
+img{max-width:100%;height:auto}
+.card,.worker-card{padding:10px;border-radius:14px}
+
 </style>
 </head>
 <body>
