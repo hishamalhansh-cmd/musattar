@@ -8,11 +8,32 @@ import json
 import datetime
 import time
 
-from flask import Flask, render_template_string, request, redirect, session, url_for, send_from_directory
+from flask import Flask, render_template_string, request, redirect, session, url_for, send_from_directory, jsonify
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
+
+try:
+    from webauthn import (
+        generate_registration_options,
+        verify_registration_response,
+        generate_authentication_options,
+        verify_authentication_response,
+        options_to_json,
+        base64url_to_bytes,
+    )
+    from webauthn.helpers.structs import (
+        AuthenticatorSelectionCriteria,
+        AuthenticatorAttachment,
+        ResidentKeyRequirement,
+        UserVerificationRequirement,
+        PublicKeyCredentialDescriptor,
+    )
+    WEBAUTHN_AVAILABLE = True
+except Exception:
+    WEBAUTHN_AVAILABLE = False
+
 
 app = Flask(__name__)
 from datetime import timedelta
@@ -26,6 +47,28 @@ def env_flag(name, default=False):
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
+
+
+def b64url_encode_bytes(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("utf-8")
+
+
+def b64url_decode_to_bytes(value: str) -> bytes:
+    value = (value or "").encode("utf-8")
+    padding = b"=" * ((4 - len(value) % 4) % 4)
+    return base64.urlsafe_b64decode(value + padding)
+
+
+def get_rp_id():
+    return (request.host or "").split(":")[0]
+
+
+def get_origin():
+    return request.host_url.rstrip("/")
+
+
+def passkeys_supported():
+    return WEBAUTHN_AVAILABLE
 
 SENDER_EMAIL = "hishamalhansh@gmail.com"
 SENDER_APP_PASSWORD = "dnwu yrac sbxs cplk"
@@ -515,6 +558,18 @@ def init_db():
 
         if not column_exists(cur, "users", "hidden_by_admin"):
             cur.execute("ALTER TABLE users ADD COLUMN hidden_by_admin INTEGER DEFAULT 0")
+
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_passkeys(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            credential_id TEXT UNIQUE,
+            public_key TEXT,
+            sign_count INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
 
         cur.execute("""
         CREATE TABLE IF NOT EXISTS messages(
@@ -1268,6 +1323,7 @@ def login():
                 <input type="password" name="password" placeholder="كلمة المرور" required>
                 <button>دخول</button>
             </form>
+            <a href="/passkey/login"><button class="light-btn">الدخول بالبصمة</button></a>
             <a href="/forgot"><button>نسيت كلمة المرور</button></a>
 
 <div class="card" style="margin-top:16px;">
@@ -2080,6 +2136,7 @@ def settings():
                 <div class="settings-section-title">الأمان</div>
                 <div class="actions">
                     <a href="/change-password"><button>تغيير كلمة المرور</button></a>
+                    <a href="/passkey/setup"><button class="light-btn">تفعيل الدخول بالبصمة</button></a>
                     <a href="/logout"><button>تسجيل الخروج</button></a>
                     <a href="/delete-account"><button style="background:red;color:white;">حذف الحساب</button></a>
                 </div>
@@ -2291,7 +2348,9 @@ def manage_work_images(user_id):
 @app.route("/logout")
 def logout():
     session.clear()
-    return redirect(url_for("home"))
+    resp = redirect(url_for("home"))
+    resp.delete_cookie("remember_email")
+    return resp
 
 
 @app.route("/admin", methods=["GET", "POST"])
@@ -3204,6 +3263,285 @@ def edit_profile():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
+
+@app.route("/passkey/setup")
+def passkey_setup():
+    if "user" not in session:
+        return redirect(url_for("login"))
+
+    if not passkeys_supported():
+        return render_template_string(
+            STYLE + """
+            <div class="container">
+                <a href="/settings"><button>رجوع</button></a>
+                <h2>الدخول بالبصمة</h2>
+                <div class="msg">ميزة البصمة غير مفعلة حالياً على السيرفر. ثبّت مكتبة webauthn أولاً.</div>
+            </div>
+            </body></html>
+            """
+        )
+
+    return render_template_string(
+        STYLE + """
+        <div class="container narrow-container">
+            <a href="/settings"><button>رجوع</button></a>
+            <h2>تفعيل الدخول بالبصمة</h2>
+            <div class="msg">بعد التفعيل، تقدر تدخل بالبصمة أو قفل الجهاز المحفوظ على هاتفك.</div>
+            <button id="setupPasskeyBtn" type="button">تفعيل البصمة على هذا الجهاز</button>
+            <div id="passkeySetupMsg" class="notice" style="margin-top:12px;"></div>
+        </div>
+
+        <script src="https://unpkg.com/@simplewebauthn/browser/dist/bundle/index.umd.min.js"></script>
+        <script>
+        async function setupPasskey() {
+            const msg = document.getElementById("passkeySetupMsg");
+            try {
+                msg.textContent = "جاري تجهيز طلب البصمة...";
+                const beginResp = await fetch("/passkey/register/begin", {method: "POST"});
+                const beginData = await beginResp.json();
+                if (!beginResp.ok) {
+                    msg.textContent = beginData.error || "تعذر بدء التفعيل";
+                    return;
+                }
+
+                const credential = await SimpleWebAuthnBrowser.startRegistration({optionsJSON: beginData});
+                const finishResp = await fetch("/passkey/register/finish", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify(credential),
+                });
+                const finishData = await finishResp.json();
+                msg.textContent = finishData.message || "تمت العملية";
+            } catch (err) {
+                msg.textContent = "فشل التفعيل: " + (err.message || err);
+            }
+        }
+        document.getElementById("setupPasskeyBtn").addEventListener("click", setupPasskey);
+        </script>
+        </body></html>
+        """
+    )
+
+
+@app.route("/passkey/login")
+def passkey_login():
+    return render_template_string(
+        STYLE + """
+        <div class="container narrow-container">
+            <a href="/login"><button>رجوع</button></a>
+            <h2>الدخول بالبصمة</h2>
+            <div class="section-subtitle">اكتب بريدك الإلكتروني أولاً، ثم استخدم البصمة أو قفل الجهاز المحفوظ.</div>
+            <input id="passkeyEmail" type="email" placeholder="البريد الإلكتروني">
+            <button id="passkeyLoginBtn" type="button">الدخول بالبصمة</button>
+            <div id="passkeyLoginMsg" class="notice" style="margin-top:12px;"></div>
+        </div>
+
+        <script src="https://unpkg.com/@simplewebauthn/browser/dist/bundle/index.umd.min.js"></script>
+        <script>
+        async function loginPasskey() {
+            const email = document.getElementById("passkeyEmail").value.trim();
+            const msg = document.getElementById("passkeyLoginMsg");
+            if (!email) {
+                msg.textContent = "اكتب البريد الإلكتروني أولاً";
+                return;
+            }
+            try {
+                msg.textContent = "جاري تجهيز طلب الدخول...";
+                const beginResp = await fetch("/passkey/auth/begin", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({email}),
+                });
+                const beginData = await beginResp.json();
+                if (!beginResp.ok) {
+                    msg.textContent = beginData.error || "تعذر بدء الدخول";
+                    return;
+                }
+
+                const assertion = await SimpleWebAuthnBrowser.startAuthentication({optionsJSON: beginData});
+                const finishResp = await fetch("/passkey/auth/finish", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({email, credential: assertion}),
+                });
+                const finishData = await finishResp.json();
+                if (finishData.ok) {
+                    window.location.href = finishData.redirect || "/workers";
+                } else {
+                    msg.textContent = finishData.error || "فشل الدخول بالبصمة";
+                }
+            } catch (err) {
+                msg.textContent = "فشل الدخول: " + (err.message || err);
+            }
+        }
+        document.getElementById("passkeyLoginBtn").addEventListener("click", loginPasskey);
+        </script>
+        </body></html>
+        """
+    )
+
+
+@app.route("/passkey/register/begin", methods=["POST"])
+def passkey_register_begin():
+    if "user" not in session:
+        return jsonify({"error": "يجب تسجيل الدخول أولاً"}), 401
+    if not passkeys_supported():
+        return jsonify({"error": "مكتبة WebAuthn غير مثبتة على السيرفر"}), 400
+
+    with get_db() as con:
+        user = con.execute("SELECT * FROM users WHERE id=?", (session.get("user_id"),)).fetchone()
+        existing = con.execute("SELECT credential_id FROM user_passkeys WHERE user_id=?", (user["id"],)).fetchall()
+
+    exclude_credentials = []
+    for row in existing:
+        cid = row["credential_id"]
+        if cid:
+            exclude_credentials.append(PublicKeyCredentialDescriptor(id=b64url_decode_to_bytes(cid)))
+
+    options = generate_registration_options(
+        rp_id=get_rp_id(),
+        rp_name="المسطر",
+        user_id=str(user["id"]).encode("utf-8"),
+        user_name=user["email"],
+        user_display_name=user["name"],
+        authenticator_selection=AuthenticatorSelectionCriteria(
+            authenticator_attachment=AuthenticatorAttachment.PLATFORM,
+            resident_key=ResidentKeyRequirement.PREFERRED,
+            user_verification=UserVerificationRequirement.REQUIRED,
+        ),
+        exclude_credentials=exclude_credentials,
+    )
+
+    session["passkey_reg_challenge"] = b64url_encode_bytes(options.challenge)
+    return jsonify(json.loads(options_to_json(options)))
+
+
+@app.route("/passkey/register/finish", methods=["POST"])
+def passkey_register_finish():
+    if "user" not in session:
+        return jsonify({"message": "يجب تسجيل الدخول أولاً"}), 401
+    if not passkeys_supported():
+        return jsonify({"message": "WebAuthn غير مفعل"}), 400
+
+    credential = request.get_json(silent=True) or {}
+    challenge_b64 = session.get("passkey_reg_challenge")
+    if not challenge_b64:
+        return jsonify({"message": "انتهت جلسة التفعيل"}), 400
+
+    with get_db() as con:
+        user = con.execute("SELECT * FROM users WHERE id=?", (session.get("user_id"),)).fetchone()
+
+    try:
+        verification = verify_registration_response(
+            credential=credential,
+            expected_challenge=base64url_to_bytes(challenge_b64),
+            expected_origin=get_origin(),
+            expected_rp_id=get_rp_id(),
+            require_user_verification=True,
+        )
+        with get_db() as con:
+            con.execute(
+                "INSERT OR REPLACE INTO user_passkeys (user_id, credential_id, public_key, sign_count) VALUES (?, ?, ?, ?)",
+                (
+                    user["id"],
+                    b64url_encode_bytes(verification.credential_id),
+                    b64url_encode_bytes(verification.credential_public_key),
+                    int(verification.sign_count or 0),
+                ),
+            )
+            con.commit()
+        session.pop("passkey_reg_challenge", None)
+        return jsonify({"message": "تم تفعيل الدخول بالبصمة بنجاح"})
+    except Exception as e:
+        return jsonify({"message": "فشل التفعيل: " + str(e)}), 400
+
+
+@app.route("/passkey/auth/begin", methods=["POST"])
+def passkey_auth_begin():
+    if not passkeys_supported():
+        return jsonify({"error": "مكتبة WebAuthn غير مثبتة على السيرفر"}), 400
+
+    data = request.get_json(silent=True) or {}
+    email = sanitize_input(data.get("email", ""), 120).lower()
+    if not email:
+        return jsonify({"error": "البريد الإلكتروني مطلوب"}), 400
+
+    with get_db() as con:
+        user = con.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+        if not user:
+            return jsonify({"error": "هذا البريد غير موجود"}), 404
+        creds = con.execute("SELECT * FROM user_passkeys WHERE user_id=?", (user["id"],)).fetchall()
+
+    if not creds:
+        return jsonify({"error": "هذا الحساب لم يفعّل البصمة بعد"}), 400
+
+    allow_credentials = [
+        PublicKeyCredentialDescriptor(id=b64url_decode_to_bytes(row["credential_id"]))
+        for row in creds if row["credential_id"]
+    ]
+
+    options = generate_authentication_options(
+        rp_id=get_rp_id(),
+        allow_credentials=allow_credentials,
+        user_verification=UserVerificationRequirement.REQUIRED,
+    )
+
+    session["passkey_auth_challenge"] = b64url_encode_bytes(options.challenge)
+    session["passkey_auth_email"] = email
+    return jsonify(json.loads(options_to_json(options)))
+
+
+@app.route("/passkey/auth/finish", methods=["POST"])
+def passkey_auth_finish():
+    if not passkeys_supported():
+        return jsonify({"ok": False, "error": "WebAuthn غير مفعل"}), 400
+
+    data = request.get_json(silent=True) or {}
+    email = sanitize_input(data.get("email", ""), 120).lower()
+    credential = data.get("credential") or {}
+    challenge_b64 = session.get("passkey_auth_challenge")
+
+    if not email or not challenge_b64:
+        return jsonify({"ok": False, "error": "انتهت جلسة الدخول بالبصمة"}), 400
+
+    with get_db() as con:
+        user = con.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+        if not user:
+            return jsonify({"ok": False, "error": "المستخدم غير موجود"}), 404
+        cred_id = credential.get("id") or credential.get("rawId") or ""
+        row = con.execute("SELECT * FROM user_passkeys WHERE credential_id=? AND user_id=?", (cred_id, user["id"])).fetchone()
+
+    if not row:
+        return jsonify({"ok": False, "error": "البصمة غير مرتبطة بهذا الحساب"}), 400
+
+    try:
+        verification = verify_authentication_response(
+            credential=credential,
+            expected_challenge=base64url_to_bytes(challenge_b64),
+            expected_rp_id=get_rp_id(),
+            expected_origin=get_origin(),
+            credential_public_key=base64url_to_bytes(row["public_key"]),
+            credential_current_sign_count=int(row["sign_count"] or 0),
+            require_user_verification=True,
+        )
+
+        with get_db() as con:
+            con.execute(
+                "UPDATE user_passkeys SET sign_count=? WHERE id=?",
+                (int(verification.new_sign_count or 0), row["id"]),
+            )
+            con.commit()
+
+        session.permanent = True
+        session["user"] = user["name"]
+        session["user_id"] = user["id"]
+        session.pop("passkey_auth_challenge", None)
+        session.pop("passkey_auth_email", None)
+
+        return jsonify({"ok": True, "redirect": url_for("workers")})
+    except Exception as e:
+        return jsonify({"ok": False, "error": "فشل التحقق من البصمة: " + str(e)}), 400
+
 
 if __name__ == "__main__":
     import os
