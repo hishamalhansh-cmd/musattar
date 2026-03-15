@@ -496,6 +496,12 @@ def init_db():
         if not column_exists(cur, "users", "is_pinned"):
             cur.execute("ALTER TABLE users ADD COLUMN is_pinned INTEGER DEFAULT 0")
 
+        if not column_exists(cur, "users", "is_blocked"):
+            cur.execute("ALTER TABLE users ADD COLUMN is_blocked INTEGER DEFAULT 0")
+
+        if not column_exists(cur, "users", "hidden_by_admin"):
+            cur.execute("ALTER TABLE users ADD COLUMN hidden_by_admin INTEGER DEFAULT 0")
+
         cur.execute("""
         CREATE TABLE IF NOT EXISTS messages(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1204,6 +1210,9 @@ def login():
         if not user or not check_password_hash(user["password"], password):
             return render_template_string(STYLE + settings_corner() + '<div class="container"><div class="msg">البريد الإلكتروني أو كلمة المرور غير صحيحة</div><a href="/login"><button>رجوع</button></a></div></body></html>')
 
+        if user["is_blocked"]:
+            return render_template_string(STYLE + settings_corner() + '<div class="container"><div class="msg">هذا الحساب محظور من قبل الإدارة</div><a href="/login"><button>رجوع</button></a></div></body></html>')
+
         session["user"] = user["name"]
         session.permanent = True
         LOGIN_ATTEMPTS.pop(ip, None)
@@ -1414,7 +1423,7 @@ def workers():
     SELECT users.*
     FROM users
     LEFT JOIN comments ON comments.user_id = users.id
-    WHERE users.is_verified=1 AND (users.role='worker' OR users.role IS NULL)
+    WHERE users.is_verified=1 AND users.is_blocked=0 AND users.hidden_by_admin=0 AND (users.role='worker' OR users.role IS NULL)
     """
     params = []
 
@@ -1602,8 +1611,8 @@ def worker_profile(user_id):
             (user_id,)
         ).fetchall()
 
-    if not worker:
-        return render_template_string(STYLE + settings_corner() + '<div class="container"><div class="msg">المستخدم غير موجود</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
+    if not worker or worker["is_blocked"] or worker["hidden_by_admin"]:
+        return render_template_string(STYLE + settings_corner() + '<div class="container"><div class="msg">هذا الملف غير متاح حالياً</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
 
     with get_db() as con:
         con.execute("UPDATE users SET views = COALESCE(views, 0) + 1 WHERE id=?", (user_id,))
@@ -2282,6 +2291,8 @@ def admin_panel():
         comments_count = con.execute("SELECT COUNT(*) AS c FROM comments").fetchone()["c"]
         trusted_count = con.execute("SELECT COUNT(*) AS c FROM users WHERE verified_worker=1").fetchone()["c"]
         pinned_count = con.execute("SELECT COUNT(*) AS c FROM users WHERE is_pinned=1").fetchone()["c"]
+        blocked_count = con.execute("SELECT COUNT(*) AS c FROM users WHERE is_blocked=1").fetchone()["c"]
+        hidden_count = con.execute("SELECT COUNT(*) AS c FROM users WHERE hidden_by_admin=1").fetchone()["c"]
         users = con.execute("SELECT * FROM users ORDER BY is_pinned DESC, id DESC").fetchall()
         logs = con.execute("SELECT * FROM admin_logs ORDER BY id DESC LIMIT 20").fetchall()
 
@@ -2294,6 +2305,12 @@ def admin_panel():
         trust_text = 'إلغاء التوثيق' if u["verified_worker"] else 'توثيق العامل'
         pin_toggle = f'/admin/unpin-worker/{u["id"]}' if u["is_pinned"] else f'/admin/pin-worker/{u["id"]}'
         pin_text = 'إلغاء التثبيت' if u["is_pinned"] else 'تثبيت بالأعلى'
+        block_toggle = f'/admin/unblock-user/{u["id"]}' if u["is_blocked"] else f'/admin/block-user/{u["id"]}'
+        block_text = 'فك الحظر' if u["is_blocked"] else 'حظر المستخدم'
+        hide_toggle = f'/admin/unhide-user/{u["id"]}' if u["hidden_by_admin"] else f'/admin/hide-user/{u["id"]}'
+        hide_text = 'إظهار الملف' if u["hidden_by_admin"] else 'إخفاء الملف'
+        blocked_badge = '<span class="badge" style="background:rgba(220,38,38,.18);border:1px solid rgba(248,113,113,.35);">🚫 محظور</span>' if u["is_blocked"] else ''
+        hidden_badge = '<span class="badge" style="background:rgba(245,158,11,.16);border:1px solid rgba(251,191,36,.28);">🙈 مخفي</span>' if u["hidden_by_admin"] else ''
         users_html += f"""
         <div class="admin-user-card">
             <div><strong>{u["name"]}</strong></div>
@@ -2303,6 +2320,8 @@ def admin_panel():
                 <span class="badge">{u["governorate"] or "-"}</span>
                 {verified_badge}
                 {pinned_badge}
+                {blocked_badge}
+                {hidden_badge}
             </div>
             <div class="small">الهاتف: {u["phone"] or "-"}</div>
             <div class="small">المدينة: {u["city"] or "-"}</div>
@@ -2312,6 +2331,8 @@ def admin_panel():
                 <a class="link-btn" href="/worker/{u['id']}">فتح الملف</a>
                 <a class="link-btn" href="{trust_toggle}">{trust_text}</a>
                 <a class="link-btn" href="{pin_toggle}">{pin_text}</a>
+                <a class="link-btn" href="{block_toggle}">{block_text}</a>
+                <a class="link-btn" href="{hide_toggle}">{hide_text}</a>
                 <a class="link-btn link-red" href="/admin/delete-user/{u['id']}">حذف المستخدم</a>
             </div>
         </div>
@@ -2333,6 +2354,8 @@ def admin_panel():
                 <div class="inline">
                     <a href="/"><button class="light-btn">الرئيسية</button></a>
                     <a href="/admin/settings"><button class="light-btn">إعدادات الأدمن</button></a>
+                    <a href="/admin/messages"><button class="light-btn">كل الرسائل</button></a>
+                    <a href="/admin/comments"><button class="light-btn">كل التعليقات</button></a>
                     <a href="/workers-map"><button class="light-btn">الخريطة</button></a>
                     <a href="/admin/logout"><button>خروج الأدمن</button></a>
                 </div>
@@ -2358,8 +2381,8 @@ def admin_panel():
             <div class="admin-stats-grid" style="margin-top:14px;">
                 <div class="admin-stat"><div class="label">عدد الرسائل</div><div class="value">{messages_count}</div></div>
                 <div class="admin-stat"><div class="label">عدد التعليقات</div><div class="value">{comments_count}</div></div>
-                <div class="admin-stat"><div class="label">خريطة العمال</div><div class="value">جاهزة</div></div>
-                <div class="admin-stat"><div class="label">البحث الاحترافي</div><div class="value">مفعل</div></div>
+                <div class="admin-stat"><div class="label">المحظورون</div><div class="value">{blocked_count}</div></div>
+                <div class="admin-stat"><div class="label">الملفات المخفية</div><div class="value">{hidden_count}</div></div>
             </div>
 
             <h3>المستخدمون</h3>
@@ -2517,6 +2540,165 @@ def workers_map():
     )
 
 
+
+
+
+@app.route("/admin/block-user/<int:user_id>")
+def admin_block_user(user_id):
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+    with get_db() as con:
+        user = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        if user:
+            con.execute("UPDATE users SET is_blocked=1 WHERE id=?", (user_id,))
+            con.commit()
+            log_admin_action("حظر مستخدم", user["name"], f"تم حظر المستخدم رقم {user_id}")
+    return redirect(url_for("admin_panel"))
+
+
+@app.route("/admin/unblock-user/<int:user_id>")
+def admin_unblock_user(user_id):
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+    with get_db() as con:
+        user = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        if user:
+            con.execute("UPDATE users SET is_blocked=0 WHERE id=?", (user_id,))
+            con.commit()
+            log_admin_action("فك حظر", user["name"], f"تم فك حظر المستخدم رقم {user_id}")
+    return redirect(url_for("admin_panel"))
+
+
+@app.route("/admin/hide-user/<int:user_id>")
+def admin_hide_user(user_id):
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+    with get_db() as con:
+        user = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        if user:
+            con.execute("UPDATE users SET hidden_by_admin=1 WHERE id=?", (user_id,))
+            con.commit()
+            log_admin_action("إخفاء ملف", user["name"], f"تم إخفاء ملف المستخدم رقم {user_id}")
+    return redirect(url_for("admin_panel"))
+
+
+@app.route("/admin/unhide-user/<int:user_id>")
+def admin_unhide_user(user_id):
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+    with get_db() as con:
+        user = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        if user:
+            con.execute("UPDATE users SET hidden_by_admin=0 WHERE id=?", (user_id,))
+            con.commit()
+            log_admin_action("إظهار ملف", user["name"], f"تم إظهار ملف المستخدم رقم {user_id}")
+    return redirect(url_for("admin_panel"))
+
+
+@app.route("/admin/messages")
+def admin_messages():
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+    with get_db() as con:
+        rows = con.execute("SELECT * FROM messages ORDER BY id DESC LIMIT 300").fetchall()
+
+    if not rows:
+        messages_html = '<div class="msg">لا توجد رسائل</div>'
+    else:
+        blocks = []
+        for row in rows:
+            blocks.append(f"""
+            <div class="card">
+                <div><strong>من:</strong> {row["sender_name"]} <strong>إلى:</strong> {row["receiver_name"]}</div>
+                <div style="margin-top:8px;">{row["msg"]}</div>
+                <div class="small">{row["created_at"]}</div>
+                <div style="margin-top:10px;">
+                    <a class="link-btn link-red" href="/admin/delete-message/{row['id']}">حذف الرسالة</a>
+                </div>
+            </div>
+            """)
+        messages_html = "".join(blocks)
+
+    return render_template_string(
+        STYLE + f"""
+        <div class="container">
+            <a href="/admin/panel"><button>رجوع للوحة الأدمن</button></a>
+            <h2>كل الرسائل</h2>
+            {messages_html}
+        </div>
+        </body></html>
+        """
+    )
+
+
+@app.route("/admin/delete-message/<int:message_id>")
+def admin_delete_message(message_id):
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+    with get_db() as con:
+        row = con.execute("SELECT * FROM messages WHERE id=?", (message_id,)).fetchone()
+        if row:
+            con.execute("DELETE FROM messages WHERE id=?", (message_id,))
+            con.commit()
+            log_admin_action("حذف رسالة", row["sender_name"], f"تم حذف الرسالة رقم {message_id}")
+    return redirect(url_for("admin_messages"))
+
+
+@app.route("/admin/comments")
+def admin_comments():
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+    with get_db() as con:
+        rows = con.execute("""
+            SELECT comments.*, users.name AS worker_name
+            FROM comments
+            LEFT JOIN users ON users.id = comments.user_id
+            ORDER BY comments.id DESC
+            LIMIT 300
+        """).fetchall()
+
+    if not rows:
+        comments_html = '<div class="msg">لا توجد تعليقات</div>'
+    else:
+        blocks = []
+        for row in rows:
+            stars = "★" * int(row["rating"] or 0) + "☆" * (5 - int(row["rating"] or 0))
+            blocks.append(f"""
+            <div class="card">
+                <div><strong>{row["commenter_name"]}</strong> على <strong>{row["worker_name"] or "-"}</strong></div>
+                <div class="star">{stars}</div>
+                <div>{row["comment"]}</div>
+                <div class="small">{row["created_at"]}</div>
+                <div style="margin-top:10px;">
+                    <a class="link-btn link-red" href="/admin/delete-comment/{row['id']}">حذف التعليق</a>
+                </div>
+            </div>
+            """)
+        comments_html = "".join(blocks)
+
+    return render_template_string(
+        STYLE + f"""
+        <div class="container">
+            <a href="/admin/panel"><button>رجوع للوحة الأدمن</button></a>
+            <h2>كل التعليقات</h2>
+            {comments_html}
+        </div>
+        </body></html>
+        """
+    )
+
+
+@app.route("/admin/delete-comment/<int:comment_id>")
+def admin_delete_comment(comment_id):
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+    with get_db() as con:
+        row = con.execute("SELECT * FROM comments WHERE id=?", (comment_id,)).fetchone()
+        if row:
+            con.execute("DELETE FROM comments WHERE id=?", (comment_id,))
+            con.commit()
+            log_admin_action("حذف تعليق", row["commenter_name"], f"تم حذف التعليق رقم {comment_id}")
+    return redirect(url_for("admin_comments"))
 
 @app.route("/admin/delete-user/<int:user_id>")
 def admin_delete_user(user_id):
