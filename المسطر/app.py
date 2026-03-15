@@ -23,7 +23,7 @@ app.secret_key = os.environ.get("SECRET_KEY", "adam_secret_key_2026")
 def env_flag(name, default=False):
     value = os.environ.get(name)
     if value is None:
-        return defaulta
+        return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
