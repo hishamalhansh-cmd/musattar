@@ -175,6 +175,22 @@ def auto_login_from_cookie():
                 session["user_id"] = u["id"]
 
 
+
+def get_current_session_user():
+    user_id = session.get("user_id")
+    user_name = session.get("user")
+    with get_db() as con:
+        if user_id:
+            user = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+            if user:
+                return user
+        if user_name:
+            user = con.execute("SELECT * FROM users WHERE name=?", (user_name,)).fetchone()
+            if user:
+                session["user_id"] = user["id"]
+                return user
+    return None
+
 def get_client_ip():
     forwarded = request.headers.get("X-Forwarded-For", "").strip()
     if forwarded:
@@ -3269,6 +3285,11 @@ def passkey_setup():
     if "user" not in session:
         return redirect(url_for("login"))
 
+    current_user = get_current_session_user()
+    if not current_user:
+        session.clear()
+        return redirect(url_for("login"))
+
     if not passkeys_supported():
         return render_template_string(
             STYLE + """
@@ -3298,7 +3319,9 @@ def passkey_setup():
             try {
                 msg.textContent = "جاري تجهيز طلب البصمة...";
                 const beginResp = await fetch("/passkey/register/begin", {method: "POST"});
-                const beginData = await beginResp.json();
+                const beginText = await beginResp.text();
+                let beginData = {};
+                try { beginData = JSON.parse(beginText); } catch(e) { throw new Error("السيرفر لم يرجع JSON صحيح عند بدء التفعيل"); }
                 if (!beginResp.ok) {
                     msg.textContent = beginData.error || "تعذر بدء التفعيل";
                     return;
@@ -3310,7 +3333,9 @@ def passkey_setup():
                     headers: {"Content-Type": "application/json"},
                     body: JSON.stringify(credential),
                 });
-                const finishData = await finishResp.json();
+                const finishText = await finishResp.text();
+                let finishData = {};
+                try { finishData = JSON.parse(finishText); } catch(e) { throw new Error("السيرفر لم يرجع JSON صحيح عند إنهاء التفعيل"); }
                 msg.textContent = finishData.message || "تمت العملية";
             } catch (err) {
                 msg.textContent = "فشل التفعيل: " + (err.message || err);
@@ -3388,32 +3413,38 @@ def passkey_register_begin():
     if not passkeys_supported():
         return jsonify({"error": "مكتبة WebAuthn غير مثبتة على السيرفر"}), 400
 
-    with get_db() as con:
-        user = con.execute("SELECT * FROM users WHERE id=?", (session.get("user_id"),)).fetchone()
-        existing = con.execute("SELECT credential_id FROM user_passkeys WHERE user_id=?", (user["id"],)).fetchall()
+    try:
+        user = get_current_session_user()
+        if not user:
+            return jsonify({"error": "تعذر تحديد المستخدم الحالي"}), 401
 
-    exclude_credentials = []
-    for row in existing:
-        cid = row["credential_id"]
-        if cid:
-            exclude_credentials.append(PublicKeyCredentialDescriptor(id=b64url_decode_to_bytes(cid)))
+        with get_db() as con:
+            existing = con.execute("SELECT credential_id FROM user_passkeys WHERE user_id=?", (user["id"],)).fetchall()
 
-    options = generate_registration_options(
-        rp_id=get_rp_id(),
-        rp_name="المسطر",
-        user_id=str(user["id"]).encode("utf-8"),
-        user_name=user["email"],
-        user_display_name=user["name"],
-        authenticator_selection=AuthenticatorSelectionCriteria(
-            authenticator_attachment=AuthenticatorAttachment.PLATFORM,
-            resident_key=ResidentKeyRequirement.PREFERRED,
-            user_verification=UserVerificationRequirement.REQUIRED,
-        ),
-        exclude_credentials=exclude_credentials,
-    )
+        exclude_credentials = []
+        for row in existing:
+            cid = row["credential_id"]
+            if cid:
+                exclude_credentials.append(PublicKeyCredentialDescriptor(id=b64url_decode_to_bytes(cid)))
 
-    session["passkey_reg_challenge"] = b64url_encode_bytes(options.challenge)
-    return jsonify(json.loads(options_to_json(options)))
+        options = generate_registration_options(
+            rp_id=get_rp_id(),
+            rp_name="المسطر",
+            user_id=str(user["id"]).encode("utf-8"),
+            user_name=user["email"],
+            user_display_name=user["name"],
+            authenticator_selection=AuthenticatorSelectionCriteria(
+                authenticator_attachment=AuthenticatorAttachment.PLATFORM,
+                resident_key=ResidentKeyRequirement.PREFERRED,
+                user_verification=UserVerificationRequirement.REQUIRED,
+            ),
+            exclude_credentials=exclude_credentials,
+        )
+
+        session["passkey_reg_challenge"] = b64url_encode_bytes(options.challenge)
+        return jsonify(json.loads(options_to_json(options)))
+    except Exception as e:
+        return jsonify({"error": "تعذر بدء التفعيل: " + str(e)}), 500
 
 
 @app.route("/passkey/register/finish", methods=["POST"])
@@ -3428,8 +3459,9 @@ def passkey_register_finish():
     if not challenge_b64:
         return jsonify({"message": "انتهت جلسة التفعيل"}), 400
 
-    with get_db() as con:
-        user = con.execute("SELECT * FROM users WHERE id=?", (session.get("user_id"),)).fetchone()
+    user = get_current_session_user()
+    if not user:
+        return jsonify({"message": "تعذر تحديد المستخدم الحالي"}), 401
 
     try:
         verification = verify_registration_response(
