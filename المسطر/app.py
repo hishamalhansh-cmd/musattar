@@ -7,6 +7,7 @@ import uuid
 import json
 import datetime
 import time
+import imghdr
 
 from flask import Flask, render_template_string, request, redirect, session, url_for, send_from_directory
 from email.mime.text import MIMEText
@@ -148,7 +149,7 @@ def too_many_attempts(storage, key, window_seconds, max_count):
         return True
     arr.append(now)
     storage[key] = arr
-    return True
+    return False
 
 
 def normalize_spaces(text):
@@ -341,11 +342,13 @@ def save_uploaded_file(file_obj):
         return ""
 
     original = secure_filename(file_obj.filename)
-    ext = original.rsplit(".", 1)[1].lower()
-    if ext == "jpeg":
-        ext = "jpg"
-
-    unique_name = f"{uuid.uuid4().hex}.{ext}"
+    if "." in original:
+        ext = original.rsplit(".", 1)[1].lower()
+        if ext == "jpeg":
+            ext = "jpg"
+        unique_name = f"{uuid.uuid4().hex}.{ext}"
+    else:
+        unique_name = f"{uuid.uuid4().hex}"
     save_path = os.path.join(app.config["UPLOAD_FOLDER"], unique_name)
 
     try:
@@ -895,7 +898,7 @@ def verify():
                     con.execute("""
                     INSERT INTO users
                     (name, phone, email, password, role, birthdate, section, governorate, city, exp, bio, profile_pic, work_images, is_verified)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)
                     """, (
                         d["name"], d["phone"], d["email"], d["password"], d["role"], d["birthdate"], d["section"],
                         d["governorate"], d["city"], d["exp"], d["bio"], d["profile_pic"], d["work_images"]
