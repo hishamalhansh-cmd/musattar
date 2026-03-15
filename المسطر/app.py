@@ -318,6 +318,69 @@ def build_whatsapp_link(phone):
     return f"https://wa.me/{digits}"
 
 
+GOVERNORATE_COORDS = {
+    "بغداد": (33.3152, 44.3661),
+    "البصرة": (30.5085, 47.7804),
+    "نينوى": (36.3350, 43.1189),
+    "أربيل": (36.1911, 44.0092),
+    "النجف": (31.9996, 44.3267),
+    "كربلاء": (32.6160, 44.0249),
+    "الأنبار": (33.4258, 43.2993),
+    "بابل": (32.5367, 44.4200),
+    "ذي قار": (31.0429, 46.2573),
+    "ديالى": (33.7436, 44.6436),
+    "دهوك": (36.8671, 42.9885),
+    "السليمانية": (35.5613, 45.4300),
+    "صلاح الدين": (34.1966, 43.8739),
+    "كركوك": (35.4681, 44.3922),
+    "واسط": (32.5000, 45.8333),
+    "ميسان": (31.8356, 47.1442),
+    "المثنى": (31.3140, 45.2806),
+    "القادسية": (31.9870, 44.9250),
+    "حلبجة": (35.1778, 45.9861),
+    "الناصرية": (31.0577, 46.2576)
+}
+
+
+def get_worker_rating_summary(user_id):
+    with get_db() as con:
+        row = con.execute(
+            "SELECT COUNT(*) AS total, AVG(rating) AS avg_rating FROM comments WHERE user_id=?",
+            (user_id,)
+        ).fetchone()
+    total = int(row["total"] or 0)
+    avg_rating = float(row["avg_rating"] or 0)
+    return round(avg_rating, 1), total
+
+
+def render_stars(avg_rating):
+    full = int(round(avg_rating))
+    full = max(0, min(5, full))
+    return "★" * full + "☆" * (5 - full)
+
+
+def trusted_badge_html(worker):
+    return '<span class="badge verified-badge">موثوق ✔️</span>' if worker["verified_worker"] else ""
+
+
+def pinned_badge_html(worker):
+    return '<span class="badge pinned-badge">مميز 📌</span>' if worker["is_pinned"] else ""
+
+
+def worker_map_query(worker):
+    place = normalize_spaces(f'{worker["city"] or ""} {worker["governorate"] or ""} العراق')
+    return place or "العراق"
+
+
+def worker_map_link(worker):
+    query = worker_map_query(worker)
+    return "https://www.google.com/maps/search/" + query.replace(" ", "+")
+
+
+def governorate_coords(governorate):
+    return GOVERNORATE_COORDS.get(governorate or "", (33.3152, 44.3661))
+
+
 def allowed_file(filename):
     return True
 
@@ -423,6 +486,15 @@ def init_db():
 
         if not column_exists(cur, "users", "allow_messages"):
             cur.execute("ALTER TABLE users ADD COLUMN allow_messages INTEGER DEFAULT 1")
+
+        if not column_exists(cur, "users", "views"):
+            cur.execute("ALTER TABLE users ADD COLUMN views INTEGER DEFAULT 0")
+
+        if not column_exists(cur, "users", "verified_worker"):
+            cur.execute("ALTER TABLE users ADD COLUMN verified_worker INTEGER DEFAULT 0")
+
+        if not column_exists(cur, "users", "is_pinned"):
+            cur.execute("ALTER TABLE users ADD COLUMN is_pinned INTEGER DEFAULT 0")
 
         cur.execute("""
         CREATE TABLE IF NOT EXISTS messages(
@@ -576,7 +648,7 @@ input,select,textarea,button{width:100%;margin:8px 0;padding:13px 14px;border-ra
 input:focus,select:focus,textarea:focus{outline:none;border-color:rgba(96,165,250,.55);box-shadow:0 0 0 4px rgba(37,99,235,.16)}
 textarea{min-height:120px;resize:vertical}
 button{background:linear-gradient(180deg,#3b82f6 0%, #1d4ed8 100%);color:#f8fbff;border:none;cursor:pointer;font-weight:700;box-shadow:0 10px 18px rgba(37,99,235,.25)} button:hover{transform:translateY(-1px);opacity:.97}
-button.light-btn{background:rgba(255,255,255,.08);color:var(--text);border:1px solid rgba(96,165,250,.28)}
+button.light-btn{background:rgba(37,99,235,.18);color:var(--text);border:1px solid rgba(96,165,250,.32)}
 label{display:block;font-weight:bold;margin-top:10px}
 .msg,.notice-box{background:rgba(37,99,235,.14);border:1px solid rgba(96,165,250,.28);padding:14px;border-radius:18px;text-align:center;margin:12px 0;color:#dbeafe}
 .notice{font-size:13px;text-align:center;color:var(--muted);margin-top:8px}
@@ -607,11 +679,11 @@ hr{border:none;border-top:1px solid var(--border);margin:18px 0}
 .active-specialty-item{background:var(--text);color:#eff6ff;border-color:var(--text)}.active-specialty-item .specialty-name,.active-specialty-item .specialty-icon{color:#eff6ff}
 .specialty-icon{font-size:28px;margin-bottom:6px}.specialty-name{font-size:14px;font-weight:700;color:var(--text);line-height:1.6}
 .link-btn,.bottom-corner-link,.settings-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px}
-.link-btn{background:var(--text);color:#eff6ff;padding:10px 14px;border-radius:14px;margin:4px 0;font-size:14px;font-weight:700}.link-red{background:#b30000;color:#fff}
+.link-btn{background:linear-gradient(180deg,#2563eb 0%, #1d4ed8 100%);color:#eff6ff;padding:10px 14px;border-radius:14px;margin:4px 0;font-size:14px;font-weight:700;border:1px solid rgba(147,197,253,.28);box-shadow:0 6px 18px rgba(0,0,0,.22)}.link-red{background:linear-gradient(180deg,#dc2626 0%, #b91c1c 100%);color:#fff}
 .search-panel{display:none;margin-bottom:16px}.search-panel.show{display:block}.search-inline-grid{display:grid;grid-template-columns:1.3fr 1fr 1fr auto;gap:10px;align-items:end}
-.settings-floating{position:fixed;top:14px;left:14px;z-index:9999}.settings-btn{width:46px;height:46px;background:var(--text);color:#eff6ff;border-radius:50%;font-size:20px;box-shadow:0 6px 18px rgba(0,0,0,.18)}
-.bottom-corner-link{position:fixed;bottom:18px;z-index:9999;min-width:86px;height:46px;padding:0 16px;background:var(--text);color:#eff6ff;border-radius:999px;box-shadow:0 6px 18px rgba(0,0,0,.18);font-size:14px;font-weight:700}.bottom-left-link{left:16px}.bottom-right-link{right:16px}
-.global-back-wrap{position:fixed;top:14px;right:14px;z-index:9999}.global-back-btn{display:inline-flex;align-items:center;justify-content:center;min-width:92px;height:46px;padding:0 16px;background:var(--text);color:#eff6ff;border-radius:999px;box-shadow:0 6px 18px rgba(0,0,0,.18);font-size:14px;font-weight:700}
+.settings-floating{position:fixed;top:14px;left:14px;z-index:9999}.settings-btn{width:auto;min-width:46px;height:46px;padding:0 14px;background:linear-gradient(180deg,#1d4ed8 0%, #1e40af 100%);color:#eff6ff;border-radius:999px;font-size:14px;font-weight:700;box-shadow:0 6px 18px rgba(0,0,0,.22);border:1px solid rgba(147,197,253,.28)}
+.bottom-corner-link{position:fixed;bottom:18px;z-index:9999;min-width:86px;height:46px;padding:0 16px;background:linear-gradient(180deg,#1d4ed8 0%, #1e40af 100%);color:#eff6ff;border-radius:999px;box-shadow:0 6px 18px rgba(0,0,0,.22);font-size:14px;font-weight:700;border:1px solid rgba(147,197,253,.28)}.bottom-left-link{left:16px}.bottom-right-link{right:16px}
+.global-back-wrap{position:fixed;top:14px;right:14px;z-index:9999}.global-back-btn{display:inline-flex;align-items:center;justify-content:center;min-width:112px;height:46px;padding:0 16px;background:linear-gradient(180deg,#2563eb 0%, #1d4ed8 100%);color:#eff6ff;border-radius:999px;box-shadow:0 6px 18px rgba(0,0,0,.22);font-size:14px;font-weight:800;border:1px solid rgba(147,197,253,.28)}
 .settings-profile-wrap{display:flex;align-items:center;gap:14px}.settings-profile-info{flex:1}.settings-section-title{font-size:18px;font-weight:700;margin:0 0 10px;text-align:right}
 .worker-hero-grid{display:grid;grid-template-columns:140px 1fr;gap:18px;align-items:start}
 .star{font-size:20px;color:#60a5fa;margin:6px 0}.comment-card{margin:10px 0}
@@ -623,16 +695,184 @@ hr{border:none;border-top:1px solid var(--border);margin:18px 0}
 @media (max-width:720px){h1{font-size:28px}h2{font-size:24px}.container{padding:16px;border-radius:24px}.worker-card,.worker-hero-grid,.settings-profile-wrap{grid-template-columns:1fr;display:grid}.worker-info-grid,.detail-grid,.work-grid,.specialty-items{grid-template-columns:1fr 1fr}}
 @media (max-width:520px){.work-grid,.worker-info-grid,.detail-grid,.specialty-items{grid-template-columns:1fr}.bottom-corner-link{font-size:13px;min-width:74px;padding:0 12px}}
 
-/* UI size tuning (professional compact layout) */
-body{font-size:14px}
-.container{margin:12px auto;padding:14px;border-radius:18px}
-h1{font-size:22px}
-h2{font-size:18px}
-h3{font-size:16px}
-p{font-size:13px;line-height:1.5}
-button,.btn{font-size:13px;padding:6px 10px;border-radius:8px}
-img{max-width:100%;height:auto}
-.card,.worker-card{padding:10px;border-radius:14px}
+.worker-rating-line{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
+.rating-stars{font-size:16px;color:#fbbf24;letter-spacing:2px}
+.rating-text{font-size:13px;color:#dbeafe}
+.verified-badge{background:rgba(16,185,129,.18);border-color:rgba(16,185,129,.45);color:#d1fae5}
+.pinned-badge{background:rgba(245,158,11,.16);border-color:rgba(245,158,11,.45);color:#fde68a}
+.filter-grid-pro{display:grid;grid-template-columns:1.2fr 1fr 1fr 1fr 1fr auto;gap:10px;align-items:end}
+.map-link-btn{background:rgba(255,255,255,.08);border:1px solid rgba(96,165,250,.28);color:var(--text)}
+.mini-stat{background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:16px;padding:10px 12px}
+.map-page-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:14px}
+#workersMap{width:100%;height:620px;border-radius:22px;border:1px solid rgba(96,165,250,.22);overflow:hidden}
+.map-list-card{max-height:620px;overflow:auto}
+@media (max-width:960px){.filter-grid-pro,.map-page-grid{grid-template-columns:1fr}}
+
+
+/* Soft elegant typography tuning */
+:root{
+    --text:#eaf2ff;
+    --muted:#b7c7dd;
+}
+body{
+    font-family:"Tahoma","Arial",sans-serif;
+    font-size:15px;
+    line-height:1.75;
+    -webkit-font-smoothing:antialiased;
+    -moz-osx-font-smoothing:grayscale;
+}
+.container{
+    width:min(92%,1060px);
+    margin:18px auto;
+    padding:18px;
+    border-radius:24px;
+}
+h1,h2,h3,h4{
+    letter-spacing:0;
+    line-height:1.5;
+    font-weight:700;
+}
+h1{font-size:30px}
+h2{font-size:24px}
+h3{font-size:18px}
+.small,.section-subtitle,.notice,.footer-note{font-size:13px;line-height:1.8}
+input,select,textarea,button{
+    font-size:14px;
+    padding:11px 13px;
+    border-radius:14px;
+}
+button{font-weight:700}
+.hero-panel,.card,.specialty-group-card,.search-panel,.settings-group,.settings-profile-wrap,.worker-hero,.comment-card,.admin-stat,.admin-search-box,.admin-user-card,.admin-log-card,.home-feature-card,.home-stat,.home-cta-box{
+    border-radius:20px;
+    padding:16px;
+}
+.home-feature-icon{
+    width:48px;
+    height:48px;
+    border-radius:15px;
+    font-size:22px;
+}
+.home-grid{grid-template-columns:1.2fr .85fr;gap:14px}
+.home-features-grid,.home-stats-grid,.specialties-grid,.work-grid,.admin-stats-grid,.admin-users-grid{gap:12px}
+.profile-img{width:78px;height:78px}
+.profile-img-large{width:112px;height:112px}
+.profile-placeholder{width:78px;height:78px;font-size:28px}
+.profile-placeholder-large{width:112px;height:112px;font-size:38px}
+.worker-card{grid-template-columns:86px 1fr;gap:14px}
+.worker-info-grid,.detail-grid{gap:8px;margin-top:10px}
+.info-chip,.detail-box{
+    border-radius:14px;
+    padding:9px 11px;
+    font-size:13px;
+    line-height:1.7;
+}
+.work-grid img{
+    border-radius:14px;
+}
+.specialty-group-card h3{font-size:17px}
+.specialty-item{
+    border-radius:14px;
+    padding:12px 8px;
+}
+.specialty-icon{font-size:24px}
+.specialty-name{font-size:13px;line-height:1.6}
+.link-btn{
+    padding:9px 13px;
+    border-radius:12px;
+    font-size:13px;
+}
+.settings-btn{
+    width:42px;
+    height:42px;
+    font-size:18px;
+}
+.bottom-corner-link,.global-back-btn{
+    min-width:78px;
+    height:42px;
+    padding:0 14px;
+    font-size:13px;
+}
+.worker-hero-grid{grid-template-columns:120px 1fr;gap:16px}
+.star{font-size:18px}
+.admin-stat .value{font-size:24px}
+.empty-state{
+    padding:20px;
+    border-radius:18px;
+}
+.topbar,.row,.inline,.worker-hero-top,.admin-panel-top{gap:10px}
+.filter-grid-pro,.map-page-grid{gap:12px}
+.map-box,.map-list-box,.stats-soft-card{
+    border-radius:20px !important;
+}
+.worker-rating-line{
+    gap:6px;
+    flex-wrap:wrap;
+}
+.rating-stars{
+    font-size:15px;
+    letter-spacing:1px;
+}
+@media (max-width:960px){
+    .home-grid,.home-features-grid,.home-stats-grid,.admin-stats-grid,.admin-users-grid,.specialties-grid,.filter-grid-pro,.map-page-grid{grid-template-columns:1fr}
+}
+@media (max-width:720px){
+    h1{font-size:24px}
+    h2{font-size:20px}
+    h3{font-size:16px}
+    .container{padding:14px;border-radius:20px}
+    .worker-card,.worker-hero-grid,.settings-profile-wrap{grid-template-columns:1fr;display:grid}
+    .worker-info-grid,.detail-grid,.work-grid,.specialty-items{grid-template-columns:1fr 1fr}
+}
+@media (max-width:520px){
+    body{font-size:14px}
+    .work-grid,.worker-info-grid,.detail-grid,.specialty-items{grid-template-columns:1fr}
+    input,select,textarea,button{font-size:13px;padding:10px 12px}
+    .container{width:min(94%,1000px)}
+    .hero-panel,.card,.settings-group,.worker-hero,.home-feature-card,.home-stat,.home-cta-box,.comment-card{padding:14px}
+    .profile-img{width:70px;height:70px}
+    .profile-img-large{width:98px;height:98px}
+}
+
+
+/* Back/settings floating buttons clarity fix */
+#globalBackWrap,.settings-floating{filter:none}
+.global-back-btn:hover,.settings-btn:hover,.bottom-corner-link:hover{transform:translateY(-1px);opacity:.98}
+.global-back-btn:before{content:"↩ ";font-size:15px}
+@media (max-width:520px){
+  .global-back-btn,.settings-btn{height:40px;min-width:94px;font-size:13px;padding:0 12px}
+  .bottom-corner-link{height:40px;min-width:70px}
+}
+
+
+/* Fix pale white action buttons */
+.link-btn:hover,.link-red:hover{filter:brightness(1.04);transform:translateY(-1px)}
+
+
+/* Dark readable selects and small controls */
+select{
+    background:linear-gradient(180deg, rgba(37,54,82,.96), rgba(26,40,63,.96)) !important;
+    color:#eef6ff !important;
+    border:1px solid rgba(96,165,250,.30) !important;
+    appearance:auto;
+}
+select option{
+    background:#13253f !important;
+    color:#eef6ff !important;
+}
+select optgroup{
+    background:#13253f !important;
+    color:#93c5fd !important;
+    font-weight:700;
+}
+input[type="checkbox"]{
+    width:18px !important;
+    height:18px !important;
+    accent-color:#2563eb;
+    vertical-align:middle;
+}
+label input[type="checkbox"]{
+    margin-left:8px;
+}
 
 </style>
 </head>
@@ -655,7 +895,7 @@ def settings_corner():
     if "user" in session:
         return '''
         <div class="settings-floating">
-            <a class="settings-btn" href="/settings" title="الإعدادات">⚙️</a>
+            <a class="settings-btn" href="/settings" title="الإعدادات">الإعدادات</a>
         </div>
         '''
     return ""
@@ -681,6 +921,7 @@ HOME_HTML = STYLE + """
             <h2 style="margin-bottom:8px;">ابدأ الآن</h2>
             <div class="section-subtitle">سجّل دخولك إذا عندك حساب، واذا ما عندك حساب تكدر تنشئه من الكتابة الهادئة تحت الزر.</div>
             <a href="/login"><button>تسجيل الدخول</button></a>
+            <a href="/workers-map"><button class="light-btn">خريطة العمال</button></a>
             <div class="notice" style="margin-top:14px;">واجهة مرتبة لعرض الاختصاصات، الأعمال، والملفات الشخصية داخل منصة واحدة.</div>
             <div class="home-register-note">لا يملك حساب؟ <a href="/register">إنشاء حساب من هنا</a></div>
         </div>
@@ -1115,6 +1356,11 @@ def worker_card(worker):
 
     phone_html = f'<div class="info-chip"><strong>الهاتف</strong><div>{worker["phone"]}</div></div>' if worker["show_phone"] else ""
     wa_html = f'<a class="link-btn" target="_blank" href="{build_whatsapp_link(worker["phone"])}">واتساب</a>' if worker["show_whatsapp"] else ""
+    map_html = f'<a class="link-btn map-link-btn" target="_blank" href="{worker_map_link(worker)}">الخريطة</a>'
+    avg_rating, rating_count = get_worker_rating_summary(worker["id"])
+    stars = render_stars(avg_rating)
+    verified_badge = trusted_badge_html(worker)
+    pinned_badge = pinned_badge_html(worker)
 
     return f"""
     <div class="card">
@@ -1124,9 +1370,17 @@ def worker_card(worker):
                 <div class="inline" style="margin-bottom:8px;">
                     <span class="worker-specialty-badge">{get_specialty_icon(worker["section"])} {worker["section"] or "بدون اختصاص"}</span>
                     <span class="badge">{worker["governorate"] or "بدون محافظة"}</span>
+                    {verified_badge}
+                    {pinned_badge}
                 </div>
                 <h3>{worker["name"]}</h3>
                 <div class="small">ملف مهني يعرض المعلومات الأساسية وأعمالي وطرق التواصل.</div>
+                <div class="worker-rating-line">
+                    <span class="rating-stars">{stars}</span>
+                    <span class="rating-text">⭐ {avg_rating} / 5</span>
+                    <span class="badge">({rating_count} تقييم)</span>
+                    <span class="badge">👁 {worker["views"] or 0} مشاهدة</span>
+                </div>
                 <div style="margin-top:10px;">{worker["bio"] or "لا توجد نبذة حالياً"}</div>
                 <div class="worker-info-grid">
                     <div class="info-chip"><strong>المدينة</strong><div>{worker["city"] or "-"}</div></div>
@@ -1136,6 +1390,7 @@ def worker_card(worker):
                 <div class="inline" style="margin-top:8px;">
                     <a class="link-btn" href="/worker/{worker['id']}">فتح الملف</a>
                     {wa_html}
+                    {map_html}
                 </div>
             </div>
         </div>
@@ -1145,71 +1400,107 @@ def worker_card(worker):
 
 
 
+
 @app.route("/workers")
 def workers():
     q = sanitize_input(request.args.get("q", ""), 80)
     section = sanitize_input(request.args.get("section", ""), 80)
     governorate = sanitize_input(request.args.get("governorate", ""), 80)
+    sort = sanitize_input(request.args.get("sort", "new"), 20)
+    min_rating = sanitize_input(request.args.get("min_rating", ""), 10)
+    trusted_only = request.args.get("trusted_only", "").strip() == "1"
 
-    sql = "SELECT * FROM users WHERE is_verified=1 AND (role='worker' OR role IS NULL)"
+    sql = """
+    SELECT users.*
+    FROM users
+    LEFT JOIN comments ON comments.user_id = users.id
+    WHERE users.is_verified=1 AND (users.role='worker' OR users.role IS NULL)
+    """
     params = []
 
     if q:
-        sql += " AND (name LIKE ? OR city LIKE ? OR bio LIKE ?)"
+        sql += " AND (users.name LIKE ? OR users.city LIKE ? OR users.bio LIKE ? OR users.section LIKE ?)"
         like_q = f"%{q}%"
-        params.extend([like_q, like_q, like_q])
+        params.extend([like_q, like_q, like_q, like_q])
 
     if section:
-        sql += " AND section=?"
+        sql += " AND users.section=?"
         params.append(section)
 
     if governorate:
-        sql += " AND governorate=?"
+        sql += " AND users.governorate=?"
         params.append(governorate)
 
-    sql += " ORDER BY id DESC"
+    if trusted_only:
+        sql += " AND users.verified_worker=1"
 
-    show_results = bool(q or section or governorate)
+    sql += " GROUP BY users.id"
+
+    if min_rating in {"1", "2", "3", "4", "5"}:
+        sql += " HAVING COALESCE(AVG(comments.rating), 0) >= ?"
+        params.append(int(min_rating))
+
+    if sort == "rating":
+        sql += " ORDER BY users.is_pinned DESC, COALESCE(AVG(comments.rating),0) DESC, users.id DESC"
+    elif sort == "views":
+        sql += " ORDER BY users.is_pinned DESC, users.views DESC, users.id DESC"
+    else:
+        sql += " ORDER BY users.is_pinned DESC, users.id DESC"
+
+    show_results = bool(q or section or governorate or trusted_only or min_rating or request.args.get("sort"))
 
     with get_db() as con:
         rows = con.execute(sql, params).fetchall() if show_results else []
 
     if show_results:
-        cards = "".join(worker_card(row) for row in rows) if rows else '<div class="msg">لا توجد نتائج ضمن هذا الاختصاص</div>'
+        cards = "".join(worker_card(row) for row in rows) if rows else '<div class="msg">لا توجد نتائج بهذه الفلاتر</div>'
     else:
-        cards = '<div class="msg">اختر الاختصاص من الأيقونات بالأعلى حتى تظهر الحسابات هنا</div>'
+        cards = '<div class="msg">اختر الاختصاص من الأيقونات بالأعلى أو افتح البحث الاحترافي لتظهر النتائج هنا</div>'
 
     section_options = build_specialties_options(section, "")
     gov_options = build_governorates_options(governorate)
 
-    user_buttons = ""
-    logged_specialties = ""
     if "user" in session:
         user_buttons = """
         <a href="/profile"><button>ملفي الشخصي</button></a>
         <a href="/inbox"><button>الرسائل</button></a>
+        <a href="/workers-map"><button class="light-btn">خريطة العمال</button></a>
         <a href="/logout"><button>تسجيل الخروج</button></a>
         """
-        logged_specialties = """
-        <h3 style="margin-top:22px;">الاختصاصات المتوفرة</h3>
-        """ + build_specialties_cards(section)
     else:
-        logged_specialties = """
-        <h3 style="margin-top:22px;">الاختصاصات المتوفرة</h3>
-        """ + build_specialties_cards(section)
+        user_buttons = """
+        <a href="/workers-map"><button class="light-btn">خريطة العمال</button></a>
+        """
 
-    search_open_class = "show" if (q or section or governorate) else ""
+    logged_specialties = """
+    <h3 style="margin-top:22px;">الاختصاصات المتوفرة</h3>
+    """ + build_specialties_cards(section)
+
+    search_open_class = "show" if (q or section or governorate or trusted_only or min_rating or request.args.get("sort")) else ""
 
     selected_info = ""
     if section:
-        selected_info = f'''
+        selected_info = f"""
         <div class="msg">
             الاختصاص المختار: <strong>{section}</strong>
             <div style="margin-top:10px;">
-                <a href="/workers"><button type="button">عرض كل الأقسام بدون نتائج</button></a>
+                <a href="/workers"><button type="button">إعادة ضبط الفلاتر</button></a>
             </div>
         </div>
-        '''
+        """
+
+    sort_selected = {
+        "new": "selected" if sort == "new" else "",
+        "rating": "selected" if sort == "rating" else "",
+        "views": "selected" if sort == "views" else ""
+    }
+
+    min_rating_options = ""
+    for i in range(1, 6):
+        selected = "selected" if min_rating == str(i) else ""
+        min_rating_options += f'<option value="{i}" {selected}>{i} نجمة فأكثر</option>'
+
+    trusted_checked = "checked" if trusted_only else ""
 
     return render_template_string(
         STYLE + settings_corner() + f"""
@@ -1222,23 +1513,23 @@ def workers():
             <div class="hero-panel" style="margin-bottom:16px;">
                 <div class="inline" style="margin-bottom:10px;">
                     <span class="hero-badge">استعراض العمال</span>
-                    <span class="hero-badge">فلترة حسب الاختصاص والمحافظة</span>
+                    <span class="hero-badge">بحث احترافي + تقييم + خريطة</span>
                 </div>
                 <h2>صفحة العمال</h2>
-                <div class="section-subtitle">صفحة مرتبة لعرض المهنيين وأعمالي والملفات الشخصية مع بحث سهل وواضح.</div>
+                <div class="section-subtitle">فلترة متقدمة حسب الاختصاص والمحافظة والتقييم مع إظهار العمال الموثوقين والمميزين.</div>
             </div>
 
             <div class="search-toggle">
-                <button type="button" onclick="toggleSearchPanel()">🔍 إظهار / إخفاء البحث</button>
+                <button type="button" onclick="toggleSearchPanel()">🔍 إظهار / إخفاء البحث الاحترافي</button>
             </div>
 
             <div id="searchPanel" class="search-panel {search_open_class}">
                 <h3 style="margin-bottom:8px;">فلترة النتائج</h3>
                 <form method="get">
-                    <div class="search-inline-grid">
+                    <div class="filter-grid-pro">
                         <div>
                             <label>بحث عام</label>
-                            <input name="q" value="{q}" placeholder="ابحث بالاسم أو المدينة أو النبذة">
+                            <input name="q" value="{q}" placeholder="ابحث بالاسم أو المدينة أو النبذة أو الاختصاص">
                         </div>
                         <div>
                             <label>الاختصاص</label>
@@ -1255,10 +1546,26 @@ def workers():
                             </select>
                         </div>
                         <div>
+                            <label>الترتيب</label>
+                            <select name="sort">
+                                <option value="new" {sort_selected["new"]}>الأحدث</option>
+                                <option value="rating" {sort_selected["rating"]}>الأعلى تقييماً</option>
+                                <option value="views" {sort_selected["views"]}>الأكثر مشاهدة</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label>الحد الأدنى للتقييم</label>
+                            <select name="min_rating">
+                                <option value="">أي تقييم</option>
+                                {min_rating_options}
+                            </select>
+                        </div>
+                        <div>
                             <label>&nbsp;</label>
                             <button>بحث</button>
                         </div>
                     </div>
+                    <label style="margin-top:10px;"><input type="checkbox" name="trusted_only" value="1" {trusted_checked}> عرض العمال الموثوقين فقط</label>
                 </form>
             </div>
 
@@ -1285,6 +1592,7 @@ def workers():
     )
 
 
+
 @app.route("/worker/<int:user_id>", methods=["GET", "POST"])
 def worker_profile(user_id):
     with get_db() as con:
@@ -1296,6 +1604,11 @@ def worker_profile(user_id):
 
     if not worker:
         return render_template_string(STYLE + settings_corner() + '<div class="container"><div class="msg">المستخدم غير موجود</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
+
+    with get_db() as con:
+        con.execute("UPDATE users SET views = COALESCE(views, 0) + 1 WHERE id=?", (user_id,))
+        con.commit()
+        worker = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
 
     if request.method == "POST":
         if "user" not in session:
@@ -1340,6 +1653,8 @@ def worker_profile(user_id):
 
         return redirect(url_for("worker_profile", user_id=user_id))
 
+    avg_rating, rating_count = get_worker_rating_summary(user_id)
+    stars = render_stars(avg_rating)
     profile_html = (
         f'<img src="{url_for("uploaded_file", filename=worker["profile_pic"])}" class="profile-img-large" alt="profile">'
         if worker["profile_pic"]
@@ -1353,18 +1668,19 @@ def worker_profile(user_id):
             f'<img src="{url_for("uploaded_file", filename=img)}" alt="work">' for img in imgs
         ) + '</div>'
 
-    phone_html = f'<div><strong>الهاتف:</strong> {worker["phone"]}</div>' if worker["show_phone"] else ""
+    phone_html = f'<div class="detail-box"><strong>الهاتف</strong>{worker["phone"]}</div>' if worker["show_phone"] else ""
     wa_html = f'<a class="link-btn" target="_blank" href="{build_whatsapp_link(worker["phone"])}">مراسلة واتساب</a>' if worker["show_whatsapp"] else ""
+    map_html = f'<a class="link-btn map-link-btn" target="_blank" href="{worker_map_link(worker)}">فتح الموقع على الخريطة</a>'
 
     comments_html = ""
     if comments:
         blocks = []
         for c in comments:
-            stars = "★" * int(c["rating"] or 0) + "☆" * (5 - int(c["rating"] or 0))
+            cstars = "★" * int(c["rating"] or 0) + "☆" * (5 - int(c["rating"] or 0))
             blocks.append(f"""
             <div class="comment-card">
                 <div><strong>{c["commenter_name"]}</strong></div>
-                <div class="star">{stars}</div>
+                <div class="star">{cstars}</div>
                 <div>{c["comment"]}</div>
                 <div class="small">{c["created_at"]}</div>
             </div>
@@ -1376,6 +1692,9 @@ def worker_profile(user_id):
     message_button = ""
     if "user" in session and worker["allow_messages"]:
         message_button = f'<a class="link-btn" href="/message/{worker["id"]}">إرسال رسالة</a>'
+
+    verified_badge = trusted_badge_html(worker)
+    pinned_badge = pinned_badge_html(worker)
 
     comment_form = ""
     if "user" in session:
@@ -1408,9 +1727,16 @@ def worker_profile(user_id):
                         <div class="inline" style="margin-bottom:10px;">
                             <span class="worker-specialty-badge">{get_specialty_icon(worker["section"])} {worker["section"] or "-"}</span>
                             <span class="badge">{worker["governorate"] or "-"}</span>
-                            <span class="badge">ملف عامل</span>
+                            {verified_badge}
+                            {pinned_badge}
+                            <span class="badge">👁 {worker["views"] or 0} مشاهدة</span>
                         </div>
                         <h2>{worker["name"]}</h2>
+                        <div class="worker-rating-line">
+                            <span class="rating-stars">{stars}</span>
+                            <span class="badge">⭐ {avg_rating} / 5</span>
+                            <span class="badge">{rating_count} تقييم</span>
+                        </div>
                         <div class="section-subtitle">صفحة شخصية تعرض المعلومات الأساسية والأعمال وطرق التواصل بشكل أوضح.</div>
                         <div style="margin-top:10px;">{worker["bio"] or "لا توجد نبذة حالياً"}</div>
 
@@ -1424,6 +1750,7 @@ def worker_profile(user_id):
                         <div class="inline" style="margin-top:12px;">
                             {wa_html}
                             {message_button}
+                            {map_html}
                         </div>
                     </div>
                 </div>
@@ -1444,6 +1771,7 @@ def worker_profile(user_id):
         </body></html>
         """
     )
+
 
 
 @app.route("/message/<int:user_id>", methods=["GET", "POST"])
@@ -1616,6 +1944,11 @@ def settings():
             (user["id"],)
         ).fetchone()
 
+        sent_messages = con.execute(
+            "SELECT COUNT(*) AS c FROM messages WHERE sender_name=?",
+            (session["user"],)
+        ).fetchone()["c"]
+
     avg_rating = rating_row["avg_rating"] if rating_row and rating_row["avg_rating"] is not None else None
 
     profile_html = (
@@ -1644,6 +1977,9 @@ def settings():
                     <div class="small">عدد الرسائل غير المقروءة: {unread}</div>
                     <div class="small">عدد التعليقات: {comments_count}</div>
                     <div class="small">التقييم العام: {rating_text}</div>
+                    <div class="small">المشاهدات: {user["views"] or 0}</div>
+                    <div class="small">الرسائل المرسلة: {sent_messages}</div>
+                    <div class="small">الحالة: {'عامل موثوق ✔️' if user["verified_worker"] else 'عامل عادي'}</div>
                 </div>
             </div>
 
@@ -1944,11 +2280,20 @@ def admin_panel():
         verified_count = con.execute("SELECT COUNT(*) AS c FROM users WHERE is_verified=1").fetchone()["c"]
         messages_count = con.execute("SELECT COUNT(*) AS c FROM messages").fetchone()["c"]
         comments_count = con.execute("SELECT COUNT(*) AS c FROM comments").fetchone()["c"]
-        users = con.execute("SELECT * FROM users ORDER BY id DESC").fetchall()
+        trusted_count = con.execute("SELECT COUNT(*) AS c FROM users WHERE verified_worker=1").fetchone()["c"]
+        pinned_count = con.execute("SELECT COUNT(*) AS c FROM users WHERE is_pinned=1").fetchone()["c"]
+        users = con.execute("SELECT * FROM users ORDER BY is_pinned DESC, id DESC").fetchall()
         logs = con.execute("SELECT * FROM admin_logs ORDER BY id DESC LIMIT 20").fetchall()
 
     users_html = ""
     for u in users:
+        avg_rating, rating_count = get_worker_rating_summary(u["id"])
+        verified_badge = trusted_badge_html(u)
+        pinned_badge = pinned_badge_html(u)
+        trust_toggle = f'/admin/unverify-worker/{u["id"]}' if u["verified_worker"] else f'/admin/verify-worker/{u["id"]}'
+        trust_text = 'إلغاء التوثيق' if u["verified_worker"] else 'توثيق العامل'
+        pin_toggle = f'/admin/unpin-worker/{u["id"]}' if u["is_pinned"] else f'/admin/pin-worker/{u["id"]}'
+        pin_text = 'إلغاء التثبيت' if u["is_pinned"] else 'تثبيت بالأعلى'
         users_html += f"""
         <div class="admin-user-card">
             <div><strong>{u["name"]}</strong></div>
@@ -1956,11 +2301,17 @@ def admin_panel():
             <div class="inline" style="margin:10px 0;">
                 <span class="worker-specialty-badge">{get_specialty_icon(u['section'])} {u["section"] or "-"}</span>
                 <span class="badge">{u["governorate"] or "-"}</span>
+                {verified_badge}
+                {pinned_badge}
             </div>
             <div class="small">الهاتف: {u["phone"] or "-"}</div>
             <div class="small">المدينة: {u["city"] or "-"}</div>
+            <div class="small">التقييم: ⭐ {avg_rating} / 5 ({rating_count})</div>
+            <div class="small">المشاهدات: 👁 {u["views"] or 0}</div>
             <div class="inline" style="margin-top:12px;">
                 <a class="link-btn" href="/worker/{u['id']}">فتح الملف</a>
+                <a class="link-btn" href="{trust_toggle}">{trust_text}</a>
+                <a class="link-btn" href="{pin_toggle}">{pin_text}</a>
                 <a class="link-btn link-red" href="/admin/delete-user/{u['id']}">حذف المستخدم</a>
             </div>
         </div>
@@ -1982,6 +2333,7 @@ def admin_panel():
                 <div class="inline">
                     <a href="/"><button class="light-btn">الرئيسية</button></a>
                     <a href="/admin/settings"><button class="light-btn">إعدادات الأدمن</button></a>
+                    <a href="/workers-map"><button class="light-btn">الخريطة</button></a>
                     <a href="/admin/logout"><button>خروج الأدمن</button></a>
                 </div>
                 <span class="badge">لوحة تحكم الأدمن</span>
@@ -1990,7 +2342,7 @@ def admin_panel():
             <div class="hero-panel" style="margin-top:14px;margin-bottom:16px;">
                 <div class="inline" style="margin-bottom:10px;">
                     <span class="hero-badge">إدارة المستخدمين</span>
-                    <span class="hero-badge">إحصائيات ومراجعة سريعة</span>
+                    <span class="hero-badge">توثيق + تثبيت + تقييم</span>
                 </div>
                 <h2>لوحة الأدمن</h2>
                 <div class="section-subtitle">واجهة أقوى لعرض الإحصائيات والمستخدمين وسجل العمليات الأخيرة بشكل أنظف.</div>
@@ -1999,8 +2351,15 @@ def admin_panel():
             <div class="admin-stats-grid">
                 <div class="admin-stat"><div class="label">عدد المستخدمين</div><div class="value">{users_count}</div></div>
                 <div class="admin-stat"><div class="label">الحسابات المفعلة</div><div class="value">{verified_count}</div></div>
+                <div class="admin-stat"><div class="label">العمال الموثوقون</div><div class="value">{trusted_count}</div></div>
+                <div class="admin-stat"><div class="label">المثبتون</div><div class="value">{pinned_count}</div></div>
+            </div>
+
+            <div class="admin-stats-grid" style="margin-top:14px;">
                 <div class="admin-stat"><div class="label">عدد الرسائل</div><div class="value">{messages_count}</div></div>
                 <div class="admin-stat"><div class="label">عدد التعليقات</div><div class="value">{comments_count}</div></div>
+                <div class="admin-stat"><div class="label">خريطة العمال</div><div class="value">جاهزة</div></div>
+                <div class="admin-stat"><div class="label">البحث الاحترافي</div><div class="value">مفعل</div></div>
             </div>
 
             <h3>المستخدمون</h3>
@@ -2014,6 +2373,149 @@ def admin_panel():
         </body></html>
         """
     )
+
+
+
+@app.route("/admin/verify-worker/<int:user_id>")
+def admin_verify_worker(user_id):
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+    with get_db() as con:
+        user = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        if user:
+            con.execute("UPDATE users SET verified_worker=1 WHERE id=?", (user_id,))
+            con.commit()
+            log_admin_action("توثيق عامل", user["name"], f"تم توثيق المستخدم رقم {user_id}")
+    return redirect(url_for("admin_panel"))
+
+
+@app.route("/admin/unverify-worker/<int:user_id>")
+def admin_unverify_worker(user_id):
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+    with get_db() as con:
+        user = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        if user:
+            con.execute("UPDATE users SET verified_worker=0 WHERE id=?", (user_id,))
+            con.commit()
+            log_admin_action("إلغاء توثيق عامل", user["name"], f"تم إلغاء توثيق المستخدم رقم {user_id}")
+    return redirect(url_for("admin_panel"))
+
+
+@app.route("/admin/pin-worker/<int:user_id>")
+def admin_pin_worker(user_id):
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+    with get_db() as con:
+        user = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        if user:
+            con.execute("UPDATE users SET is_pinned=1 WHERE id=?", (user_id,))
+            con.commit()
+            log_admin_action("تثبيت عامل", user["name"], f"تم تثبيت المستخدم رقم {user_id} بالأعلى")
+    return redirect(url_for("admin_panel"))
+
+
+@app.route("/admin/unpin-worker/<int:user_id>")
+def admin_unpin_worker(user_id):
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+    with get_db() as con:
+        user = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        if user:
+            con.execute("UPDATE users SET is_pinned=0 WHERE id=?", (user_id,))
+            con.commit()
+            log_admin_action("إلغاء تثبيت عامل", user["name"], f"تم إلغاء تثبيت المستخدم رقم {user_id}")
+    return redirect(url_for("admin_panel"))
+
+
+@app.route("/workers-map")
+def workers_map():
+    with get_db() as con:
+        workers = con.execute("""
+            SELECT * FROM users
+            WHERE is_verified=1 AND (role='worker' OR role IS NULL)
+            ORDER BY is_pinned DESC, views DESC, id DESC
+        """).fetchall()
+
+    markers = []
+    list_html = ""
+    for w in workers:
+        avg_rating, rating_count = get_worker_rating_summary(w["id"])
+        lat, lng = governorate_coords(w["governorate"])
+        popup = f"""
+        <div style='min-width:190px;text-align:right;direction:rtl;line-height:1.7'>
+            <div style='font-weight:700;font-size:15px;color:#0f172a'>⭐ {avg_rating} / 5</div>
+            <div style='font-weight:800;font-size:16px;margin-top:2px;color:#111827'>{w["name"]}</div>
+            <div style='font-size:13px;color:#334155'>{w["section"] or "-"}</div>
+            <div style='font-size:13px;color:#475569'>📍 {w["city"] or "-"} - {w["governorate"] or "-"}</div>
+        </div>
+        """
+        markers.append({
+            "lat": lat,
+            "lng": lng,
+            "popup": popup,
+            "link": f"/worker/{w['id']}"
+        })
+        list_html += f"""
+        <div class="card" style="margin-bottom:10px;">
+            <div class="inline" style="margin-bottom:8px;">
+                <span class="worker-specialty-badge">{get_specialty_icon(w["section"])} {w["section"] or "-"}</span>
+                <span class="badge">{w["governorate"] or "-"}</span>
+                {trusted_badge_html(w)}
+                {pinned_badge_html(w)}
+            </div>
+            <div class="worker-rating-line" style="margin-bottom:8px;">
+                <span class="badge">⭐ {avg_rating} / 5</span>
+                <span class="rating-stars">{render_stars(avg_rating)}</span>
+                <span class="badge">👁 {w["views"] or 0}</span>
+            </div>
+            <h3>{w["name"]}</h3>
+            <div class="small">📍 {w["city"] or "-"} - {w["governorate"] or "-"}</div>
+            <div class="inline" style="margin-top:10px;">
+                <a class="link-btn" href="/worker/{w['id']}">فتح الملف</a>
+                <a class="link-btn map-link-btn" target="_blank" href="{worker_map_link(w)}">خرائط Google</a>
+            </div>
+        </div>
+        """
+
+    markers_json = json.dumps(markers, ensure_ascii=False)
+
+    return render_template_string(
+        STYLE + f"""
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+        <div class="container">
+            <div class="topbar">
+                <div><a href="/workers"><button class="light-btn">رجوع للعمال</button></a></div>
+                <div class="inline"><span class="badge">خريطة العمال</span></div>
+            </div>
+            <div class="hero-panel" style="margin-bottom:16px;">
+                <h2>خريطة العمال</h2>
+                <div class="section-subtitle">عرض تقريبي لمواقع العمال حسب المحافظة ليسهل الوصول السريع لهم.</div>
+            </div>
+
+            <div class="map-page-grid">
+                <div id="workersMap"></div>
+                <div class="map-list-card">{list_html if list_html else '<div class="msg">لا يوجد عمال لعرضهم على الخريطة</div>'}</div>
+            </div>
+        </div>
+        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+        <script>
+        const markers = {markers_json};
+        const map = L.map('workersMap').setView([33.3152, 44.3661], 6);
+        L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+            maxZoom: 18,
+            attribution: '&copy; OpenStreetMap'
+        }}).addTo(map);
+
+        markers.forEach(function(item) {{
+            const marker = L.marker([item.lat, item.lng]).addTo(map);
+            marker.bindPopup(item.popup + '<div style="margin-top:8px"><a href="' + item.link + '">فتح الملف</a></div>');
+        }});
+        </script>
+        </body></html>
+        """
+    )
+
 
 
 @app.route("/admin/delete-user/<int:user_id>")
