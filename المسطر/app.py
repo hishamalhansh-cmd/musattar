@@ -7,7 +7,6 @@ import uuid
 import json
 import datetime
 import time
-import imghdr
 
 from flask import Flask, render_template_string, request, redirect, session, url_for, send_from_directory
 from email.mime.text import MIMEText
@@ -24,7 +23,7 @@ def env_flag(name, default=False):
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
-
+ش
 
 SENDER_EMAIL = "hishamalhansh@gmail.com"
 SENDER_APP_PASSWORD = "dnwu yrac sbxs cplk"
@@ -213,10 +212,7 @@ def detect_real_image_type(file_obj):
         file_obj.stream.seek(0)
         header = file_obj.stream.read(512)
         file_obj.stream.seek(current_pos)
-        detected = imghdr.what(None, header)
-        if detected == "jpeg":
-            return "jpg"
-        return detected
+        return None
     except Exception:
         return None
 
