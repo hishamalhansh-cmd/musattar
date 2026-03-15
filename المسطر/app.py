@@ -23,7 +23,7 @@ app.secret_key = os.environ.get("SECRET_KEY", "adam_secret_key_2026")
 def env_flag(name, default=False):
     value = os.environ.get(name)
     if value is None:
-        return default
+        return defaulta
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
@@ -34,8 +34,8 @@ DEV_CONSOLE_OTP_FALLBACK = True
 MAIL_ENABLED = env_flag("MAIL_ENABLED", False)
 OTP_EXPIRY_SECONDS = 10 * 60
 
-CONTACT_PHONE = "009647864145165"
-CONTACT_EMAIL = "hishamalhanash@gmail.com"
+CONTACT_PHONE = "+9647864145165"
+CONTACT_EMAIL = "hishamalhansh@gmail.com"
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 DB_PATH = os.path.join(BASE_DIR, "database.db")
@@ -894,6 +894,14 @@ label input[type="checkbox"]{
     margin-left:8px;
 }
 
+
+.support-box{margin-top:18px;background:linear-gradient(180deg, rgba(37,99,235,.14), rgba(14,165,233,.10));border:1px solid rgba(96,165,250,.24);border-radius:20px;padding:16px}
+.support-box h3{margin:0 0 8px;font-size:18px}
+.support-box p{margin:0 0 10px;color:var(--muted);font-size:14px;line-height:1.8}
+.support-links{display:flex;gap:10px;flex-wrap:wrap}
+.support-chip{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:10px 14px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(96,165,250,.24);font-size:14px;font-weight:700}
+.support-chip:hover{background:rgba(37,99,235,.20)}
+
 </style>
 </head>
 <body>
@@ -953,6 +961,16 @@ HOME_HTML = STYLE + """
         <div class="home-feature-card"><div class="home-feature-icon">⭐</div><h3>تقييمات أوضح</h3><div class="small">التعليقات والتقييمات تظهر بشكل مرتب داخل صفحة كل عامل.</div></div>
         <div class="home-feature-card"><div class="home-feature-icon">🛠️</div><h3>عرض مهني منظم</h3><div class="small">بطاقات نظيفة وصور أعمال وأزرار مباشرة للتصفح والتواصل.</div></div>
     </div>
+
+    <div class="support-box">
+        <h3>الدعم الفني</h3>
+        <p>لأي مشكلة أو استفسار داخل منصة المسطر، تواصل مع الدعم الفني بشكل مباشر وسريع.</p>
+        <div class="support-links">
+            <a class="support-chip" href="tel:+9647864145165">📞 +9647864145165</a>
+            <a class="support-chip" href="mailto:hishamalhansh@gmail.com">✉️ hishamalhansh@gmail.com</a>
+        </div>
+    </div>
+
     <div class="footer-note">المسطر — منصة مهنية لعرض الخبرات وربط أصحاب الأعمال بالمهنيين</div>
 </div>
 <a class="bottom-corner-link bottom-left-link" href="/admin">🛠️</a>
@@ -1133,6 +1151,16 @@ def register():
 
                 <button>متابعة التفعيل</button>
             </form>
+
+            <div class="support-box">
+                <h3>الدعم الفني</h3>
+                <p>إذا واجهتك مشكلة في تسجيل الدخول أو الحساب، تواصل معنا مباشرة عبر الرقم أو البريد الإلكتروني.</p>
+                <div class="support-links">
+                    <a class="support-chip" href="tel:+9647864145165">📞 +9647864145165</a>
+                    <a class="support-chip" href="mailto:hishamalhansh@gmail.com">✉️ hishamalhansh@gmail.com</a>
+                </div>
+            </div>
+
         </div>
         {specialty_script("")}
         </body></html>
@@ -1249,6 +1277,16 @@ def login():
                 <button>دخول</button>
             </form>
             <a href="/forgot"><button>نسيت كلمة المرور</button></a>
+
+            <div class="support-box">
+                <h3>الدعم الفني</h3>
+                <p>إذا واجهتك مشكلة في تسجيل الدخول أو الحساب، تواصل معنا مباشرة عبر الرقم أو البريد الإلكتروني.</p>
+                <div class="support-links">
+                    <a class="support-chip" href="tel:+9647864145165">📞 +9647864145165</a>
+                    <a class="support-chip" href="mailto:hishamalhansh@gmail.com">✉️ hishamalhansh@gmail.com</a>
+                </div>
+            </div>
+
         </div>
         </body></html>
         """
