@@ -2284,6 +2284,8 @@ def admin_panel():
     if not admin_required():
         return redirect(url_for("admin_login"))
 
+    admin_q = sanitize_input(request.args.get("q", ""), 80)
+
     with get_db() as con:
         users_count = con.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
         verified_count = con.execute("SELECT COUNT(*) AS c FROM users WHERE is_verified=1").fetchone()["c"]
@@ -2293,7 +2295,16 @@ def admin_panel():
         pinned_count = con.execute("SELECT COUNT(*) AS c FROM users WHERE is_pinned=1").fetchone()["c"]
         blocked_count = con.execute("SELECT COUNT(*) AS c FROM users WHERE COALESCE(is_blocked,0)=1").fetchone()["c"]
         hidden_count = con.execute("SELECT COUNT(*) AS c FROM users WHERE COALESCE(hidden_by_admin,0)=1").fetchone()["c"]
-        users = con.execute("SELECT * FROM users ORDER BY is_pinned DESC, id DESC").fetchall()
+
+        if admin_q:
+            like_q = f"%{admin_q}%"
+            users = con.execute(
+                "SELECT * FROM users WHERE name LIKE ? OR phone LIKE ? OR email LIKE ? ORDER BY is_pinned DESC, id DESC",
+                (like_q, like_q, like_q)
+            ).fetchall()
+        else:
+            users = con.execute("SELECT * FROM users ORDER BY is_pinned DESC, id DESC").fetchall()
+
         logs = con.execute("SELECT * FROM admin_logs ORDER BY id DESC LIMIT 20").fetchall()
 
     users_html = ""
@@ -2384,6 +2395,22 @@ def admin_panel():
                 <div class="admin-stat"><div class="label">عدد التعليقات</div><div class="value">{comments_count}</div></div>
                 <div class="admin-stat"><div class="label">خريطة العمال</div><div class="value">جاهزة</div></div>
                 <div class="admin-stat"><div class="label">البحث الاحترافي</div><div class="value">مفعل</div></div>
+            </div>
+
+            <div class="admin-search-box" style="margin-bottom:16px;">
+                <h3 style="margin-bottom:8px;">بحث داخل لوحة الأدمن</h3>
+                <form method="get" action="/admin/panel">
+                    <div class="search-inline-grid">
+                        <div>
+                            <label>بحث بالاسم أو الهاتف أو الإيميل</label>
+                            <input name="q" value="{admin_q}" placeholder="اكتب اسم المستخدم أو الهاتف أو البريد">
+                        </div>
+                        <div>
+                            <label>&nbsp;</label>
+                            <button>بحث</button>
+                        </div>
+                    </div>
+                </form>
             </div>
 
             <h3>المستخدمون</h3>
