@@ -15,6 +15,8 @@ from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
+from datetime import timedelta
+app.permanent_session_lifetime = timedelta(days=30)
 app.secret_key = os.environ.get("SECRET_KEY", "adam_secret_key_2026")
 
 
@@ -1213,7 +1215,9 @@ def login():
         if user["is_blocked"]:
             return render_template_string(STYLE + settings_corner() + '<div class="container"><div class="msg">هذا الحساب محظور من قبل الإدارة</div><a href="/login"><button>رجوع</button></a></div></body></html>')
 
+        session.permanent = True
         session["user"] = user["name"]
+        session["user_id"] = user["id"]
         session.permanent = True
         LOGIN_ATTEMPTS.pop(ip, None)
         return redirect(url_for("workers"))
