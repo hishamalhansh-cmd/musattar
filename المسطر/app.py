@@ -3356,8 +3356,7 @@ def passkey_login():
         <div class="container narrow-container">
             <a href="/login"><button>رجوع</button></a>
             <h2>الدخول بالبصمة</h2>
-            <div class="section-subtitle">اكتب بريدك الإلكتروني أولاً، ثم استخدم البصمة أو قفل الجهاز المحفوظ.</div>
-            <input id="passkeyEmail" type="email" placeholder="البريد الإلكتروني">
+            <div class="section-subtitle">ضع بصمتك فقط، وإذا كانت البصمة مفعلة على هذا الجهاز سيدخل الحساب مباشرة بدون كتابة البريد الإلكتروني.</div>
             <button id="passkeyLoginBtn" type="button">الدخول بالبصمة</button>
             <div id="passkeyLoginMsg" class="notice" style="margin-top:12px;"></div>
         </div>
@@ -3365,20 +3364,18 @@ def passkey_login():
         <script src="https://unpkg.com/@simplewebauthn/browser/dist/bundle/index.umd.min.js"></script>
         <script>
         async function loginPasskey() {
-            const email = document.getElementById("passkeyEmail").value.trim();
             const msg = document.getElementById("passkeyLoginMsg");
-            if (!email) {
-                msg.textContent = "اكتب البريد الإلكتروني أولاً";
-                return;
-            }
             try {
                 msg.textContent = "جاري تجهيز طلب الدخول...";
                 const beginResp = await fetch("/passkey/auth/begin", {
                     method: "POST",
                     headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({email}),
+                    body: JSON.stringify({}),
                 });
-                const beginData = await beginResp.json();
+                const beginText = await beginResp.text();
+                let beginData = {};
+                try { beginData = JSON.parse(beginText); } catch(e) { throw new Error("السيرفر لم يرجع JSON صحيح"); }
+
                 if (!beginResp.ok) {
                     msg.textContent = beginData.error || "تعذر بدء الدخول";
                     return;
@@ -3388,9 +3385,12 @@ def passkey_login():
                 const finishResp = await fetch("/passkey/auth/finish", {
                     method: "POST",
                     headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({email, credential: assertion}),
+                    body: JSON.stringify({credential: assertion}),
                 });
-                const finishData = await finishResp.json();
+                const finishText = await finishResp.text();
+                let finishData = {};
+                try { finishData = JSON.parse(finishText); } catch(e) { throw new Error("السيرفر لم يرجع JSON صحيح"); }
+
                 if (finishData.ok) {
                     window.location.href = finishData.redirect || "/workers";
                 } else {
@@ -3405,7 +3405,6 @@ def passkey_login():
         </body></html>
         """
     )
-
 
 @app.route("/passkey/register/begin", methods=["POST"])
 def passkey_register_begin():
@@ -3494,35 +3493,19 @@ def passkey_auth_begin():
     if not passkeys_supported():
         return jsonify({"error": "مكتبة WebAuthn غير مثبتة على السيرفر"}), 400
 
-    data = request.get_json(silent=True) or {}
-    email = sanitize_input(data.get("email", ""), 120).lower()
-    if not email:
-        return jsonify({"error": "البريد الإلكتروني مطلوب"}), 400
-
     with get_db() as con:
-        user = con.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
-        if not user:
-            return jsonify({"error": "هذا البريد غير موجود"}), 404
-        creds = con.execute("SELECT * FROM user_passkeys WHERE user_id=?", (user["id"],)).fetchall()
+        count_row = con.execute("SELECT COUNT(*) AS c FROM user_passkeys").fetchone()
 
-    if not creds:
-        return jsonify({"error": "هذا الحساب لم يفعّل البصمة بعد"}), 400
-
-    allow_credentials = [
-        PublicKeyCredentialDescriptor(id=b64url_decode_to_bytes(row["credential_id"]))
-        for row in creds if row["credential_id"]
-    ]
+    if not count_row or int(count_row["c"] or 0) == 0:
+        return jsonify({"error": "لا توجد أي بصمة مفعلة حتى الآن"}), 400
 
     options = generate_authentication_options(
         rp_id=get_rp_id(),
-        allow_credentials=allow_credentials,
         user_verification=UserVerificationRequirement.REQUIRED,
     )
 
     session["passkey_auth_challenge"] = b64url_encode_bytes(options.challenge)
-    session["passkey_auth_email"] = email
     return jsonify(json.loads(options_to_json(options)))
-
 
 @app.route("/passkey/auth/finish", methods=["POST"])
 def passkey_auth_finish():
@@ -3530,22 +3513,24 @@ def passkey_auth_finish():
         return jsonify({"ok": False, "error": "WebAuthn غير مفعل"}), 400
 
     data = request.get_json(silent=True) or {}
-    email = sanitize_input(data.get("email", ""), 120).lower()
     credential = data.get("credential") or {}
     challenge_b64 = session.get("passkey_auth_challenge")
 
-    if not email or not challenge_b64:
+    if not challenge_b64:
         return jsonify({"ok": False, "error": "انتهت جلسة الدخول بالبصمة"}), 400
 
-    with get_db() as con:
-        user = con.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
-        if not user:
-            return jsonify({"ok": False, "error": "المستخدم غير موجود"}), 404
-        cred_id = credential.get("id") or credential.get("rawId") or ""
-        row = con.execute("SELECT * FROM user_passkeys WHERE credential_id=? AND user_id=?", (cred_id, user["id"])).fetchone()
+    cred_id = credential.get("id") or credential.get("rawId") or ""
+    if not cred_id:
+        return jsonify({"ok": False, "error": "معرّف البصمة غير موجود"}), 400
 
-    if not row:
-        return jsonify({"ok": False, "error": "البصمة غير مرتبطة بهذا الحساب"}), 400
+    with get_db() as con:
+        row = con.execute("SELECT * FROM user_passkeys WHERE credential_id=?", (cred_id,)).fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "هذه البصمة غير مرتبطة بأي حساب"}), 404
+
+        user = con.execute("SELECT * FROM users WHERE id=?", (row["user_id"],)).fetchone()
+        if not user:
+            return jsonify({"ok": False, "error": "الحساب المرتبط بالبصمة غير موجود"}), 404
 
     try:
         verification = verify_authentication_response(
@@ -3568,10 +3553,11 @@ def passkey_auth_finish():
         session.permanent = True
         session["user"] = user["name"]
         session["user_id"] = user["id"]
+        resp = jsonify({"ok": True, "redirect": url_for("workers")})
+        resp.set_cookie("remember_email", user["email"], max_age=60*60*24*30)
         session.pop("passkey_auth_challenge", None)
         session.pop("passkey_auth_email", None)
-
-        return jsonify({"ok": True, "redirect": url_for("workers")})
+        return resp
     except Exception as e:
         return jsonify({"ok": False, "error": "فشل التحقق من البصمة: " + str(e)}), 400
 
