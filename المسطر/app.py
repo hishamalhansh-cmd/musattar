@@ -912,7 +912,8 @@ document.addEventListener("DOMContentLoaded", function () {
 """
 
 def settings_corner():
-    if "user" in session:
+    hidden_paths = {"/login", "/register", "/forgot", "/reset"}
+    if "user" in session and request.path not in hidden_paths:
         return '''
         <div class="settings-floating">
             <a class="settings-btn" href="/settings" title="الإعدادات">الإعدادات</a>
@@ -985,10 +986,10 @@ def register():
         }
 
         if not d["name"] or not d["phone"] or not d["email"] or not d["password"]:
-            return render_template_string(STYLE + '<div class="container"><div class="msg">اكمل الحقول الأساسية</div><a href="/register"><button>رجوع</button></a></div></body></html>')
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">اكمل الحقول الأساسية</div><a href="/register"><button>رجوع</button></a></div></body></html>')
 
         if d["role"]=="worker" and (not d["section"] or not d["governorate"] or not d["city"] or not d["exp"]):
-            return render_template_string(STYLE + '<div class="container"><div class="msg">اكمل الحقول الأساسية</div><a href="/register"><button>رجوع</button></a></div></body></html>')
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">اكمل الحقول الأساسية</div><a href="/register"><button>رجوع</button></a></div></body></html>')
 
         
         # التحقق من العمر (18+)
@@ -997,31 +998,31 @@ def register():
             today = datetime.date.today()
             age = today.year - bdate.year - ((today.month, today.day) < (bdate.month, bdate.day))
             if age < 18:
-                return render_template_string(STYLE + '<div class="container"><div class="msg">يجب أن يكون العمر 18 سنة أو أكثر لإنشاء حساب</div><a href="/register"><button>رجوع</button></a></div></body></html>')
+                return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">يجب أن يكون العمر 18 سنة أو أكثر لإنشاء حساب</div><a href="/register"><button>رجوع</button></a></div></body></html>')
         except Exception:
-            return render_template_string(STYLE + '<div class="container"><div class="msg">تاريخ الميلاد غير صحيح</div><a href="/register"><button>رجوع</button></a></div></body></html>')
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">تاريخ الميلاد غير صحيح</div><a href="/register"><button>رجوع</button></a></div></body></html>')
 
         if not valid_email(d["email"]):
-            return render_template_string(STYLE + '<div class="container"><div class="msg">البريد الإلكتروني غير صحيح</div><a href="/register"><button>رجوع</button></a></div></body></html>')
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">البريد الإلكتروني غير صحيح</div><a href="/register"><button>رجوع</button></a></div></body></html>')
 
         d["phone"] = normalize_iraq_phone(d["phone"])
 
         if not valid_phone(d["phone"]):
-            return render_template_string(STYLE + '<div class="container"><div class="msg">رقم الهاتف غير صحيح</div><a href="/register"><button>رجوع</button></a></div></body></html>')
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">رقم الهاتف غير صحيح</div><a href="/register"><button>رجوع</button></a></div></body></html>')
 
         if not valid_password(d["password"]):
-            return render_template_string(STYLE + '<div class="container"><div class="msg">كلمة المرور قصيرة</div><a href="/register"><button>رجوع</button></a></div></body></html>')
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">كلمة المرور قصيرة</div><a href="/register"><button>رجوع</button></a></div></body></html>')
 
         if d["governorate"] not in IRAQ_GOVERNORATES:
-            return render_template_string(STYLE + '<div class="container"><div class="msg">اختر محافظة صحيحة</div><a href="/register"><button>رجوع</button></a></div></body></html>')
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">اختر محافظة صحيحة</div><a href="/register"><button>رجوع</button></a></div></body></html>')
 
         if d["section"] not in SPECIALTIES:
-            return render_template_string(STYLE + '<div class="container"><div class="msg">اختر اختصاص صحيح</div><a href="/register"><button>رجوع</button></a></div></body></html>')
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">اختر اختصاص صحيح</div><a href="/register"><button>رجوع</button></a></div></body></html>')
 
         profile_pic = ""
         profile_file = request.files.get("profile_pic")
         if not profile_file or not profile_file.filename:
-            return render_template_string(STYLE + '<div class="container"><div class="msg">الصورة الشخصية إجبارية</div><a href="/register"><button>رجوع</button></a></div></body></html>')
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">الصورة الشخصية إجبارية</div><a href="/register"><button>رجوع</button></a></div></body></html>')
 
         valid_img, msg = validate_uploaded_image(profile_file)
         if not valid_img:
@@ -1053,7 +1054,7 @@ def register():
             old = con.execute("SELECT id FROM users WHERE phone=? OR email=?", (d["phone"], d["email"])).fetchone()
             if old:
                 cleanup_saved_files(d)
-                return render_template_string(STYLE + '<div class="container"><div class="msg">رقم الهاتف أو البريد مستخدم مسبقاً</div><a href="/register"><button>رجوع</button></a></div></body></html>')
+                return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">رقم الهاتف أو البريد مستخدم مسبقاً</div><a href="/register"><button>رجوع</button></a></div></body></html>')
 
         otp = str(random.randint(100000, 999999))
         session["pending_user"] = d
@@ -1146,7 +1147,7 @@ def verify():
     console_notice = session.get("otp_console_notice", "")
 
     if not pending_user or not otp_value:
-        return render_template_string(STYLE + '<div class="container"><div class="msg">انتهت جلسة التفعيل</div><a href="/register"><button>الرجوع للتسجيل</button></a></div></body></html>')
+        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">انتهت جلسة التفعيل</div><a href="/register"><button>الرجوع للتسجيل</button></a></div></body></html>')
 
     if request.method == "POST":
         if otp_is_expired():
@@ -1155,7 +1156,7 @@ def verify():
             session.pop("otp", None)
             session.pop("otp_created_at", None)
             session.pop("otp_console_notice", None)
-            return render_template_string(STYLE + '<div class="container"><div class="msg">انتهت صلاحية كود التفعيل</div><a href="/register"><button>الرجوع للتسجيل</button></a></div></body></html>')
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">انتهت صلاحية كود التفعيل</div><a href="/register"><button>الرجوع للتسجيل</button></a></div></body></html>')
 
         if request.form.get("code", "").strip() == otp_value:
             d = session["pending_user"]
@@ -1165,7 +1166,7 @@ def verify():
                     if old:
                         cleanup_saved_files(d)
                         session.clear()
-                        return render_template_string(STYLE + '<div class="container"><div class="msg">رقم الهاتف أو البريد مستخدم مسبقاً</div><a href="/register"><button>رجوع</button></a></div></body></html>')
+                        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">رقم الهاتف أو البريد مستخدم مسبقاً</div><a href="/register"><button>رجوع</button></a></div></body></html>')
 
                     con.execute("""
                     INSERT INTO users
@@ -1179,7 +1180,7 @@ def verify():
             except sqlite3.IntegrityError:
                 cleanup_saved_files(d)
                 session.clear()
-                return render_template_string(STYLE + '<div class="container"><div class="msg">تعذر حفظ الحساب</div><a href="/register"><button>رجوع</button></a></div></body></html>')
+                return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">تعذر حفظ الحساب</div><a href="/register"><button>رجوع</button></a></div></body></html>')
 
             session.pop("pending_user", None)
             session.pop("otp", None)
@@ -1187,7 +1188,7 @@ def verify():
             session.pop("otp_console_notice", None)
             return redirect(url_for("login"))
 
-        return render_template_string(STYLE + '<div class="container"><div class="msg">كود التفعيل غير صحيح</div><a href="/verify"><button>رجوع</button></a></div></body></html>')
+        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">كود التفعيل غير صحيح</div><a href="/verify"><button>رجوع</button></a></div></body></html>')
 
     note_html = f'<div class="msg">{console_notice}</div>' if console_notice else ""
 
@@ -1216,16 +1217,16 @@ def login():
         ip = get_client_ip()
 
         if too_many_attempts(LOGIN_ATTEMPTS, ip, LOGIN_WINDOW_SECONDS, LOGIN_MAX_ATTEMPTS):
-            return render_template_string(STYLE + '<div class="container"><div class="msg">تم تجاوز عدد محاولات الدخول، حاول لاحقاً</div><a href="/login"><button>رجوع</button></a></div></body></html>')
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">تم تجاوز عدد محاولات الدخول، حاول لاحقاً</div><a href="/login"><button>رجوع</button></a></div></body></html>')
 
         with get_db() as con:
             user = con.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
 
         if not user or not check_password_hash(user["password"], password):
-            return render_template_string(STYLE + '<div class="container"><div class="msg">البريد الإلكتروني أو كلمة المرور غير صحيحة</div><a href="/login"><button>رجوع</button></a></div></body></html>')
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">البريد الإلكتروني أو كلمة المرور غير صحيحة</div><a href="/login"><button>رجوع</button></a></div></body></html>')
 
         if user["is_blocked"]:
-            return render_template_string(STYLE + '<div class="container"><div class="msg">هذا الحساب محظور من قبل الإدارة</div><a href="/login"><button>رجوع</button></a></div></body></html>')
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">هذا الحساب محظور من قبل الإدارة</div><a href="/login"><button>رجوع</button></a></div></body></html>')
 
         session.permanent = True
         session["user"] = user["name"]
@@ -1259,13 +1260,13 @@ def forgot():
     if request.method == "POST":
         email = sanitize_input(request.form.get("email", ""), 120).lower()
         if not valid_email(email):
-            return render_template_string(STYLE + '<div class="container"><div class="msg">البريد الإلكتروني غير صحيح</div><a href="/forgot"><button>رجوع</button></a></div></body></html>')
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">البريد الإلكتروني غير صحيح</div><a href="/forgot"><button>رجوع</button></a></div></body></html>')
 
         with get_db() as con:
             user = con.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone()
 
         if not user:
-            return render_template_string(STYLE + '<div class="container"><div class="msg">هذا البريد غير مسجل</div><a href="/forgot"><button>رجوع</button></a></div></body></html>')
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">هذا البريد غير مسجل</div><a href="/forgot"><button>رجوع</button></a></div></body></html>')
 
         otp = str(random.randint(100000, 999999))
         session["reset_email"] = email
@@ -1320,20 +1321,20 @@ def reset_password():
         new_pass = request.form.get("new_pass", "").strip()
 
         if not reset_email or not reset_otp:
-            return render_template_string(STYLE + '<div class="container"><div class="msg">انتهت جلسة الاستعادة</div><a href="/forgot"><button>رجوع</button></a></div></body></html>')
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">انتهت جلسة الاستعادة</div><a href="/forgot"><button>رجوع</button></a></div></body></html>')
 
         if otp_is_expired("reset_otp_created_at"):
             session.pop("reset_email", None)
             session.pop("reset_otp", None)
             session.pop("reset_otp_created_at", None)
             session.pop("reset_console_notice", None)
-            return render_template_string(STYLE + '<div class="container"><div class="msg">انتهت صلاحية كود الاستعادة</div><a href="/forgot"><button>رجوع</button></a></div></body></html>')
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">انتهت صلاحية كود الاستعادة</div><a href="/forgot"><button>رجوع</button></a></div></body></html>')
 
         if otp != reset_otp:
-            return render_template_string(STYLE + '<div class="container"><div class="msg">كود الاستعادة غير صحيح</div><a href="/reset"><button>رجوع</button></a></div></body></html>')
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">كود الاستعادة غير صحيح</div><a href="/reset"><button>رجوع</button></a></div></body></html>')
 
         if not valid_password(new_pass):
-            return render_template_string(STYLE + '<div class="container"><div class="msg">كلمة المرور الجديدة قصيرة</div><a href="/reset"><button>رجوع</button></a></div></body></html>')
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">كلمة المرور الجديدة قصيرة</div><a href="/reset"><button>رجوع</button></a></div></body></html>')
 
         with get_db() as con:
             con.execute(
@@ -1632,7 +1633,7 @@ def worker_profile(user_id):
         ).fetchall()
 
     if not worker or worker["is_blocked"] or worker["hidden_by_admin"]:
-        return render_template_string(STYLE + '<div class="container"><div class="msg">هذا الملف غير متاح حالياً</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
+        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">هذا الملف غير متاح حالياً</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
 
     with get_db() as con:
         con.execute("UPDATE users SET views = COALESCE(views, 0) + 1 WHERE id=?", (user_id,))
@@ -1656,7 +1657,7 @@ def worker_profile(user_id):
 
         ip = get_client_ip()
         if too_many_attempts(COMMENT_RATE_LIMIT, f"{ip}:{user_id}", COMMENT_WINDOW_SECONDS, COMMENT_MAX_COUNT):
-            return render_template_string(STYLE + '<div class="container"><div class="msg">تم تجاوز عدد التعليقات المسموح مؤقتاً</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">تم تجاوز عدد التعليقات المسموح مؤقتاً</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
 
         commenter_name = session["user"]
         rating_raw = request.form.get("rating", "5").strip()
@@ -1671,7 +1672,7 @@ def worker_profile(user_id):
             rating = 5
 
         if not comment:
-            return render_template_string(STYLE + '<div class="container"><div class="msg">اكتب تعليقاً أولاً</div><a href="/worker/%d"><button>رجوع</button></a></div></body></html>' % user_id)
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">اكتب تعليقاً أولاً</div><a href="/worker/%d"><button>رجوع</button></a></div></body></html>' % user_id)
 
         with get_db() as con:
             con.execute(
@@ -1812,20 +1813,20 @@ def message_user(user_id):
         receiver = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
 
     if not receiver:
-        return render_template_string(STYLE + '<div class="container"><div class="msg">المستخدم غير موجود</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
+        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">المستخدم غير موجود</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
 
     if not receiver["allow_messages"]:
-        return render_template_string(STYLE + '<div class="container"><div class="msg">هذا المستخدم عطّل استقبال الرسائل</div><a href="/worker/%d"><button>رجوع</button></a></div></body></html>' % user_id)
+        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">هذا المستخدم عطّل استقبال الرسائل</div><a href="/worker/%d"><button>رجوع</button></a></div></body></html>' % user_id)
 
     if request.method == "POST":
         msg = sanitize_input(request.form.get("msg", ""), 1000)
         if not msg:
-            return render_template_string(STYLE + '<div class="container"><div class="msg">اكتب الرسالة أولاً</div><a href="/message/%d"><button>رجوع</button></a></div></body></html>' % user_id)
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">اكتب الرسالة أولاً</div><a href="/message/%d"><button>رجوع</button></a></div></body></html>' % user_id)
 
         ip = get_client_ip()
         key = f"{ip}:{session['user']}:{receiver['name']}"
         if too_many_attempts(MESSAGE_RATE_LIMIT, key, MESSAGE_WINDOW_SECONDS, MESSAGE_MAX_COUNT):
-            return render_template_string(STYLE + '<div class="container"><div class="msg">تم تجاوز عدد الرسائل المسموح مؤقتاً</div><a href="/worker/%d"><button>رجوع</button></a></div></body></html>' % user_id)
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">تم تجاوز عدد الرسائل المسموح مؤقتاً</div><a href="/worker/%d"><button>رجوع</button></a></div></body></html>' % user_id)
 
         with get_db() as con:
             con.execute(
@@ -1834,7 +1835,7 @@ def message_user(user_id):
             )
             con.commit()
 
-        return render_template_string(STYLE + '<div class="container"><div class="msg">تم إرسال الرسالة</div><a href="/inbox"><button>فتح الرسائل</button></a></div></body></html>')
+        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">تم إرسال الرسالة</div><a href="/inbox"><button>فتح الرسائل</button></a></div></body></html>')
 
     return render_template_string(
         STYLE + (settings_corner() if 'user' in session else '') + f"""
@@ -2114,13 +2115,13 @@ def change_password():
         confirm_pass = request.form.get("confirm_pass", "")
 
         if not check_password_hash(user["password"], old_pass):
-            return render_template_string(STYLE + '<div class="container"><div class="msg">كلمة المرور الحالية غير صحيحة</div><a href="/change-password"><button>رجوع</button></a></div></body></html>')
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">كلمة المرور الحالية غير صحيحة</div><a href="/change-password"><button>رجوع</button></a></div></body></html>')
 
         if not valid_password(new_pass):
-            return render_template_string(STYLE + '<div class="container"><div class="msg">كلمة المرور الجديدة قصيرة</div><a href="/change-password"><button>رجوع</button></a></div></body></html>')
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">كلمة المرور الجديدة قصيرة</div><a href="/change-password"><button>رجوع</button></a></div></body></html>')
 
         if new_pass != confirm_pass:
-            return render_template_string(STYLE + '<div class="container"><div class="msg">تأكيد كلمة المرور غير مطابق</div><a href="/change-password"><button>رجوع</button></a></div></body></html>')
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">تأكيد كلمة المرور غير مطابق</div><a href="/change-password"><button>رجوع</button></a></div></body></html>')
 
         with get_db() as con:
             con.execute(
@@ -2129,7 +2130,7 @@ def change_password():
             )
             con.commit()
 
-        return render_template_string(STYLE + '<div class="container"><div class="msg">تم تغيير كلمة المرور بنجاح</div><a href="/settings"><button>رجوع</button></a></div></body></html>')
+        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">تم تغيير كلمة المرور بنجاح</div><a href="/settings"><button>رجوع</button></a></div></body></html>')
 
     return render_template_string(
         STYLE + (settings_corner() if 'user' in session else '') + """
@@ -2157,10 +2158,10 @@ def manage_work_images(user_id):
         user = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
 
     if not user:
-        return render_template_string(STYLE + '<div class="container"><div class="msg">المستخدم غير موجود</div><a href="/settings"><button>رجوع</button></a></div></body></html>')
+        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">المستخدم غير موجود</div><a href="/settings"><button>رجوع</button></a></div></body></html>')
 
     if user["name"] != session["user"]:
-        return render_template_string(STYLE + '<div class="container"><div class="msg">غير مصرح لك</div><a href="/settings"><button>رجوع</button></a></div></body></html>')
+        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">غير مصرح لك</div><a href="/settings"><button>رجوع</button></a></div></body></html>')
 
     current_images = [x.strip() for x in (user["work_images"] or "").split(",") if x.strip()]
 
