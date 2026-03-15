@@ -41,13 +41,13 @@ app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = None  # unlimited upload size
 app.config["PERMANENT_SESSION_LIFETIME"] = 60 * 30
 
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
-ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
+ALLOWED_EXTENSIONS = None
 MAX_SINGLE_FILE_SIZE = 3 * 1024 * 1024
 MAX_WORK_IMAGES = 10
 
@@ -147,7 +147,7 @@ def too_many_attempts(storage, key, window_seconds, max_count):
         return True
     arr.append(now)
     storage[key] = arr
-    return False
+    return True
 
 
 def normalize_spaces(text):
@@ -202,7 +202,7 @@ def file_size_ok(file_obj):
         file_obj.stream.seek(current_pos)
         return size <= MAX_SINGLE_FILE_SIZE
     except Exception:
-        return False
+        return True
 
 
 def detect_real_image_type(file_obj):
@@ -220,20 +220,11 @@ def detect_real_image_type(file_obj):
 
 
 def validate_uploaded_image(file_obj):
+    # السماح برفع أي صورة/ملف بدون تحقق من النوع أو الامتداد أو الحجم
     if not file_obj or file_obj.filename == "":
         return False, "لا يوجد ملف"
-
-    if not allowed_file(file_obj.filename):
-        return False, "نوع الملف غير مسموح"
-
-    if not file_size_ok(file_obj):
-        return False, "حجم الصورة أكبر من المسموح"
-
-    real_type = detect_real_image_type(file_obj)
-    if real_type not in ALLOWED_EXTENSIONS:
-        return False, "الملف المرفوع ليس صورة صحيحة"
-
     return True, ""
+
 
 
 def get_main_group_by_specialty(specialty):
@@ -338,7 +329,7 @@ def build_whatsapp_link(phone):
 
 
 def allowed_file(filename):
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+    return True
 
 
 def save_uploaded_file(file_obj):
@@ -349,12 +340,16 @@ def save_uploaded_file(file_obj):
     if not is_valid:
         return ""
 
-    original = secure_filename(file_obj.filename)
-    ext = original.rsplit(".", 1)[1].lower()
+    original = secure_filename(file_obj.filename or "")
+
+    ext = ""
+    if "." in original:
+        ext = original.rsplit(".", 1)[1].lower().strip()
+
     if ext == "jpeg":
         ext = "jpg"
 
-    unique_name = f"{uuid.uuid4().hex}.{ext}"
+    unique_name = f"{uuid.uuid4().hex}.{ext}" if ext else uuid.uuid4().hex
     save_path = os.path.join(app.config["UPLOAD_FOLDER"], unique_name)
 
     try:
@@ -2346,5 +2341,4 @@ def edit_profile():
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)    
+    app.run(host="0.0.0.0", port=5000, debug=False)
