@@ -2329,6 +2329,7 @@ def admin_panel():
             <div class="small">المشاهدات: 👁 {u["views"] or 0}</div>
             <div class="inline" style="margin-top:12px;">
                 <a class="link-btn" href="/worker/{u['id']}">فتح الملف</a>
+                <a class="link-btn" href="/admin/edit-user/{u['id']}">تعديل البيانات</a>
                 <a class="link-btn" href="{trust_toggle}">{trust_text}</a>
                 <a class="link-btn" href="{pin_toggle}">{pin_text}</a>
                 <a class="link-btn" href="{block_toggle}">{block_text}</a>
@@ -2354,6 +2355,8 @@ def admin_panel():
                 <div class="inline">
                     <a href="/"><button class="light-btn">الرئيسية</button></a>
                     <a href="/admin/settings"><button class="light-btn">إعدادات الأدمن</button></a>
+                    <a href="/admin/messages"><button class="light-btn">كل الرسائل</button></a>
+                    <a href="/admin/comments"><button class="light-btn">كل التعليقات</button></a>
                     <a href="/workers-map"><button class="light-btn">الخريطة</button></a>
                     <a href="/admin/logout"><button>خروج الأدمن</button></a>
                 </div>
@@ -2592,6 +2595,181 @@ def admin_unhide_user(user_id):
             log_admin_action("إظهار ملف", user["name"], f"تم إظهار ملف المستخدم رقم {user_id}")
     return redirect(url_for("admin_panel"))
 
+
+
+@app.route("/admin/messages")
+def admin_messages():
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+
+    with get_db() as con:
+        rows = con.execute("SELECT * FROM messages ORDER BY id DESC LIMIT 300").fetchall()
+
+    if not rows:
+        messages_html = '<div class="msg">لا توجد رسائل</div>'
+    else:
+        blocks = []
+        for row in rows:
+            blocks.append(f"""
+            <div class="card">
+                <div><strong>من:</strong> {row["sender_name"]} <strong>إلى:</strong> {row["receiver_name"]}</div>
+                <div style="margin-top:8px;">{row["msg"]}</div>
+                <div class="small">{row["created_at"]}</div>
+                <div style="margin-top:10px;">
+                    <a class="link-btn link-red" href="/admin/delete-message/{row['id']}">حذف الرسالة</a>
+                </div>
+            </div>
+            """)
+        messages_html = "".join(blocks)
+
+    return render_template_string(
+        STYLE + f"""
+        <div class="container">
+            <a href="/admin/panel"><button>رجوع للوحة الأدمن</button></a>
+            <h2>كل الرسائل</h2>
+            <div class="section-subtitle">هنا يقدر الأدمن يراجع آخر الرسائل ويحذف أي رسالة غير مناسبة.</div>
+            {messages_html}
+        </div>
+        </body></html>
+        """
+    )
+
+
+@app.route("/admin/delete-message/<int:message_id>")
+def admin_delete_message(message_id):
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+
+    with get_db() as con:
+        row = con.execute("SELECT * FROM messages WHERE id=?", (message_id,)).fetchone()
+        if row:
+            con.execute("DELETE FROM messages WHERE id=?", (message_id,))
+            con.commit()
+            log_admin_action("حذف رسالة", row["sender_name"], f"تم حذف الرسالة رقم {message_id}")
+
+    return redirect(url_for("admin_messages"))
+
+
+@app.route("/admin/comments")
+def admin_comments():
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+
+    with get_db() as con:
+        rows = con.execute("""
+            SELECT comments.*, users.name AS worker_name
+            FROM comments
+            LEFT JOIN users ON users.id = comments.user_id
+            ORDER BY comments.id DESC
+            LIMIT 300
+        """).fetchall()
+
+    if not rows:
+        comments_html = '<div class="msg">لا توجد تعليقات</div>'
+    else:
+        blocks = []
+        for row in rows:
+            stars = "★" * int(row["rating"] or 0) + "☆" * (5 - int(row["rating"] or 0))
+            blocks.append(f"""
+            <div class="card">
+                <div><strong>{row["commenter_name"]}</strong> على <strong>{row["worker_name"] or "-"}</strong></div>
+                <div class="star">{stars}</div>
+                <div>{row["comment"]}</div>
+                <div class="small">{row["created_at"]}</div>
+                <div style="margin-top:10px;">
+                    <a class="link-btn link-red" href="/admin/delete-comment/{row['id']}">حذف التعليق</a>
+                </div>
+            </div>
+            """)
+        comments_html = "".join(blocks)
+
+    return render_template_string(
+        STYLE + f"""
+        <div class="container">
+            <a href="/admin/panel"><button>رجوع للوحة الأدمن</button></a>
+            <h2>كل التعليقات</h2>
+            <div class="section-subtitle">هنا يقدر الأدمن يراجع كل التعليقات ويحذف أي تعليق غير مناسب.</div>
+            {comments_html}
+        </div>
+        </body></html>
+        """
+    )
+
+
+@app.route("/admin/delete-comment/<int:comment_id>")
+def admin_delete_comment(comment_id):
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+
+    with get_db() as con:
+        row = con.execute("SELECT * FROM comments WHERE id=?", (comment_id,)).fetchone()
+        if row:
+            con.execute("DELETE FROM comments WHERE id=?", (comment_id,))
+            con.commit()
+            log_admin_action("حذف تعليق", row["commenter_name"], f"تم حذف التعليق رقم {comment_id}")
+
+    return redirect(url_for("admin_comments"))
+
+
+@app.route("/admin/edit-user/<int:user_id>", methods=["GET","POST"])
+def admin_edit_user(user_id):
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+
+    with get_db() as con:
+        user = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+
+    if not user:
+        return render_template_string(STYLE + '<div class="container"><div class="msg">المستخدم غير موجود</div><a href="/admin/panel"><button>رجوع</button></a></div></body></html>')
+
+    if request.method == "POST":
+        name = request.form.get("name","")
+        phone = request.form.get("phone","")
+        section = request.form.get("section","")
+        governorate = request.form.get("governorate","")
+        city = request.form.get("city","")
+        bio = request.form.get("bio","")
+
+        with get_db() as con:
+            con.execute(
+                "UPDATE users SET name=?, phone=?, section=?, governorate=?, city=?, bio=? WHERE id=?",
+                (name, phone, section, governorate, city, bio, user_id)
+            )
+            con.commit()
+
+        return redirect(url_for("admin_panel"))
+
+    return render_template_string(
+        STYLE + f'''
+        <div class="container">
+            <a href="/admin/panel"><button>رجوع للوحة الأدمن</button></a>
+            <h2>تعديل بيانات المستخدم</h2>
+
+            <form method="post">
+                <label>الاسم</label>
+                <input name="name" value="{user["name"] or ""}">
+
+                <label>الهاتف</label>
+                <input name="phone" value="{user["phone"] or ""}">
+
+                <label>الاختصاص</label>
+                <input name="section" value="{user["section"] or ""}">
+
+                <label>المحافظة</label>
+                <input name="governorate" value="{user["governorate"] or ""}">
+
+                <label>المدينة</label>
+                <input name="city" value="{user["city"] or ""}">
+
+                <label>نبذة</label>
+                <textarea name="bio">{user["bio"] or ""}</textarea>
+
+                <button type="submit">حفظ التعديلات</button>
+            </form>
+        </div>
+        </body></html>
+        '''
+    )
 @app.route("/admin/delete-user/<int:user_id>")
 def admin_delete_user(user_id):
     if not admin_required():
