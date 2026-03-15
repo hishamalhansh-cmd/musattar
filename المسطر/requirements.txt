@@ -1,1 +1,3 @@
+flask
+gunicorn
 webauthn==2.7.1
