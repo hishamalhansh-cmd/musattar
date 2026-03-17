@@ -995,54 +995,34 @@ def settings_corner():
 
 
 HOME_HTML = STYLE + """
-<div class="container">
-    <div class="home-grid">
-        <div class="hero-panel">
-            <div class="inline" style="margin-bottom:12px;">
-                <span class="hero-badge">منصة مهنية حديثة</span>
-                <span class="hero-badge">بحث حسب الاختصاص والمحافظة</span>
-            </div>
-            <h1>المسطر</h1>
-            <div class="section-subtitle">منصة تجمع أصحاب المهن والخبرات وتعرض أعمالهم وتسهّل الوصول إليهم والتواصل معهم بشكل مباشر ومرتب.</div>
-            <div class="home-stats-grid" style="margin-top:18px;">
-                <div class="home-stat center"><div style="font-size:28px;">👷</div><h3 style="margin:8px 0 4px;">عمّال ومهنيون</h3><div class="small">عرض الحسابات حسب الاختصاص والمحافظة</div></div>
-                <div class="home-stat center"><div style="font-size:28px;">🖼️</div><h3 style="margin:8px 0 4px;">صور أعمال</h3><div class="small">نماذج أعمال داخل كل ملف شخصي</div></div>
-                <div class="home-stat center"><div style="font-size:28px;">💬</div><h3 style="margin:8px 0 4px;">تواصل وتعليقات</h3><div class="small">رسائل وتقييمات تساعد على الاختيار</div></div>
-            </div>
-        </div>
-        <div class="home-cta-box">
-            <h2 style="margin-bottom:8px;">ابدأ الآن</h2>
-            <div class="section-subtitle">سجّل دخولك إذا عندك حساب، واذا ما عندك حساب تكدر تنشئه من الكتابة الهادئة تحت الزر.</div>
-            <a href="/login"><button>تسجيل الدخول</button></a>
-            <a href="/workers-map"><button class="light-btn">خريطة العمال</button></a>
-            <div class="notice" style="margin-top:14px;">واجهة مرتبة لعرض الاختصاصات، الأعمال، والملفات الشخصية داخل منصة واحدة.</div>
-            <div class="home-register-note">لا يملك حساب؟ <a href="/register">إنشاء حساب من هنا</a></div>
-        </div>
-    </div>
-    <div style="height:16px"></div>
-    <div class="home-features-grid">
-        <div class="home-feature-card"><div class="home-feature-icon">🔎</div><h3>بحث أسرع</h3><div class="small">ابحث بالاسم أو المدينة أو الاختصاص أو المحافظة بسهولة.</div></div>
-        <div class="home-feature-card"><div class="home-feature-icon">⭐</div><h3>تقييمات أوضح</h3><div class="small">التعليقات والتقييمات تظهر بشكل مرتب داخل صفحة كل عامل.</div></div>
-        <div class="home-feature-card"><div class="home-feature-icon">🛠️</div><h3>عرض مهني منظم</h3><div class="small">بطاقات نظيفة وصور أعمال وأزرار مباشرة للتصفح والتواصل.</div></div>
-    </div>
-    
-<div class="card" style="margin-top:16px;">
-    <h3>الدعم الفني</h3>
-    <div class="section-subtitle">لأي مشكلة أو استفسار، تواصل معنا مباشرة عبر الرقم أو البريد الإلكتروني.</div>
-    <div class="inline" style="margin-top:10px;">
-        <a class="link-btn" href="tel:+9647864145165">📞 +9647864145165</a>
-        <a class="link-btn" href="mailto:hishamalhansh@gmail.com">✉️ hishamalhansh@gmail.com</a>
-    </div>
-</div>
+<div class="container narrow-container" style="max-width:520px;margin-top:110px;text-align:center;">
+    <h1 style="font-size:46px;margin-bottom:28px;">المسطر</h1>
+    <div class="section-subtitle" style="margin-bottom:18px;">سجّل دخولك مباشرة للوصول إلى حسابك</div>
 
-    <div class="footer-note">المسطر — منصة مهنية لعرض الخبرات وربط أصحاب الأعمال بالمهنيين</div>
+    <form action="/login" method="post">
+        <input type="email" name="email" placeholder="البريد الإلكتروني" required>
+        <input type="password" name="password" placeholder="كلمة السر" required>
+        <button type="submit">تسجيل الدخول</button>
+    </form>
+
+    <div style="margin-top:16px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+        <a href="/forgot" style="color:#dbeafe;font-size:15px;">نسيت كلمة السر</a>
+        <a href="/register" style="color:#60a5fa;font-size:16px;font-weight:700;">إنشاء حساب</a>
+    </div>
+
+    <div class="card" style="margin-top:18px;">
+        <h3>الدعم الفني</h3>
+        <div class="section-subtitle">لأي مشكلة أو استفسار، تواصل معنا مباشرة عبر الرقم أو البريد الإلكتروني.</div>
+        <div class="inline" style="margin-top:10px;">
+            <a class="link-btn" href="tel:+9647864145165">📞 +9647864145165</a>
+            <a class="link-btn" href="mailto:hishamalhansh@gmail.com">✉️ hishamalhansh@gmail.com</a>
+        </div>
+    </div>
 </div>
 <a class="bottom-corner-link bottom-left-link" href="/admin">🛠️</a>
 <a class="bottom-corner-link bottom-right-link" href="/workers">👤 زائر</a>
-
 </body></html>
 """
-
 
 
 @app.route("/")
