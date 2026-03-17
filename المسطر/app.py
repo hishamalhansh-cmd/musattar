@@ -631,20 +631,16 @@ def init_db():
         )
         """)
 
+
         cur.execute("""
-        CREATE TABLE IF NOT EXISTS support_tickets(
+        CREATE TABLE IF NOT EXISTS support_messages(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            user_name TEXT,
-            user_email TEXT,
-            subject TEXT,
-            message TEXT,
-            admin_reply TEXT DEFAULT '',
-            status TEXT DEFAULT 'open',
-            is_read_by_user INTEGER DEFAULT 0,
-            is_read_by_admin INTEGER DEFAULT 0,
+            user_id INTEGER NOT NULL,
+            sender_type TEXT NOT NULL,
+            message TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            replied_at TIMESTAMP
+            is_read_admin INTEGER DEFAULT 0,
+            is_read_user INTEGER DEFAULT 0
         )
         """)
 
@@ -1012,26 +1008,31 @@ def settings_corner():
 
 
 HOME_HTML = STYLE + """
-<div class="container" style="max-width:460px;margin-top:110px;text-align:center;">
-    <h1 style="font-size:42px;margin-bottom:34px;">المسطر</h1>
+<div class="container narrow-container" style="max-width:460px;margin-top:90px;text-align:center;">
+    <div style="margin-bottom:22px;">
+        <h1 style="font-size:42px;margin-bottom:8px;">المسطر</h1>
+        <div class="section-subtitle">منصة مهنية لعرض الخبرات وربط أصحاب الأعمال بالمهنيين</div>
+    </div>
 
-    <form action="/login" method="post">
-        <input type="email" name="email" placeholder="البريد الإلكتروني" required
-        style="width:100%;padding:14px;margin-bottom:14px;border-radius:14px;font-size:16px;">
-
-        <input type="password" name="password" placeholder="كلمة السر" required
-        style="width:100%;padding:14px;margin-bottom:18px;border-radius:14px;font-size:16px;">
-
-        <button style="width:100%;padding:14px;font-size:18px;">تسجيل الدخول</button>
+    <form action="/login" method="post" style="margin-top:18px;">
+        <input type="email" name="email" placeholder="البريد الإلكتروني" required>
+        <input type="password" name="password" placeholder="كلمة السر" required>
+        <button type="submit">تسجيل الدخول</button>
     </form>
 
-    <div style="margin-top:18px;display:flex;justify-content:space-between;align-items:center;">
+    <div style="margin-top:14px;display:flex;justify-content:space-between;gap:12px;">
         <a href="/forgot" style="color:#cbd5e1;font-size:15px;">نسيت كلمة السر</a>
         <a href="/register" style="color:#60a5fa;font-size:15px;font-weight:700;">إنشاء حساب</a>
     </div>
+
+    <div class="notice" style="margin-top:18px;">واجهة دخول بسيطة وسريعة بدون مربعات إضافية.</div>
 </div>
+
+<a class="bottom-corner-link bottom-left-link" href="/admin" title="دخول الأدمن">🛠️</a>
+
 </body></html>
 """
+
 
 @app.route("/")
 def home():
@@ -1204,12 +1205,6 @@ def register():
                 <button>متابعة التفعيل</button>
             </form>
 
-    <div class="inline" style="margin-top:10px;">
-        <a class="link-btn" href="tel:+9647864145165">📞 +9647864145165</a>
-        <a class="link-btn" href="mailto:hishamalhansh@gmail.com">✉️ hishamalhansh@gmail.com</a>
-    </div>
-</div>
-
         </div>
         {specialty_script("")}
         </body></html>
@@ -1317,20 +1312,17 @@ def login():
 
     return render_template_string(
         STYLE + (settings_corner() if 'user' in session else '') + """
-        <div class="container" style="max-width:460px;margin-top:90px;text-align:center;">
-            <h2 style="font-size:40px;margin-bottom:30px;">المسطر</h2>
+        <div class="container">
+            <a href="/"><button>رجوع للرئيسية</button></a>
+            <h2>تسجيل الدخول</h2>
             <form method="post">
                 <input type="email" name="email" placeholder="البريد الإلكتروني" required>
-                <input type="password" name="password" placeholder="كلمة السر" required>
-                <button>تسجيل الدخول</button>
+                <input type="password" name="password" placeholder="كلمة المرور" required>
+                <button>دخول</button>
             </form>
-            <div style="margin-top:18px;display:flex;justify-content:space-between;align-items:center;">
-                <a href="/forgot" style="color:#cbd5e1;font-size:15px;">نسيت كلمة السر</a>
-                <a href="/register" style="color:#60a5fa;font-size:15px;font-weight:700;">إنشاء حساب</a>
-            </div>
-            <div style="margin-top:14px;">
-                <a href="/passkey/login"><button class="light-btn">الدخول بالبصمة</button></a>
-            </div>
+            <a href="/passkey/login"><button class="light-btn">الدخول بالبصمة</button></a>
+            <a href="/forgot"><button>نسيت كلمة المرور</button></a>
+
         </div>
         </body></html>
         """
@@ -1386,12 +1378,6 @@ def forgot():
                 <input type="email" name="email" placeholder="البريد الإلكتروني" required>
                 <button>إرسال الكود</button>
             </form>
-
-    <div class="inline" style="margin-top:10px;">
-        <a class="link-btn" href="tel:+9647864145165">📞 +9647864145165</a>
-        <a class="link-btn" href="mailto:hishamalhansh@gmail.com">✉️ hishamalhansh@gmail.com</a>
-    </div>
-</div>
 
         </div>
         </body></html>
@@ -1983,6 +1969,219 @@ def inbox():
     )
 
 
+@app.route("/support", methods=["GET", "POST"])
+def support():
+    if "user" not in session:
+        return redirect(url_for("login"))
+
+    current_user = get_current_session_user()
+    if not current_user:
+        session.clear()
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+        msg = sanitize_input(request.form.get("msg", ""), 1500)
+        if not msg:
+            return render_template_string(
+                STYLE + (settings_corner() if 'user' in session else '') + """
+                <div class="container narrow-container">
+                    <div class="msg">اكتب رسالتك أولاً</div>
+                    <a href="/support"><button>رجوع</button></a>
+                </div>
+                </body></html>
+                """
+            )
+
+        with get_db() as con:
+            con.execute(
+                "INSERT INTO support_messages (user_id, sender_type, message, is_read_admin, is_read_user) VALUES (?, 'user', ?, 0, 1)",
+                (current_user["id"], msg)
+            )
+            con.commit()
+
+        return redirect(url_for("support"))
+
+    with get_db() as con:
+        messages = con.execute(
+            "SELECT * FROM support_messages WHERE user_id=? ORDER BY id ASC",
+            (current_user["id"],)
+        ).fetchall()
+        con.execute("UPDATE support_messages SET is_read_user=1 WHERE user_id=? AND sender_type='admin'", (current_user["id"],))
+        con.commit()
+
+    chat_html = ""
+    for m in messages:
+        mine = m["sender_type"] == "user"
+        align = "justify-content:flex-end;" if mine else "justify-content:flex-start;"
+        bg = "linear-gradient(180deg,#2563eb 0%, #1d4ed8 100%)" if mine else "rgba(255,255,255,.08)"
+        color = "#ffffff" if mine else "var(--text)"
+        label = "أنت" if mine else "الدعم الفني"
+        chat_html += f"""
+        <div style="display:flex;{align}margin:10px 0;">
+            <div style="max-width:78%;background:{bg};color:{color};padding:12px 14px;border-radius:18px;border:1px solid rgba(96,165,250,.18);">
+                <div style="font-size:12px;opacity:.85;margin-bottom:5px;">{label}</div>
+                <div style="white-space:pre-wrap;word-break:break-word;">{m["message"]}</div>
+                <div class="small" style="margin-top:6px;color:{'#dbeafe' if mine else 'var(--muted)'};">{m["created_at"]}</div>
+            </div>
+        </div>
+        """
+
+    if not chat_html:
+        chat_html = '<div class="empty-state">ماكو رسائل دعم بعد. اكتب مشكلتك وسيتم الرد عليك من داخل التطبيق.</div>'
+
+    return render_template_string(
+        STYLE + (settings_corner() if 'user' in session else '') + f"""
+        <div class="container narrow-container">
+            <a href="/settings"><button class="light-btn">رجوع</button></a>
+            <h2>الدعم الفني</h2>
+            <div class="section-subtitle">اكتب مشكلتك هنا، وسيصلك الرد من الإدارة داخل نفس المحادثة.</div>
+
+            <div class="card" style="padding:14px;max-height:420px;overflow:auto;">
+                {chat_html}
+            </div>
+
+            <form method="post" style="margin-top:14px;">
+                <textarea name="msg" placeholder="اكتب رسالتك للدعم الفني" required></textarea>
+                <button>إرسال الرسالة</button>
+            </form>
+        </div>
+        </body></html>
+        """
+    )
+
+
+@app.route("/admin/support", methods=["GET", "POST"])
+def admin_support():
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+
+    selected_user_id = request.args.get("user_id", "").strip()
+
+    if request.method == "POST":
+        selected_user_id = request.form.get("user_id", "").strip()
+        msg = sanitize_input(request.form.get("msg", ""), 1500)
+
+        if selected_user_id and msg:
+            try:
+                uid = int(selected_user_id)
+            except Exception:
+                uid = 0
+
+            if uid:
+                with get_db() as con:
+                    user = con.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+                    if user:
+                        con.execute(
+                            "INSERT INTO support_messages (user_id, sender_type, message, is_read_admin, is_read_user) VALUES (?, 'admin', ?, 1, 0)",
+                            (uid, msg)
+                        )
+                        con.commit()
+                        log_admin_action("رد دعم فني", user["name"], "تم إرسال رد من الأدمن داخل الدعم الفني")
+                return redirect(url_for("admin_support", user_id=selected_user_id))
+
+    with get_db() as con:
+        conversations = con.execute("""
+            SELECT u.id, u.name, u.email,
+                   MAX(sm.created_at) AS last_time,
+                   SUM(CASE WHEN sm.sender_type='user' AND COALESCE(sm.is_read_admin,0)=0 THEN 1 ELSE 0 END) AS unread_count
+            FROM support_messages sm
+            JOIN users u ON u.id = sm.user_id
+            GROUP BY u.id, u.name, u.email
+            ORDER BY MAX(sm.id) DESC
+        """).fetchall()
+
+    conversation_list = ""
+    for c in conversations:
+        active = " style='background:rgba(37,99,235,.16);border-color:rgba(96,165,250,.34);'" if selected_user_id and str(c["id"]) == str(selected_user_id) else ""
+        unread_badge = f"<span class='badge'>{int(c['unread_count'] or 0)} جديد</span>" if int(c["unread_count"] or 0) > 0 else ""
+        conversation_list += f"""
+        <a href="/admin/support?user_id={c['id']}" style="display:block;">
+            <div class="card" {active}>
+                <div class="inline" style="justify-content:space-between;">
+                    <strong>{c["name"]}</strong>
+                    {unread_badge}
+                </div>
+                <div class="small">{c["email"] or ""}</div>
+                <div class="small">آخر رسالة: {c["last_time"]}</div>
+            </div>
+        </a>
+        """
+
+    if not conversation_list:
+        conversation_list = '<div class="empty-state">لا توجد رسائل دعم حتى الآن</div>'
+
+    chat_html = '<div class="empty-state">اختر محادثة من القائمة الجانبية</div>'
+    reply_form = ""
+
+    if selected_user_id:
+        try:
+            uid = int(selected_user_id)
+        except Exception:
+            uid = 0
+
+        if uid:
+            with get_db() as con:
+                target_user = con.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+                messages = con.execute(
+                    "SELECT * FROM support_messages WHERE user_id=? ORDER BY id ASC",
+                    (uid,)
+                ).fetchall()
+                con.execute("UPDATE support_messages SET is_read_admin=1 WHERE user_id=? AND sender_type='user'", (uid,))
+                con.commit()
+
+            if target_user:
+                chat_blocks = ""
+                for m in messages:
+                    is_admin = m["sender_type"] == "admin"
+                    align = "justify-content:flex-end;" if is_admin else "justify-content:flex-start;"
+                    bg = "linear-gradient(180deg,#1d4ed8 0%, #1e40af 100%)" if is_admin else "rgba(255,255,255,.08)"
+                    color = "#fff" if is_admin else "var(--text)"
+                    sender = "الأدمن" if is_admin else target_user["name"]
+                    chat_blocks += f"""
+                    <div style="display:flex;{align}margin:10px 0;">
+                        <div style="max-width:78%;background:{bg};color:{color};padding:12px 14px;border-radius:18px;border:1px solid rgba(96,165,250,.18);">
+                            <div style="font-size:12px;opacity:.85;margin-bottom:5px;">{sender}</div>
+                            <div style="white-space:pre-wrap;word-break:break-word;">{m["message"]}</div>
+                            <div class="small" style="margin-top:6px;color:{'#dbeafe' if is_admin else 'var(--muted)'};">{m["created_at"]}</div>
+                        </div>
+                    </div>
+                    """
+                chat_html = chat_blocks or '<div class="empty-state">لا توجد رسائل</div>'
+                reply_form = f"""
+                <form method="post" style="margin-top:14px;">
+                    <input type="hidden" name="user_id" value="{uid}">
+                    <textarea name="msg" placeholder="اكتب ردك هنا" required></textarea>
+                    <button>إرسال الرد</button>
+                </form>
+                """
+
+    return render_template_string(
+        STYLE + f"""
+        <div class="container">
+            <a href="/admin/panel"><button class="light-btn">رجوع للوحة الأدمن</button></a>
+            <h2>الدعم الفني</h2>
+            <div class="section-subtitle">هنا تظهر محادثات الدعم بين المستخدمين والأدمن داخل التطبيق.</div>
+
+            <div style="display:grid;grid-template-columns:320px 1fr;gap:14px;">
+                <div class="card" style="max-height:700px;overflow:auto;">
+                    <h3 style="margin-bottom:10px;">المحادثات</h3>
+                    {conversation_list}
+                </div>
+
+                <div class="card">
+                    <div style="max-height:560px;overflow:auto;padding:6px 2px;">
+                        {chat_html}
+                    </div>
+                    {reply_form}
+                </div>
+            </div>
+        </div>
+        </body></html>
+        """
+    )
+
+
+
 @app.route("/profile")
 def profile():
     if "user" not in session:
@@ -2111,7 +2310,7 @@ def settings():
             </div>
 
             <div class="settings-group">
-                <div class="settings-section-title">الخصوصية</div>
+                <div class="settings-section-title">الخصوصية والتواصل</div>
                 <div class="actions">
                     <a href="/privacy"><button>إعدادات الخصوصية</button></a>
                     <a href="/inbox"><button>الرسائل</button></a>
@@ -2139,199 +2338,6 @@ def settings():
         </body></html>
         """
     )
-
-
-
-
-@app.route("/support", methods=["GET", "POST"])
-def support_page():
-    if "user" not in session:
-        return redirect(url_for("login"))
-
-    user = get_current_session_user()
-    if not user:
-        session.clear()
-        return redirect(url_for("login"))
-
-    if request.method == "POST":
-        subject = sanitize_input(request.form.get("subject", ""), 120)
-        message = sanitize_input(request.form.get("message", ""), 2000)
-
-        if not subject or not message:
-            return render_template_string(
-                STYLE + (settings_corner() if 'user' in session else '') + """
-                <div class="container narrow-container">
-                    <div class="msg">اكتب عنوان الرسالة ونص المشكلة</div>
-                    <a href="/support"><button>رجوع</button></a>
-                </div>
-                </body></html>
-                """
-            )
-
-        with get_db() as con:
-            con.execute(
-                """
-                INSERT INTO support_tickets
-                (user_id, user_name, user_email, subject, message, admin_reply, status, is_read_by_user, is_read_by_admin)
-                VALUES (?, ?, ?, ?, ?, '', 'open', 1, 0)
-                """,
-                (user["id"], user["name"], user["email"], subject, message)
-            )
-            con.commit()
-
-        return redirect(url_for("support_page"))
-
-    with get_db() as con:
-        tickets = con.execute(
-            "SELECT * FROM support_tickets WHERE user_id=? ORDER BY id DESC",
-            (user["id"],)
-        ).fetchall()
-        con.execute(
-            "UPDATE support_tickets SET is_read_by_user=1 WHERE user_id=?",
-            (user["id"],)
-        )
-        con.commit()
-
-    tickets_html = ""
-    if tickets:
-        blocks = []
-        for t in tickets:
-            status_badge = "مفتوحة" if (t["status"] or "open") == "open" else "تم الرد"
-            reply_html = f"""
-            <div class="detail-box" style="margin-top:10px;">
-                <strong>رد الدعم الفني</strong>
-                <div style="margin-top:6px;">{t["admin_reply"]}</div>
-                <div class="small">{t["replied_at"] or ""}</div>
-            </div>
-            """ if (t["admin_reply"] or "").strip() else '<div class="small" style="margin-top:10px;">بانتظار رد الدعم الفني</div>'
-
-            blocks.append(f"""
-            <div class="card">
-                <div class="inline" style="margin-bottom:8px;">
-                    <span class="badge">{status_badge}</span>
-                    <span class="badge">#{t["id"]}</span>
-                </div>
-                <h3>{t["subject"]}</h3>
-                <div>{t["message"]}</div>
-                <div class="small" style="margin-top:8px;">{t["created_at"]}</div>
-                {reply_html}
-            </div>
-            """)
-        tickets_html = "".join(blocks)
-    else:
-        tickets_html = '<div class="msg">لا توجد رسائل دعم حتى الآن</div>'
-
-    return render_template_string(
-        STYLE + (settings_corner() if 'user' in session else '') + f"""
-        <div class="container">
-            <a href="/settings"><button>رجوع</button></a>
-            <h2>الدعم الفني</h2>
-            <div class="section-subtitle">أرسل مشكلتك من داخل البرنامج، وسيظهر الرد لك هنا بعد أن يراجعها الأدمن.</div>
-
-            <div class="card">
-                <h3>إرسال رسالة جديدة</h3>
-                <form method="post">
-                    <input name="subject" placeholder="عنوان المشكلة أو الطلب" required>
-                    <textarea name="message" placeholder="اكتب تفاصيل المشكلة أو الاستفسار" required></textarea>
-                    <button>إرسال إلى الدعم الفني</button>
-                </form>
-            </div>
-
-            <div class="card">
-                <h3>رسائلي مع الدعم</h3>
-                {tickets_html}
-            </div>
-        </div>
-        </body></html>
-        """
-    )
-
-
-@app.route("/admin/support")
-def admin_support():
-    if not admin_required():
-        return redirect(url_for("admin_login"))
-
-    with get_db() as con:
-        tickets = con.execute(
-            "SELECT * FROM support_tickets ORDER BY CASE WHEN status='open' THEN 0 ELSE 1 END, id DESC"
-        ).fetchall()
-        unread_count = con.execute(
-            "SELECT COUNT(*) AS c FROM support_tickets WHERE is_read_by_admin=0"
-        ).fetchone()["c"]
-        con.execute("UPDATE support_tickets SET is_read_by_admin=1")
-        con.commit()
-
-    if tickets:
-        blocks = []
-        for t in tickets:
-            status_badge = "مفتوحة" if (t["status"] or "open") == "open" else "تم الرد"
-            reply_block = f"""
-            <div class="detail-box" style="margin-top:10px;">
-                <strong>ردك الحالي</strong>
-                <div style="margin-top:6px;">{t["admin_reply"]}</div>
-                <div class="small">{t["replied_at"] or ""}</div>
-            </div>
-            """ if (t["admin_reply"] or "").strip() else '<div class="small" style="margin-top:10px;">لا يوجد رد حتى الآن</div>'
-
-            blocks.append(f"""
-            <div class="admin-user-card">
-                <div class="inline" style="margin-bottom:8px;">
-                    <span class="badge">{status_badge}</span>
-                    <span class="badge">#{t["id"]}</span>
-                </div>
-                <h3>{t["subject"]}</h3>
-                <div class="small">من: {t["user_name"]} — {t["user_email"]}</div>
-                <div class="small" style="margin-top:4px;">{t["created_at"]}</div>
-                <div style="margin-top:10px;">{t["message"]}</div>
-                {reply_block}
-                <form method="post" action="/admin/support/reply/{t['id']}" style="margin-top:12px;">
-                    <textarea name="reply" placeholder="اكتب رد الدعم الفني هنا" required>{t["admin_reply"] or ""}</textarea>
-                    <button>حفظ الرد</button>
-                </form>
-            </div>
-            """)
-        tickets_html = "".join(blocks)
-    else:
-        tickets_html = '<div class="msg">لا توجد رسائل دعم</div>'
-
-    return render_template_string(
-        STYLE + f"""
-        <div class="container">
-            <a href="/admin/panel"><button>رجوع للوحة الأدمن</button></a>
-            <h2>رسائل الدعم الفني</h2>
-            <div class="msg">عدد الرسائل الجديدة قبل الفتح: {unread_count}</div>
-            {tickets_html}
-        </div>
-        </body></html>
-        """
-    )
-
-
-@app.route("/admin/support/reply/<int:ticket_id>", methods=["POST"])
-def admin_support_reply(ticket_id):
-    if not admin_required():
-        return redirect(url_for("admin_login"))
-
-    reply = sanitize_input(request.form.get("reply", ""), 3000)
-    if not reply:
-        return redirect(url_for("admin_support"))
-
-    with get_db() as con:
-        ticket = con.execute("SELECT * FROM support_tickets WHERE id=?", (ticket_id,)).fetchone()
-        if ticket:
-            con.execute(
-                """
-                UPDATE support_tickets
-                SET admin_reply=?, status='answered', is_read_by_user=0, is_read_by_admin=1, replied_at=CURRENT_TIMESTAMP
-                WHERE id=?
-                """,
-                (reply, ticket_id)
-            )
-            con.commit()
-            log_admin_action("رد دعم فني", ticket["user_name"], f"تم الرد على رسالة الدعم رقم {ticket_id}")
-
-    return redirect(url_for("admin_support"))
 
 
 @app.route("/privacy", methods=["GET", "POST"])
@@ -3449,6 +3455,7 @@ def edit_profile():
     )
 
 
+
 @app.route("/passkey/setup")
 def passkey_setup():
     if "user" not in session:
@@ -3732,5 +3739,5 @@ def passkey_auth_finish():
 
 if __name__ == "__main__":
     import os
-    port = int(os.environ.get("PORT", 10000))
+    port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
