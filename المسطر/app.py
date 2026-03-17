@@ -1029,6 +1029,7 @@ HOME_HTML = STYLE + """
 </div>
 
 <a class="bottom-corner-link bottom-left-link" href="/admin" title="دخول الأدمن">🛠️</a>
+<a class="bottom-corner-link bottom-right-link" href="/workers" title="الدخول كزائر">👤 زائر</a>
 
 </body></html>
 """
@@ -1716,25 +1717,11 @@ def worker_profile(user_id):
         worker = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
 
     if request.method == "POST":
-        if "user" not in session:
-            return render_template_string(
-                STYLE + (settings_corner() if 'user' in session else '') + f"""
-                <div class="container">
-                    <div class="msg">يجب تسجيل الدخول أولاً حتى تستطيع التعليق أو إضافة تقييم للعامل</div>
-                    <div style="margin-top:14px;">
-                        <a href="/login"><button>تسجيل الدخول</button></a>
-                        <a href="/worker/{user_id}"><button class="light-btn">رجوع لصفحة العامل</button></a>
-                    </div>
-                </div>
-                </body></html>
-                """
-            )
-
         ip = get_client_ip()
         if too_many_attempts(COMMENT_RATE_LIMIT, f"{ip}:{user_id}", COMMENT_WINDOW_SECONDS, COMMENT_MAX_COUNT):
             return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">تم تجاوز عدد التعليقات المسموح مؤقتاً</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
 
-        commenter_name = session["user"]
+        commenter_name = session["user"] if "user" in session else "زائر"
         rating_raw = request.form.get("rating", "5").strip()
         comment = sanitize_input(request.form.get("comment", ""), 400)
 
@@ -1801,11 +1788,9 @@ def worker_profile(user_id):
     verified_badge = trusted_badge_html(worker)
     pinned_badge = pinned_badge_html(worker)
 
-    comment_form = ""
-    if "user" in session:
-        comment_form = f"""
+    comment_form = f"""
         <div class="card">
-            <h3>إضافة تعليق</h3>
+            <h3>إضافة تعليق وتقييم</h3><div class="section-subtitle">يمكن للمستخدم أو الزائر إضافة رأيه وتقييمه هنا.</div>
             <form method="post">
                 <select name="rating" required>
                     <option value="5">5 نجوم</option>
