@@ -314,12 +314,43 @@ def build_specialties_cards(active_section=""):
             icon = get_specialty_icon(item)
             active_class = " active-specialty-item" if item == active_section else ""
             html += f'''
-            <a class="specialty-item{active_class}" href="/workers?section={item}#results">
+            <a class="specialty-item{active_class}" href="/workers-specialty/{item}">
                 <div class="specialty-icon">{icon}</div>
                 <div class="specialty-name">{item}</div>
             </a>
             '''
         html += '</div></div>'
+    html += '</div>'
+    return html
+
+
+def build_main_groups_cards():
+    html = '<div class="specialties-grid">'
+    for group_name, items in SPECIALTY_GROUPS.items():
+        first_icon = get_specialty_icon(items[0]) if items else "🛠️"
+        html += f'''
+        <a class="specialty-group-card" href="/workers-group/{group_name}" style="display:block;">
+            <div class="specialty-icon" style="font-size:34px;margin-bottom:10px;">{first_icon}</div>
+            <h3>{group_name}</h3>
+            <div class="section-subtitle">عرض اختصاصات {group_name}</div>
+        </a>
+        '''
+    html += '</div>'
+    return html
+
+
+def build_group_specialties_cards(group_name):
+    items = SPECIALTY_GROUPS.get(group_name, [])
+    html = '<div class="specialties-grid">'
+    for item in items:
+        icon = get_specialty_icon(item)
+        html += f'''
+        <a class="specialty-group-card" href="/workers-specialty/{item}" style="display:block;">
+            <div class="specialty-icon" style="font-size:34px;margin-bottom:10px;">{icon}</div>
+            <h3>{item}</h3>
+            <div class="section-subtitle">فتح قائمة المستخدمين المسجلين بهذا الاختصاص</div>
+        </a>
+        '''
     html += '</div>'
     return html
 
@@ -982,18 +1013,6 @@ label input[type="checkbox"]{
 </style>
 </head>
 <body>
-<div id="globalBackWrap" class="global-back-wrap" style="display:none;">
-    <a href="#" class="global-back-btn" onclick="if(window.history.length>1){window.history.back();}else{window.location.href='/';} return false;">↩ رجوع</a>
-</div>
-<script>
-document.addEventListener("DOMContentLoaded", function () {
-    const wrap = document.getElementById("globalBackWrap");
-    if (!wrap) return;
-    if (window.location.pathname !== "/") {
-        wrap.style.display = "block";
-    }
-});
-</script>
 """
 
 def settings_corner():
@@ -1509,194 +1528,173 @@ def worker_card(worker):
 @app.route("/workers")
 def workers():
     auto_login_from_cookie()
-    q = sanitize_input(request.args.get("q", ""), 80)
-    section = sanitize_input(request.args.get("section", ""), 80)
-    governorate = sanitize_input(request.args.get("governorate", ""), 80)
-    sort = sanitize_input(request.args.get("sort", "new"), 20)
-    min_rating = sanitize_input(request.args.get("min_rating", ""), 10)
-    trusted_only = request.args.get("trusted_only", "").strip() == "1"
-
-    sql = """
-    SELECT users.*
-    FROM users
-    LEFT JOIN comments ON comments.user_id = users.id
-    WHERE users.is_verified=1 AND COALESCE(users.is_blocked,0)=0 AND COALESCE(users.hidden_by_admin,0)=0 AND (users.role='worker' OR users.role IS NULL)
-    """
-    params = []
-
-    if q:
-        sql += " AND (users.name LIKE ? OR users.city LIKE ? OR users.bio LIKE ? OR users.section LIKE ?)"
-        like_q = f"%{q}%"
-        params.extend([like_q, like_q, like_q, like_q])
-
-    if section:
-        sql += " AND users.section=?"
-        params.append(section)
-
-    if governorate:
-        sql += " AND users.governorate=?"
-        params.append(governorate)
-
-    if trusted_only:
-        sql += " AND users.verified_worker=1"
-
-    sql += " GROUP BY users.id"
-
-    if min_rating in {"1", "2", "3", "4", "5"}:
-        sql += " HAVING COALESCE(AVG(comments.rating), 0) >= ?"
-        params.append(int(min_rating))
-
-    if sort == "rating":
-        sql += " ORDER BY users.is_pinned DESC, COALESCE(AVG(comments.rating),0) DESC, users.id DESC"
-    elif sort == "views":
-        sql += " ORDER BY users.is_pinned DESC, users.views DESC, users.id DESC"
-    else:
-        sql += " ORDER BY users.is_pinned DESC, users.id DESC"
-
-    show_results = bool(q or section or governorate or trusted_only or min_rating or request.args.get("sort"))
-
-    with get_db() as con:
-        rows = con.execute(sql, params).fetchall() if show_results else []
-
-    if show_results:
-        cards = "".join(worker_card(row) for row in rows) if rows else '<div class="msg">لا توجد نتائج بهذه الفلاتر</div>'
-    else:
-        cards = '<div class="msg">اختر الاختصاص من الأيقونات بالأعلى أو افتح البحث الاحترافي لتظهر النتائج هنا</div>'
-
-    section_options = build_specialties_options(section, "")
-    gov_options = build_governorates_options(governorate)
 
     if "user" in session:
-        user_buttons = """
+        user_buttons = '''
         <a href="/profile"><button>ملفي الشخصي</button></a>
         <a href="/inbox"><button>الرسائل</button></a>
         <a href="/workers-map"><button class="light-btn">خريطة العمال</button></a>
         <a href="/logout"><button>تسجيل الخروج</button></a>
-        """
+        '''
     else:
-        user_buttons = """
+        user_buttons = '''
         <a href="/workers-map"><button class="light-btn">خريطة العمال</button></a>
-        """
+        '''
 
-    logged_specialties = """
-    <h3 style="margin-top:22px;">الاختصاصات المتوفرة</h3>
-    """ + build_specialties_cards(section)
-
-    search_open_class = "show" if (q or section or governorate or trusted_only or min_rating or request.args.get("sort")) else ""
-
-    selected_info = ""
-    if section:
-        selected_info = f"""
-        <div class="msg">
-            الاختصاص المختار: <strong>{section}</strong>
-            <div style="margin-top:10px;">
-                <a href="/workers"><button type="button">إعادة ضبط الفلاتر</button></a>
-            </div>
-        </div>
-        """
-
-    sort_selected = {
-        "new": "selected" if sort == "new" else "",
-        "rating": "selected" if sort == "rating" else "",
-        "views": "selected" if sort == "views" else ""
-    }
-
-    min_rating_options = ""
-    for i in range(1, 6):
-        selected = "selected" if min_rating == str(i) else ""
-        min_rating_options += f'<option value="{i}" {selected}>{i} نجمة فأكثر</option>'
-
-    trusted_checked = "checked" if trusted_only else ""
+    groups_cards = build_main_groups_cards()
 
     return render_template_string(
-        STYLE + (settings_corner() if 'user' in session else '') + f"""
+        STYLE + (settings_corner() if 'user' in session else '') + f'''
         <div class="container">
             <div class="topbar">
                 <div><a href="/"><button class="light-btn">الرئيسية</button></a></div>
-                <div class="inline"><span class="badge">قسم التصفح والبحث</span></div>
+                <div class="inline"><span class="badge">اختَر القسم الرئيسي</span></div>
             </div>
 
             <div class="hero-panel" style="margin-bottom:16px;">
                 <div class="inline" style="margin-bottom:10px;">
-                    <span class="hero-badge">استعراض العمال</span>
-                    <span class="hero-badge">بحث احترافي + تقييم + خريطة</span>
+                    <span class="hero-badge">تصفح منظم</span>
+                    <span class="hero-badge">قسم ← اختصاص ← مستخدمون</span>
                 </div>
-                <h2>صفحة العمال</h2>
-                <div class="section-subtitle">فلترة متقدمة حسب الاختصاص والمحافظة والتقييم مع إظهار العمال الموثوقين والمميزين.</div>
-            </div>
-
-            <div class="search-toggle">
-                <button type="button" onclick="toggleSearchPanel()">🔍 إظهار / إخفاء البحث الاحترافي</button>
-            </div>
-
-            <div id="searchPanel" class="search-panel {search_open_class}">
-                <h3 style="margin-bottom:8px;">فلترة النتائج</h3>
-                <form method="get">
-                    <div class="filter-grid-pro">
-                        <div>
-                            <label>بحث عام</label>
-                            <input name="q" value="{q}" placeholder="ابحث بالاسم أو المدينة أو النبذة أو الاختصاص">
-                        </div>
-                        <div>
-                            <label>الاختصاص</label>
-                            <select name="section">
-                                <option value="">كل الاختصاصات</option>
-                                {section_options}
-                            </select>
-                        </div>
-                        <div>
-                            <label>المحافظة</label>
-                            <select name="governorate">
-                                <option value="">كل المحافظات</option>
-                                {gov_options}
-                            </select>
-                        </div>
-                        <div>
-                            <label>الترتيب</label>
-                            <select name="sort">
-                                <option value="new" {sort_selected["new"]}>الأحدث</option>
-                                <option value="rating" {sort_selected["rating"]}>الأعلى تقييماً</option>
-                                <option value="views" {sort_selected["views"]}>الأكثر مشاهدة</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label>الحد الأدنى للتقييم</label>
-                            <select name="min_rating">
-                                <option value="">أي تقييم</option>
-                                {min_rating_options}
-                            </select>
-                        </div>
-                        <div>
-                            <label>&nbsp;</label>
-                            <button>بحث</button>
-                        </div>
-                    </div>
-                    <label style="margin-top:10px;"><input type="checkbox" name="trusted_only" value="1" {trusted_checked}> عرض العمال الموثوقين فقط</label>
-                </form>
+                <h2>الأقسام الرئيسية</h2>
+                <div class="section-subtitle">اختر القسم الرئيسي أولاً، وبعدها تفتح لك صفحة الاختصاصات الخاصة به، ثم تظهر لك قائمة المستخدمين المسجلين.</div>
             </div>
 
             {user_buttons}
-            {logged_specialties}
-            {selected_info}
+
+            <h3 style="margin-top:22px;">الاختصاصات الرئيسية</h3>
+            {groups_cards}
+        </div>
+        </body></html>
+        '''
+    )
+
+
+@app.route("/workers-group/<path:group_name>")
+def workers_group(group_name):
+    auto_login_from_cookie()
+    group_name = sanitize_input(group_name, 80)
+
+    if group_name not in SPECIALTY_GROUPS:
+        return render_template_string(
+            STYLE + (settings_corner() if 'user' in session else '') + '''
+            <div class="container">
+                <div class="msg">القسم المطلوب غير موجود</div>
+                <a href="/workers"><button>رجوع</button></a>
+            </div>
+            </body></html>
+            '''
+        )
+
+    specialties_cards = build_group_specialties_cards(group_name)
+
+    if "user" in session:
+        user_buttons = '''
+        <a href="/profile"><button>ملفي الشخصي</button></a>
+        <a href="/inbox"><button>الرسائل</button></a>
+        <a href="/workers-map"><button class="light-btn">خريطة العمال</button></a>
+        '''
+    else:
+        user_buttons = '''
+        <a href="/workers-map"><button class="light-btn">خريطة العمال</button></a>
+        '''
+
+    return render_template_string(
+        STYLE + (settings_corner() if 'user' in session else '') + f'''
+        <div class="container">
+            <div class="topbar">
+                <div><a href="/workers"><button class="light-btn">رجوع للأقسام</button></a></div>
+                <div class="inline"><span class="badge">{group_name}</span></div>
+            </div>
+
+            <div class="hero-panel" style="margin-bottom:16px;">
+                <h2>اختصاصات {group_name}</h2>
+                <div class="section-subtitle">اختر الاختصاص الذي تريده من هذا القسم حتى تظهر لك قائمة المستخدمين المسجلين.</div>
+            </div>
+
+            {user_buttons}
+            {specialties_cards}
+        </div>
+        </body></html>
+        '''
+    )
+
+
+@app.route("/workers-specialty/<path:specialty_name>")
+def workers_specialty(specialty_name):
+    auto_login_from_cookie()
+    specialty_name = sanitize_input(specialty_name, 80)
+
+    if specialty_name not in SPECIALTIES:
+        return render_template_string(
+            STYLE + (settings_corner() if 'user' in session else '') + '''
+            <div class="container">
+                <div class="msg">الاختصاص المطلوب غير موجود</div>
+                <a href="/workers"><button>رجوع</button></a>
+            </div>
+            </body></html>
+            '''
+        )
+
+    group_name = get_main_group_by_specialty(specialty_name)
+
+    with get_db() as con:
+        rows = con.execute(
+            '''
+            SELECT users.*
+            FROM users
+            WHERE users.is_verified=1
+              AND COALESCE(users.is_blocked,0)=0
+              AND COALESCE(users.hidden_by_admin,0)=0
+              AND (users.role='worker' OR users.role IS NULL)
+              AND users.section=?
+            ORDER BY users.is_pinned DESC, users.id DESC
+            ''',
+            (specialty_name,)
+        ).fetchall()
+
+    cards = "".join(worker_card(row) for row in rows) if rows else '<div class="msg">لا يوجد مستخدمون مسجلون حالياً بهذا الاختصاص</div>'
+
+    if "user" in session:
+        user_buttons = '''
+        <a href="/profile"><button>ملفي الشخصي</button></a>
+        <a href="/inbox"><button>الرسائل</button></a>
+        <a href="/workers-map"><button class="light-btn">خريطة العمال</button></a>
+        '''
+    else:
+        user_buttons = '''
+        <a href="/workers-map"><button class="light-btn">خريطة العمال</button></a>
+        '''
+
+    return render_template_string(
+        STYLE + (settings_corner() if 'user' in session else '') + f'''
+        <div class="container">
+            <div class="topbar">
+                <div class="inline">
+                    <a href="/workers"><button class="light-btn">الأقسام</button></a>
+                    <a href="/workers-group/{group_name}"><button class="light-btn">اختصاصات {group_name}</button></a>
+                </div>
+                <div class="inline"><span class="badge">{specialty_name}</span></div>
+            </div>
+
+            <div class="hero-panel" style="margin-bottom:16px;">
+                <div class="inline" style="margin-bottom:10px;">
+                    <span class="hero-badge">{group_name}</span>
+                    <span class="hero-badge">{specialty_name}</span>
+                </div>
+                <h2>المستخدمون المسجلون ضمن اختصاص {specialty_name}</h2>
+                <div class="section-subtitle">هذه الصفحة تعرض فقط المستخدمين المسجلين داخل هذا الاختصاص.</div>
+            </div>
+
+            {user_buttons}
 
             <div id="results" style="margin-top:18px;">
                 {cards}
             </div>
         </div>
-
-        <script>
-        function toggleSearchPanel() {{
-            const panel = document.getElementById("searchPanel");
-            if (panel) {{
-                panel.classList.toggle("show");
-            }}
-        }}
-        </script>
-
         </body></html>
-        """
+        '''
     )
-
 
 
 @app.route("/worker/<int:user_id>", methods=["GET", "POST"])
