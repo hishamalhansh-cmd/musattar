@@ -8,6 +8,8 @@ import json
 import base64
 import datetime
 import time
+import urllib.request
+import urllib.error
 
 from flask import Flask, render_template_string, request, redirect, session, url_for, send_from_directory, jsonify
 from email.mime.text import MIMEText
@@ -357,11 +359,14 @@ def get_origin():
 def passkeys_supported():
     return WEBAUTHN_AVAILABLE
 
-SENDER_EMAIL = "hishamalhansh@gmail.com"
-SENDER_APP_PASSWORD = "dnwu yrac sbxs cplk"
+SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "")
+SENDER_APP_PASSWORD = os.environ.get("SENDER_APP_PASSWORD", "")
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+RESEND_FROM_EMAIL = os.environ.get("RESEND_FROM_EMAIL", SENDER_EMAIL or "")
+MAIL_PROVIDER = os.environ.get("MAIL_PROVIDER", "resend").strip().lower()
 MAIL_REQUIRED_FOR_REGISTER = False
 DEV_CONSOLE_OTP_FALLBACK = False
-MAIL_ENABLED = True
+MAIL_ENABLED = env_flag("MAIL_ENABLED", True)
 OTP_EXPIRY_SECONDS = 10 * 60
 
 CONTACT_PHONE = "+9647864145165"
@@ -993,9 +998,51 @@ init_db()
 
 def send_mail(to_email, subject, body):
     if not MAIL_ENABLED:
-        print(f"MAIL DISABLED: to={to_email} subject={subject} body={body}")
-        return True
+        print("MAIL DISABLED")
+        return False
 
+    provider = (MAIL_PROVIDER or "resend").lower().strip()
+
+    if provider == "resend":
+        if not RESEND_API_KEY or not RESEND_FROM_EMAIL:
+            print("RESEND ERROR: missing RESEND_API_KEY or RESEND_FROM_EMAIL")
+            return False
+
+        payload = {
+            "from": RESEND_FROM_EMAIL,
+            "to": [to_email],
+            "subject": subject,
+            "html": f"<div dir='rtl' style='font-family:Arial,sans-serif'><p>{body}</p></div>",
+            "text": body,
+        }
+
+        req = urllib.request.Request(
+            "https://api.resend.com/emails",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                raw = resp.read().decode("utf-8", errors="ignore")
+                print("RESEND STATUS:", getattr(resp, "status", "unknown"), raw)
+                return 200 <= getattr(resp, "status", 0) < 300
+        except urllib.error.HTTPError as e:
+            try:
+                detail = e.read().decode("utf-8", errors="ignore")
+            except Exception:
+                detail = str(e)
+            print("RESEND HTTP ERROR:", e.code, detail)
+            return False
+        except Exception as e:
+            print("RESEND SEND ERROR:", e)
+            return False
+
+    # Optional SMTP fallback for non-Render/paid environments
     if not SENDER_EMAIL or not SENDER_APP_PASSWORD:
         print("MAIL ERROR: missing SENDER_EMAIL or SENDER_APP_PASSWORD")
         return False
