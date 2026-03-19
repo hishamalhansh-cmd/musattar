@@ -360,8 +360,8 @@ def passkeys_supported():
 SENDER_EMAIL = "hishamalhansh@gmail.com"
 SENDER_APP_PASSWORD = "dnwu yrac sbxs cplk"
 MAIL_REQUIRED_FOR_REGISTER = False
-DEV_CONSOLE_OTP_FALLBACK = True
-MAIL_ENABLED = env_flag("MAIL_ENABLED", False)
+DEV_CONSOLE_OTP_FALLBACK = False
+MAIL_ENABLED = True
 OTP_EXPIRY_SECONDS = 10 * 60
 
 CONTACT_PHONE = "+9647864145165"
@@ -1445,10 +1445,6 @@ def register():
         session["pending_user"] = d
         session["otp"] = otp
         session["otp_created_at"] = time.time()
-        if DEV_CONSOLE_OTP_FALLBACK and not MAIL_ENABLED:
-            session["otp_console_notice"] = f"تم تعطيل إرسال البريد مؤقتًا. كود التفعيل الخاص بك هو: {otp}"
-        else:
-            session.pop("otp_console_notice", None)
 
         sent = send_mail(d["email"], "كود التفعيل", f"كود التفعيل الخاص بك هو: {otp}")
 
@@ -1530,7 +1526,7 @@ def register():
 def verify():
     pending_user = session.get("pending_user")
     otp_value = session.get("otp")
-    console_notice = session.get("otp_console_notice", "")
+    console_notice = ""
 
     if not pending_user or not otp_value:
         return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">انتهت جلسة التفعيل</div><a href="/register"><button>الرجوع للتسجيل</button></a></div></body></html>')
@@ -1660,10 +1656,6 @@ def forgot():
         session["reset_email"] = email
         session["reset_otp"] = otp
         session["reset_otp_created_at"] = time.time()
-        if DEV_CONSOLE_OTP_FALLBACK and not MAIL_ENABLED:
-            session["reset_console_notice"] = f"تم تعطيل إرسال البريد مؤقتًا. كود الاستعادة الخاص بك هو: {otp}"
-        else:
-            session.pop("reset_console_notice", None)
 
         sent = send_mail(email, "استعادة كلمة السر", f"كود استعادة كلمة السر هو: {otp}")
         if not sent:
@@ -1703,7 +1695,7 @@ def forgot():
 def reset_password():
     reset_email = session.get("reset_email")
     reset_otp = session.get("reset_otp")
-    console_notice = session.get("reset_console_notice", "")
+    console_notice = ""
 
     if request.method == "POST":
         otp = request.form.get("otp", "").strip()
