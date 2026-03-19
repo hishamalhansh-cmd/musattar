@@ -42,6 +42,292 @@ app.permanent_session_lifetime = timedelta(days=30)
 app.secret_key = os.environ.get("SECRET_KEY", "adam_secret_key_2026")
 
 
+LANGUAGES = {
+    "ar": "العربية",
+    "en": "English",
+    "ku": "کوردی",
+}
+
+TR = {
+    "app_name": {"ar": "المسطر", "en": "Al-Musttar", "ku": "المسطر"},
+    "email": {"ar": "البريد الإلكتروني", "en": "Email", "ku": "ئیمەیڵ"},
+    "password": {"ar": "كلمة السر", "en": "Password", "ku": "وشەی نهێنی"},
+    "login": {"ar": "تسجيل الدخول", "en": "Login", "ku": "چوونەژوورەوە"},
+    "create_account": {"ar": "إنشاء حساب", "en": "Create Account", "ku": "دروستکردنی هەژمار"},
+    "forgot_password": {"ar": "نسيت كلمة السر", "en": "Forgot Password", "ku": "وشەی نهێنی لەبیرچووە"},
+    "settings": {"ar": "الإعدادات", "en": "Settings", "ku": "ڕێکخستنەکان"},
+    "profile": {"ar": "ملفي الشخصي", "en": "My Profile", "ku": "پرۆفایلی من"},
+    "edit_profile": {"ar": "تعديل الملف الشخصي", "en": "Edit Profile", "ku": "دەستکاریکردنی پرۆفایل"},
+    "messages": {"ar": "الرسائل", "en": "Messages", "ku": "پەیامەکان"},
+    "support": {"ar": "الدعم الفني", "en": "Technical Support", "ku": "پشتگیری فنی"},
+    "specialties": {"ar": "الاختصاصات", "en": "Specialties", "ku": "پسپۆڕییەکان"},
+    "logout": {"ar": "تسجيل الخروج", "en": "Logout", "ku": "چوونەدەرەوە"},
+    "choose_page": {"ar": "اختر الصفحة التي تريدها.", "en": "Choose the page you want.", "ku": "ئەو پەڕەیە هەڵبژێرە کە دەتەوێت."},
+    "my_works": {"ar": "أعمالي", "en": "My Works", "ku": "کارەکانم"},
+    "uploaded_images": {"ar": "الصور المرفوعة داخل ملفك الشخصي.", "en": "Images uploaded to your profile.", "ku": "وێنە بارکراوەکانی ناو پرۆفایلەکەت."},
+    "no_works": {"ar": "لا توجد أعمال حتى الآن", "en": "No works yet", "ku": "هێشتا هیچ کارێک نییە"},
+    "home_page": {"ar": "الرئيسية", "en": "Home", "ku": "سەرەکی"},
+    "name": {"ar": "الاسم", "en": "Name", "ku": "ناو"},
+    "phone": {"ar": "الهاتف", "en": "Phone", "ku": "تەلەفۆن"},
+    "city": {"ar": "المدينة", "en": "City", "ku": "شار"},
+    "experience": {"ar": "الخبرة", "en": "Experience", "ku": "ئەزموون"},
+    "your_profile_inside": {"ar": "هذه صفحتك الشخصية داخل التطبيق.", "en": "This is your profile page inside the app.", "ku": "ئەمە پەڕەی پرۆفایلی تۆیە لە ناو ئەپەکە."},
+    "main_sections": {"ar": "الأقسام الرئيسية", "en": "Main Sections", "ku": "بەشە سەرەکییەکان"},
+    "organized_browse": {"ar": "تصفح منظم", "en": "Organized browsing", "ku": "گەڕانێکی ڕێکخراو"},
+}
+
+def get_lang():
+    lang = session.get("lang", "ar")
+    return lang if lang in LANGUAGES else "ar"
+
+def t(key):
+    lang = get_lang()
+    return TR.get(key, {}).get(lang, TR.get(key, {}).get("ar", key))
+
+def language_selector_html():
+    current = get_lang()
+    links = []
+    for code, label in LANGUAGES.items():
+        style = "font-weight:700;color:#ffffff;" if code == current else "color:#dbeafe;"
+        links.append(f"<a href='/set-language/{code}' style='{style}'>{label}</a>")
+    return f"""
+    <div style="position:fixed;top:14px;left:14px;z-index:9999;background:rgba(10,25,47,.96);border:1px solid rgba(96,165,250,.28);padding:10px 14px;border-radius:999px;box-shadow:0 6px 18px rgba(0,0,0,.22);font-size:13px;">
+        🌐 {' | '.join(links)}
+    </div>
+    """
+
+@app.route("/set-language/<lang_code>")
+def set_language(lang_code):
+    session["lang"] = lang_code if lang_code in LANGUAGES else "ar"
+    ref = request.referrer or ""
+    if "/choose-language" in ref or ref.endswith("/"):
+        return redirect(url_for("home"))
+    return redirect(ref or url_for("home"))
+
+
+def ensure_language_selected():
+    lang = session.get("lang")
+    if lang not in LANGUAGES:
+        return False
+    return True
+
+
+@app.before_request
+def force_language_selection_first():
+    allowed_paths = {
+        "/choose-language",
+        "/",
+    }
+    if request.path.startswith("/set-language/"):
+        return None
+    if request.path.startswith("/uploads/"):
+        return None
+    if request.path in allowed_paths:
+        return None
+    if not ensure_language_selected():
+        return redirect(url_for("choose_language"))
+
+
+@app.route("/choose-language")
+def choose_language():
+    cards = []
+    for code, label in LANGUAGES.items():
+        native = label
+        hint = {"ar": "اختر العربية", "en": "Choose English", "ku": "کوردی هەڵبژێرە"}.get(code, "")
+        cards.append(f"""
+        <a href="/set-language/{code}" class="specialty-group-card" style="display:block;text-align:center;">
+            <div class="specialty-icon" style="font-size:34px;margin-bottom:10px;">🌐</div>
+            <h3>{native}</h3>
+            <div class="section-subtitle">{hint}</div>
+        </a>
+        """)
+    html_cards = '<div class="specialties-grid">' + ''.join(cards) + '</div>'
+
+    return render_template_string(
+        STYLE + f"""
+        <div class="container narrow-container" style="margin-top:90px;text-align:center;">
+            <h1 style="font-size:40px;margin-bottom:16px;">المسطر</h1>
+            <div class="section-subtitle">اختر اللغة التي تريدها للبرنامج</div>
+            {html_cards}
+        </div>
+        </body></html>
+        """
+    )
+
+
+FULL_UI_TRANSLATIONS = {
+    "العربية": {"en": "Arabic", "ku": "عەرەبی"},
+    "English": {"en": "English", "ku": "ئینگلیزی"},
+    "کوردی": {"en": "Kurdish", "ku": "کوردی"},
+    "المسطر": {"en": "Al-Musttar", "ku": "المسطر"},
+    "البريد الإلكتروني": {"en": "Email", "ku": "ئیمەیڵ"},
+    "كلمة السر": {"en": "Password", "ku": "وشەی نهێنی"},
+    "تسجيل الدخول": {"en": "Login", "ku": "چوونەژوورەوە"},
+    "إنشاء حساب": {"en": "Create Account", "ku": "دروستکردنی هەژمار"},
+    "نسيت كلمة السر": {"en": "Forgot Password", "ku": "وشەی نهێنی لەبیرچووە"},
+    "الرئيسية": {"en": "Home", "ku": "سەرەکی"},
+    "الإعدادات": {"en": "Settings", "ku": "ڕێکخستنەکان"},
+    "ملفي الشخصي": {"en": "My Profile", "ku": "پرۆفایلی من"},
+    "تعديل الملف الشخصي": {"en": "Edit Profile", "ku": "دەستکاریکردنی پرۆفایل"},
+    "تعديل الملف": {"en": "Edit Profile", "ku": "دەستکاریکردنی پرۆفایل"},
+    "الرسائل": {"en": "Messages", "ku": "پەیامەکان"},
+    "الدعم الفني": {"en": "Technical Support", "ku": "پشتگیری فنی"},
+    "الاختصاصات": {"en": "Specialties", "ku": "پسپۆڕییەکان"},
+    "تسجيل الخروج": {"en": "Logout", "ku": "چوونەدەرەوە"},
+    "اختر الصفحة التي تريدها.": {"en": "Choose the page you want.", "ku": "ئەو پەڕەیە هەڵبژێرە کە دەتەوێت."},
+    "أعمالي": {"en": "My Works", "ku": "کارەکانم"},
+    "الصور المرفوعة داخل ملفك الشخصي.": {"en": "Images uploaded to your profile.", "ku": "وێنە بارکراوەکانی ناو پرۆفایلەکەت."},
+    "لا توجد أعمال حتى الآن": {"en": "No works yet", "ku": "هێشتا هیچ کارێک نییە"},
+    "الهاتف": {"en": "Phone", "ku": "تەلەفۆن"},
+    "المدينة": {"en": "City", "ku": "شار"},
+    "الخبرة": {"en": "Experience", "ku": "ئەزموون"},
+    "الاسم": {"en": "Name", "ku": "ناو"},
+    "رجوع": {"en": "Back", "ku": "گەڕانەوە"},
+    "إرسال": {"en": "Send", "ku": "ناردن"},
+    "إرسال الرسالة": {"en": "Send Message", "ku": "ناردنی پەیام"},
+    "إرسال الرد": {"en": "Send Reply", "ku": "ناردنی وەڵام"},
+    "الملف الشخصي": {"en": "Profile", "ku": "پرۆفایل"},
+    "القسم الرئيسي": {"en": "Main Category", "ku": "بەشی سەرەکی"},
+    "اختَر القسم الرئيسي": {"en": "Choose the main category", "ku": "بەشی سەرەکی هەڵبژێرە"},
+    "الأقسام الرئيسية": {"en": "Main Categories", "ku": "بەشە سەرەکییەکان"},
+    "تصفح منظم": {"en": "Organized browsing", "ku": "گەڕانێکی ڕێکخراو"},
+    "اختصاصات": {"en": "Specialties", "ku": "پسپۆڕییەکان"},
+    "اختصاصات مهندسون": {"en": "Engineer Specialties", "ku": "پسپۆڕییەکانی ئەندازیاران"},
+    "المستخدمون المسجلون": {"en": "Registered Users", "ku": "بەکارهێنەرە تۆمارکراوەکان"},
+    "المستخدمون المسجلون ضمن اختصاص": {"en": "Users registered under specialty", "ku": "بەکارهێنەرە تۆمارکراوەکان لە ژێر پسپۆڕی"},
+    "اختر الاختصاص الذي تريده من هذا القسم حتى تظهر لك قائمة المستخدمين المسجلين.": {"en": "Choose the specialty from this category to see registered users.", "ku": "پسپۆڕییەکە هەڵبژێرە بۆ بینینی بەکارهێنەرە تۆمارکراوەکان."},
+    "اختر القسم الرئيسي أولاً، وبعدها تفتح لك صفحة الاختصاصات الخاصة به، ثم تظهر لك قائمة المستخدمين المسجلين.": {"en": "Choose the main category first, then its specialties page will open, then the registered users list.", "ku": "سەرەتا بەشی سەرەکی هەڵبژێرە، پاشان پەڕەی پسپۆڕییەکان دەکرێتەوە، دواتر لیستی بەکارهێنەرە تۆمارکراوەکان دەردەکەوێت."},
+    "فتح قائمة المستخدمين المسجلين بهذا الاختصاص": {"en": "Open users registered in this specialty", "ku": "کردنەوەی لیستی بەکارهێنەرە تۆمارکراوەکان لەم پسپۆڕییەدا"},
+    "عرض اختصاصات": {"en": "Show specialties of", "ku": "پیشاندانی پسپۆڕییەکانی"},
+    "خريطة العمال": {"en": "Workers Map", "ku": "نەخشەی کرێکاران"},
+    "صفحتك الشخصية": {"en": "Your profile page", "ku": "پەڕەی پرۆفایلی تۆ"},
+    "هذه صفحتك الشخصية داخل التطبيق.": {"en": "This is your profile page inside the app.", "ku": "ئەمە پەڕەی پرۆفایلی تۆیە لە ناو ئەپەکە."},
+    "الدعم الفني داخل التطبيق": {"en": "In-app technical support", "ku": "پشتگیری فنی لە ناو ئەپەکە"},
+    "اكتب رسالتك للدعم الفني": {"en": "Write your support message", "ku": "پەیامی پشتگیری بنووسە"},
+    "اكتب رسالتك أولاً": {"en": "Write your message first", "ku": "سەرەتا پەیامەکەت بنووسە"},
+    "اكتب ردك هنا": {"en": "Write your reply here", "ku": "لێرە وەڵامەکەت بنووسە"},
+    "اختر محادثة من القائمة": {"en": "Choose a conversation from the list", "ku": "گفتوگۆیەک لە لیستەکە هەڵبژێرە"},
+    "المحادثات": {"en": "Conversations", "ku": "گفتوگۆکان"},
+    "لا توجد رسائل دعم حتى الآن": {"en": "No support messages yet", "ku": "هێشتا هیچ پەیامی پشتگیری نییە"},
+    "لا توجد رسائل": {"en": "No messages", "ku": "هیچ پەیامێک نییە"},
+    "رد دعم فني": {"en": "Support Reply", "ku": "وەڵامی پشتگیری"},
+    "اكتب تقييمك وتعليقك": {"en": "Write your rating and comment", "ku": "هەڵسەنگاندن و بۆچوونەکەت بنووسە"},
+    "إضافة تعليق": {"en": "Add Comment", "ku": "زیادکردنی لێدوان"},
+    "إضافة تعليق وتقييم": {"en": "Add Comment and Rating", "ku": "زیادکردنی لێدوان و هەڵسەنگاندن"},
+    "نشر التعليق": {"en": "Post Comment", "ku": "بڵاوکردنەوەی لێدوان"},
+    "التقييمات والتعليقات": {"en": "Ratings and Comments", "ku": "هەڵسەنگاندن و لێدوانەکان"},
+    "لا توجد تعليقات بعد": {"en": "No comments yet", "ku": "هێشتا هیچ لێدوانێک نییە"},
+    "زائر": {"en": "Guest", "ku": "میوان"},
+    "ملفي": {"en": "My File", "ku": "پرۆفایلم"},
+    "عرض الملف": {"en": "View Profile", "ku": "پیشاندانی پرۆفایل"},
+    "فتح الموقع على الخريطة": {"en": "Open location on map", "ku": "کردنەوەی شوێن لەسەر نەخشە"},
+    "مراسلة واتساب": {"en": "WhatsApp", "ku": "واتساپ"},
+    "إرسال رسالة": {"en": "Send Message", "ku": "ناردنی پەیام"},
+    "صفحة شخصية تعرض المعلومات الأساسية والأعمال وطرق التواصل بشكل أوضح.": {"en": "A profile page showing main info, works, and contact methods clearly.", "ku": "پەڕەیەکی پرۆفایل کە زانیاری سەرەکی و کار و شێوازەکانی پەیوەندی بە شێوەیەکی ڕوون پیشان دەدات."},
+    "استقبال الرسائل": {"en": "Receiving messages", "ku": "وەرگرتنی پەیام"},
+    "مفعل": {"en": "Enabled", "ku": "چالاککراو"},
+    "معطل": {"en": "Disabled", "ku": "ناچالاک"},
+    "لا توجد نبذة حالياً": {"en": "No bio yet", "ku": "هێشتا هیچ کورته‌پێناسەیەک نییە"},
+    "الموقع": {"en": "Location", "ku": "شوێن"},
+    "المحافظة": {"en": "Governorate", "ku": "پارێزگا"},
+    "اختر المحافظة": {"en": "Choose governorate", "ku": "پارێزگا هەڵبژێرە"},
+    "اختر الاختصاص": {"en": "Choose specialty", "ku": "پسپۆڕییەکە هەڵبژێرە"},
+    "سنوات الخبرة": {"en": "Years of experience", "ku": "ساڵانی ئەزموون"},
+    "نبذة مختصرة عنك": {"en": "Short bio about you", "ku": "کورته‌پێناسەیەک دەربارەی تۆ"},
+    "الصورة الشخصية": {"en": "Profile picture", "ku": "وێنەی پرۆفایل"},
+    "أعمالي": {"en": "My works", "ku": "کارەکانم"},
+    "اختيار ملف": {"en": "Choose file", "ku": "هەڵبژاردنی فایل"},
+    "اختيار الملفات": {"en": "Choose files", "ku": "هەڵبژاردنی فایلەکان"},
+    "متابعة التفعيل": {"en": "Continue activation", "ku": "بەردەوامبوونی چالاککردن"},
+    "كلمة السر قصيرة": {"en": "Password is too short", "ku": "وشەی نهێنی کورتە"},
+    "املأ جميع الحقول": {"en": "Fill all fields", "ku": "هەموو خانەکان پڕ بکەرەوە"},
+    "اسم المستخدم مستخدم مسبقاً": {"en": "Username already used", "ku": "ناوی بەکارهێنەر پێشتر بەکارهاتووە"},
+    "تم الحفظ بنجاح": {"en": "Saved successfully", "ku": "بە سەرکەوتوویی پاشەکەوت کرا"},
+}
+
+def translate_html_content(html):
+    lang = get_lang()
+    if lang == "ar" or not html:
+        return html
+
+    import re
+
+    # Keep routes, href/src/action/value attributes, JS, CSS, and option values safe.
+    protected = {}
+
+    def protect_chunk(raw):
+        key = f"__PROTECTED_{len(protected)}__"
+        protected[key] = raw
+        return key
+
+    patterns = [
+        r'<script\b[^>]*>.*?</script>',
+        r'<style\b[^>]*>.*?</style>',
+        r'href="[^"]*"',
+        r"href='[^']*'",
+        r'src="[^"]*"',
+        r"src='[^']*'",
+        r'action="[^"]*"',
+        r"action='[^']*'",
+        r'value="[^"]*"',
+        r"value='[^']*'",
+        r'data-[a-zA-Z0-9_-]+="[^"]*"',
+        r"data-[a-zA-Z0-9_-]+='[^']*'",
+    ]
+
+    for pat in patterns:
+        html = re.sub(pat, lambda m: protect_chunk(m.group(0)), html, flags=re.S)
+
+    html = html.replace('<html lang="ar" dir="rtl">', f'<html lang="{lang}" dir="{"ltr" if lang == "en" else "rtl"}">')
+
+    for ar_text, variants in sorted(FULL_UI_TRANSLATIONS.items(), key=lambda x: len(x[0]), reverse=True):
+        translated = variants.get(lang)
+        if translated:
+            html = html.replace(ar_text, translated)
+
+    dynamic_terms = {
+        "مهندسون": {"en": "Engineers", "ku": "ئەندازیاران"},
+        "خلفه بناء": {"en": "Builders", "ku": "بناغەکاران"},
+        "عمال بناء": {"en": "Construction Workers", "ku": "کرێکارانی بیناسازی"},
+        "مواد بناء": {"en": "Building Materials", "ku": "کەرەستەی بیناسازی"},
+        "فنيين": {"en": "Technicians", "ku": "تەکنیکیەکان"},
+        "مهندس كهربائيات": {"en": "Electrical Engineer", "ku": "ئەندازیاری کارەبا"},
+        "مهندس معماري": {"en": "Architect", "ku": "ئەندازیاری تەلارسازی"},
+        "مهندس انشاء": {"en": "Civil Engineer", "ku": "ئەندازیاری بیناسازی"},
+        "مهندس ديكور وتصميم": {"en": "Interior & Design Engineer", "ku": "ئەندازیاری دیکۆر و دیزاین"},
+        "خلفه اشتايكر": {"en": "Block Builder", "ku": "بڵۆک چێکەر"},
+        "خلفه طابوك": {"en": "Brick Builder", "ku": "توقم چێکەر"},
+        "خلفه سيراميك والرضيه": {"en": "Ceramic & Floor Worker", "ku": "کاری سیرامیک و زەوی"},
+        "خلفه جص (ابياض)": {"en": "Plaster Worker", "ku": "کاری گچ"},
+        "خلفه قالب نجار": {"en": "Formwork Carpenter", "ku": "نەجارێکی قالب"},
+        "فني كهرباء": {"en": "Electrician", "ku": "کارەباکار"},
+        "فني تبريد": {"en": "Cooling Technician", "ku": "تەکنیکی ساردکەرەوە"},
+        "فني صحيات": {"en": "Plumbing Technician", "ku": "تەکنیکی تەندروستی و ئاودەست"},
+    }
+
+    for ar_text, variants in sorted(dynamic_terms.items(), key=lambda x: len(x[0]), reverse=True):
+        translated = variants.get(lang)
+        if translated:
+            html = html.replace(ar_text, translated)
+
+    for key, raw in protected.items():
+        html = html.replace(key, raw)
+
+    return html
+
+
+@app.after_request
+def apply_full_language_translation(response):
+    try:
+        if response.content_type and "text/html" in response.content_type.lower():
+            body = response.get_data(as_text=True)
+            body = translate_html_content(body)
+            response.set_data(body)
+    except Exception:
+        pass
+    return response
+
+
 def env_flag(name, default=False):
     value = os.environ.get(name)
     if value is None:
@@ -1042,36 +1328,29 @@ def settings_corner():
 
 
 HOME_HTML = STYLE + """
-<div class="container narrow-container" style="max-width:460px;margin-top:90px;text-align:center;">
-    <div style="margin-bottom:22px;">
-        <h1 style="font-size:42px;margin-bottom:8px;">المسطر</h1>
-        <div class="section-subtitle">منصة مهنية لعرض الخبرات وربط أصحاب الأعمال بالمهنيين</div>
-    </div>
+<div class="container narrow-container" style="margin-top:90px;text-align:center;">
+    <h1 style="font-size:42px;margin-bottom:34px;">{{ t('app_name') }}</h1>
 
-    <form action="/login" method="post" style="margin-top:18px;">
-        <input type="email" name="email" placeholder="البريد الإلكتروني" required>
-        <input type="password" name="password" placeholder="كلمة السر" required>
-        <button type="submit">تسجيل الدخول</button>
+    <form action="/login" method="post">
+        <input type="email" name="email" placeholder="{{ t('email') }}" required>
+        <input type="password" name="password" placeholder="{{ t('password') }}" required>
+        <button type="submit">{{ t('login') }}</button>
     </form>
 
-    <div style="margin-top:14px;display:flex;justify-content:space-between;gap:12px;">
-        <a href="/forgot" style="color:#cbd5e1;font-size:15px;">نسيت كلمة السر</a>
-        <a href="/register" style="color:#60a5fa;font-size:15px;font-weight:700;">إنشاء حساب</a>
+    <div class="inline" style="justify-content:space-between;margin-top:12px;">
+        <a href="/register" style="color:#60a5fa;font-weight:700;">{{ t('create_account') }}</a>
+        <a href="/forgot" style="color:#cbd5e1;">{{ t('forgot_password') }}</a>
     </div>
-
-    <div class="notice" style="margin-top:18px;">واجهة دخول بسيطة وسريعة بدون مربعات إضافية.</div>
 </div>
-
-<a class="bottom-corner-link bottom-left-link" href="/admin" title="دخول الأدمن">🛠️</a>
-<a class="bottom-corner-link bottom-right-link" href="/workers" title="الدخول كزائر">👤 زائر</a>
-
+<a class="bottom-corner-link bottom-left-link" href="/admin">🛠️</a>
+<a class="bottom-corner-link bottom-right-link" href="/workers">👤 زائر</a>
 </body></html>
 """
 
 
 @app.route("/")
 def home():
-    return render_template_string(HOME_HTML)
+    return render_template_string(HOME_HTML, t=t)
 
 
 @app.route("/register", methods=["GET", "POST"])
@@ -1568,10 +1847,10 @@ def workers():
 
             <div class="hero-panel" style="margin-bottom:16px;">
                 <div class="inline" style="margin-bottom:10px;">
-                    <span class="hero-badge">تصفح منظم</span>
+                    <span class="hero-badge">{t("organized_browse")}</span>
                     <span class="hero-badge">قسم ← اختصاص ← مستخدمون</span>
                 </div>
-                <h2>الأقسام الرئيسية</h2>
+                <h2>{t("main_sections")}</h2>
                 <div class="section-subtitle">اختر القسم الرئيسي أولاً، وبعدها تفتح لك صفحة الاختصاصات الخاصة به، ثم تظهر لك قائمة المستخدمين المسجلين.</div>
             </div>
 
@@ -2946,8 +3225,8 @@ def profile():
         STYLE + (settings_corner() if 'user' in session else '') + f"""
         <div class="container">
             <div class="topbar">
-                <a href="/settings"><button class="light-btn">الإعدادات</button></a>
-                <a href="/edit-profile"><button>تعديل الملف</button></a>
+                <a href="/settings"><button class="light-btn">{t("settings")}</button></a>
+                <a href="/edit-profile"><button>{t("edit_profile")}</button></a>
             </div>
 
             <div class="worker-hero">
@@ -2964,27 +3243,28 @@ def profile():
                         <div class="worker-rating-line">
                             <span class="rating-stars">{stars}</span>
                         </div>
-                        <div class="section-subtitle">هذه صفحتك الشخصية داخل التطبيق.</div>
+                        <div class="section-subtitle">{t("your_profile_inside")}</div>
                         <div style="margin-top:10px;">{user["bio"] or "لا توجد نبذة حالياً"}</div>
 
                         <div class="detail-grid">
-                            <div class="detail-box"><strong>الهاتف</strong>{user["phone"] or "-"}</div>
-                            <div class="detail-box"><strong>البريد</strong>{user["email"] or "-"}</div>
-                            <div class="detail-box"><strong>المدينة</strong>{user["city"] or "-"}</div>
-                            <div class="detail-box"><strong>الخبرة</strong>{user["exp"] or "-"}</div>
+                            <div class="detail-box"><strong>{t("phone")}</strong>{user["phone"] or "-"}</div>
+                            <div class="detail-box"><strong>{t("email")}</strong>{user["email"] or "-"}</div>
+                            <div class="detail-box"><strong>{t("city")}</strong>{user["city"] or "-"}</div>
+                            <div class="detail-box"><strong>{t("experience")}</strong>{user["exp"] or "-"}</div>
                         </div>
                     </div>
                 </div>
             </div>
 
             <div class="card">
-                <h3>أعمالي</h3>
-                <div class="section-subtitle">الصور المرفوعة داخل ملفك الشخصي.</div>
-                {work_images_html if work_images_html else '<div class="empty-state">لا توجد أعمال حتى الآن</div>'}
+                <h3>{t("my_works")}</h3>
+                <div class="section-subtitle">{t("uploaded_images")}</div>
+                {work_images_html if work_images_html else f'<div class="empty-state">{t("no_works")}</div>'}
             </div>
         </div>
         </body></html>
-        """
+        """,
+        language_selector=language_selector_html()
     )
 
 
@@ -3001,20 +3281,31 @@ def settings():
     return render_template_string(
         STYLE + (settings_corner() if 'user' in session else '') + f"""
         <div class="container narrow-container">
-            <h2>الإعدادات</h2>
-            <div class="section-subtitle">اختر الصفحة التي تريدها.</div>
+            <h2>{t("settings")}</h2>
+            <div class="section-subtitle">{t("choose_page")}</div>
 
             <div class="card">
-                <a href="/profile"><button>ملفي الشخصي</button></a>
-                <a href="/edit-profile"><button class="light-btn">تعديل الملف الشخصي</button></a>
-                <a href="/inbox"><button class="light-btn">الرسائل</button></a>
-                <a href="/support"><button class="light-btn">الدعم الفني</button></a>
-                <a href="/workers"><button class="light-btn">الاختصاصات</button></a>
-                <a href="/logout"><button>تسجيل الخروج</button></a>
+                <a href="/profile"><button>{t("profile")}</button></a>
+                <a href="/edit-profile"><button class="light-btn">{t("edit_profile")}</button></a>
+                <a href="/inbox"><button class="light-btn">{t("messages")}</button></a>
+                <a href="/support"><button class="light-btn">{t("support")}</button></a>
+                <a href="/workers"><button class="light-btn">{t("specialties")}</button></a>
+                <a href="/logout"><button>{t("logout")}</button></a>
+            </div>
+
+            <div class="card" style="margin-top:14px;">
+                <h3>اللغة</h3>
+                <div class="section-subtitle">يمكنك تغيير لغة البرنامج من هنا</div>
+                <div class="inline">
+                    <a href="/set-language/ar"><button class="light-btn">العربية</button></a>
+                    <a href="/set-language/en"><button class="light-btn">English</button></a>
+                    <a href="/set-language/ku"><button class="light-btn">کوردی</button></a>
+                </div>
             </div>
         </div>
         </body></html>
-        """
+        """,
+        language_selector=language_selector_html()
     )
 
 
