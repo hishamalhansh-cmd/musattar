@@ -2915,6 +2915,109 @@ def delete_account():
     return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + """<div class="container"><a href="/settings"><button>رجوع</button></a><h2>حذف الحساب</h2><div class="msg">هذه العملية نهائية. اكتب كلمة المرور الحالية، ثم اكتب العبارة: احذف حسابي</div><form method="post"><input type="password" name="password" placeholder="كلمة المرور الحالية" required><input name="confirm_text" placeholder="اكتب هنا: احذف حسابي" required><button style="background:red;color:white;">تأكيد حذف الحساب</button></form></div></body></html>""")
 
 
+
+@app.route("/profile")
+def profile():
+    if "user" not in session:
+        return redirect(url_for("login"))
+
+    user = get_current_session_user()
+    if not user:
+        session.clear()
+        return redirect(url_for("login"))
+
+    avg_rating, rating_count = get_worker_rating_summary(user["id"])
+    stars = render_stars(avg_rating)
+
+    profile_html = (
+        f'<img src="{url_for("uploaded_file", filename=user["profile_pic"])}" class="profile-img-large" alt="profile">'
+        if user["profile_pic"]
+        else '<div class="profile-placeholder-large">👤</div>'
+    )
+
+    imgs = [x.strip() for x in (user["work_images"] or "").split(",") if x.strip()]
+    work_images_html = ""
+    if imgs:
+        work_images_html = '<div class="work-grid">' + "".join(
+            f'<img src="{url_for("uploaded_file", filename=img)}" alt="work">' for img in imgs
+        ) + '</div>'
+
+    return render_template_string(
+        STYLE + (settings_corner() if 'user' in session else '') + f"""
+        <div class="container">
+            <div class="topbar">
+                <a href="/settings"><button class="light-btn">الإعدادات</button></a>
+                <a href="/edit-profile"><button>تعديل الملف</button></a>
+            </div>
+
+            <div class="worker-hero">
+                <div class="worker-hero-grid">
+                    <div class="center">{profile_html}</div>
+                    <div>
+                        <div class="inline" style="margin-bottom:10px;">
+                            <span class="worker-specialty-badge">{get_specialty_icon(user["section"])} {user["section"] or "-"}</span>
+                            <span class="badge">{user["governorate"] or "-"}</span>
+                            <span class="badge">⭐ {avg_rating} / 5</span>
+                            <span class="badge">{rating_count} تقييم</span>
+                        </div>
+                        <h2>{user["name"]}</h2>
+                        <div class="worker-rating-line">
+                            <span class="rating-stars">{stars}</span>
+                        </div>
+                        <div class="section-subtitle">هذه صفحتك الشخصية داخل التطبيق.</div>
+                        <div style="margin-top:10px;">{user["bio"] or "لا توجد نبذة حالياً"}</div>
+
+                        <div class="detail-grid">
+                            <div class="detail-box"><strong>الهاتف</strong>{user["phone"] or "-"}</div>
+                            <div class="detail-box"><strong>البريد</strong>{user["email"] or "-"}</div>
+                            <div class="detail-box"><strong>المدينة</strong>{user["city"] or "-"}</div>
+                            <div class="detail-box"><strong>الخبرة</strong>{user["exp"] or "-"}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>أعمالي</h3>
+                <div class="section-subtitle">الصور المرفوعة داخل ملفك الشخصي.</div>
+                {work_images_html if work_images_html else '<div class="empty-state">لا توجد أعمال حتى الآن</div>'}
+            </div>
+        </div>
+        </body></html>
+        """
+    )
+
+
+@app.route("/settings")
+def settings():
+    if "user" not in session:
+        return redirect(url_for("login"))
+
+    user = get_current_session_user()
+    if not user:
+        session.clear()
+        return redirect(url_for("login"))
+
+    return render_template_string(
+        STYLE + (settings_corner() if 'user' in session else '') + f"""
+        <div class="container narrow-container">
+            <h2>الإعدادات</h2>
+            <div class="section-subtitle">اختر الصفحة التي تريدها.</div>
+
+            <div class="card">
+                <a href="/profile"><button>ملفي الشخصي</button></a>
+                <a href="/edit-profile"><button class="light-btn">تعديل الملف الشخصي</button></a>
+                <a href="/inbox"><button class="light-btn">الرسائل</button></a>
+                <a href="/support"><button class="light-btn">الدعم الفني</button></a>
+                <a href="/workers"><button class="light-btn">الاختصاصات</button></a>
+                <a href="/logout"><button>تسجيل الخروج</button></a>
+            </div>
+        </div>
+        </body></html>
+        """
+    )
+
+
 @app.route("/edit-profile", methods=["GET", "POST"])
 def edit_profile():
     if "user" not in session:
