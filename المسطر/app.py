@@ -666,14 +666,29 @@ def init_db():
         cur.execute("""
         CREATE TABLE IF NOT EXISTS support_messages(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            sender_type TEXT NOT NULL,
-            message TEXT NOT NULL,
+            user_id INTEGER,
+            sender_type TEXT,
+            message TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             is_read_admin INTEGER DEFAULT 0,
             is_read_user INTEGER DEFAULT 0
         )
         """)
+
+        if not column_exists(cur, "support_messages", "user_id"):
+            cur.execute("ALTER TABLE support_messages ADD COLUMN user_id INTEGER DEFAULT 0")
+
+        if not column_exists(cur, "support_messages", "sender_type"):
+            cur.execute("ALTER TABLE support_messages ADD COLUMN sender_type TEXT DEFAULT 'user'")
+
+        if not column_exists(cur, "support_messages", "message"):
+            cur.execute("ALTER TABLE support_messages ADD COLUMN message TEXT DEFAULT ''")
+
+        if not column_exists(cur, "support_messages", "is_read_admin"):
+            cur.execute("ALTER TABLE support_messages ADD COLUMN is_read_admin INTEGER DEFAULT 0")
+
+        if not column_exists(cur, "support_messages", "is_read_user"):
+            cur.execute("ALTER TABLE support_messages ADD COLUMN is_read_user INTEGER DEFAULT 0")
 
         admin_row = cur.execute("SELECT * FROM admin_settings WHERE id=1").fetchone()
         if not admin_row:
@@ -1533,12 +1548,12 @@ def workers():
         user_buttons = '''
         <a href="/profile"><button>ملفي الشخصي</button></a>
         <a href="/inbox"><button>الرسائل</button></a>
-        <a href="/workers-map"><button class="light-btn">خريطة العمال</button></a>
+        
         <a href="/logout"><button>تسجيل الخروج</button></a>
         '''
     else:
         user_buttons = '''
-        <a href="/workers-map"><button class="light-btn">خريطة العمال</button></a>
+        
         '''
 
     groups_cards = build_main_groups_cards()
@@ -1592,11 +1607,11 @@ def workers_group(group_name):
         user_buttons = '''
         <a href="/profile"><button>ملفي الشخصي</button></a>
         <a href="/inbox"><button>الرسائل</button></a>
-        <a href="/workers-map"><button class="light-btn">خريطة العمال</button></a>
+        
         '''
     else:
         user_buttons = '''
-        <a href="/workers-map"><button class="light-btn">خريطة العمال</button></a>
+        
         '''
 
     return render_template_string(
@@ -1659,11 +1674,11 @@ def workers_specialty(specialty_name):
         user_buttons = '''
         <a href="/profile"><button>ملفي الشخصي</button></a>
         <a href="/inbox"><button>الرسائل</button></a>
-        <a href="/workers-map"><button class="light-btn">خريطة العمال</button></a>
+        
         '''
     else:
         user_buttons = '''
-        <a href="/workers-map"><button class="light-btn">خريطة العمال</button></a>
+        
         '''
 
     return render_template_string(
@@ -1989,7 +2004,10 @@ def support():
             "SELECT * FROM support_messages WHERE user_id=? ORDER BY id ASC",
             (current_user["id"],)
         ).fetchall()
-        con.execute("UPDATE support_messages SET is_read_user=1 WHERE user_id=? AND sender_type='admin'", (current_user["id"],))
+        con.execute(
+            "UPDATE support_messages SET is_read_user=1 WHERE user_id=? AND sender_type='admin'",
+            (current_user["id"],)
+        )
         con.commit()
 
     chat_html = ""
@@ -1999,12 +2017,13 @@ def support():
         bg = "linear-gradient(180deg,#2563eb 0%, #1d4ed8 100%)" if mine else "rgba(255,255,255,.08)"
         color = "#ffffff" if mine else "var(--text)"
         label = "أنت" if mine else "الدعم الفني"
+        small_color = "#dbeafe" if mine else "var(--muted)"
         chat_html += f"""
         <div style="display:flex;{align}margin:10px 0;">
             <div style="max-width:78%;background:{bg};color:{color};padding:12px 14px;border-radius:18px;border:1px solid rgba(96,165,250,.18);">
                 <div style="font-size:12px;opacity:.85;margin-bottom:5px;">{label}</div>
                 <div style="white-space:pre-wrap;word-break:break-word;">{m["message"]}</div>
-                <div class="small" style="margin-top:6px;color:{'#dbeafe' if mine else 'var(--muted)'};">{m["created_at"]}</div>
+                <div class="small" style="margin-top:6px;color:{small_color};">{m["created_at"]}</div>
             </div>
         </div>
         """
@@ -2060,32 +2079,36 @@ def admin_support():
                         )
                         con.commit()
                         log_admin_action("رد دعم فني", user["name"], "تم إرسال رد من الأدمن داخل الدعم الفني")
-                return redirect(url_for("admin_support", user_id=selected_user_id))
+            return redirect(url_for("admin_support", user_id=selected_user_id))
 
     with get_db() as con:
-        conversations = con.execute("""
+        conversations = con.execute(
+            """
             SELECT u.id, u.name, u.email,
+                   MAX(sm.id) AS last_id,
                    MAX(sm.created_at) AS last_time,
                    SUM(CASE WHEN sm.sender_type='user' AND COALESCE(sm.is_read_admin,0)=0 THEN 1 ELSE 0 END) AS unread_count
             FROM support_messages sm
             JOIN users u ON u.id = sm.user_id
             GROUP BY u.id, u.name, u.email
-            ORDER BY MAX(sm.id) DESC
-        """).fetchall()
+            ORDER BY last_id DESC
+            """
+        ).fetchall()
 
     conversation_list = ""
     for c in conversations:
         active = " style='background:rgba(37,99,235,.16);border-color:rgba(96,165,250,.34);'" if selected_user_id and str(c["id"]) == str(selected_user_id) else ""
-        unread_badge = f"<span class='badge'>{int(c['unread_count'] or 0)} جديد</span>" if int(c["unread_count"] or 0) > 0 else ""
+        unread = int(c["unread_count"] or 0)
+        unread_badge = f"<span class='badge'>{unread} جديد</span>" if unread > 0 else ""
         conversation_list += f"""
         <a href="/admin/support?user_id={c['id']}" style="display:block;">
-            <div class="card" {active}>
+            <div class="card"{active}>
                 <div class="inline" style="justify-content:space-between;">
                     <strong>{c["name"]}</strong>
                     {unread_badge}
                 </div>
                 <div class="small">{c["email"] or ""}</div>
-                <div class="small">آخر رسالة: {c["last_time"]}</div>
+                <div class="small">آخر رسالة: {c["last_time"] or ""}</div>
             </div>
         </a>
         """
@@ -2093,7 +2116,7 @@ def admin_support():
     if not conversation_list:
         conversation_list = '<div class="empty-state">لا توجد رسائل دعم حتى الآن</div>'
 
-    chat_html = '<div class="empty-state">اختر محادثة من القائمة الجانبية</div>'
+    chat_html = '<div class="empty-state">اختر محادثة من القائمة</div>'
     reply_form = ""
 
     if selected_user_id:
@@ -2109,27 +2132,31 @@ def admin_support():
                     "SELECT * FROM support_messages WHERE user_id=? ORDER BY id ASC",
                     (uid,)
                 ).fetchall()
-                con.execute("UPDATE support_messages SET is_read_admin=1 WHERE user_id=? AND sender_type='user'", (uid,))
+                con.execute(
+                    "UPDATE support_messages SET is_read_admin=1 WHERE user_id=? AND sender_type='user'",
+                    (uid,)
+                )
                 con.commit()
 
             if target_user:
-                chat_blocks = ""
+                blocks = ""
                 for m in messages:
                     is_admin = m["sender_type"] == "admin"
                     align = "justify-content:flex-end;" if is_admin else "justify-content:flex-start;"
                     bg = "linear-gradient(180deg,#1d4ed8 0%, #1e40af 100%)" if is_admin else "rgba(255,255,255,.08)"
-                    color = "#fff" if is_admin else "var(--text)"
+                    color = "#ffffff" if is_admin else "var(--text)"
                     sender = "الأدمن" if is_admin else target_user["name"]
-                    chat_blocks += f"""
+                    small_color = "#dbeafe" if is_admin else "var(--muted)"
+                    blocks += f"""
                     <div style="display:flex;{align}margin:10px 0;">
                         <div style="max-width:78%;background:{bg};color:{color};padding:12px 14px;border-radius:18px;border:1px solid rgba(96,165,250,.18);">
                             <div style="font-size:12px;opacity:.85;margin-bottom:5px;">{sender}</div>
                             <div style="white-space:pre-wrap;word-break:break-word;">{m["message"]}</div>
-                            <div class="small" style="margin-top:6px;color:{'#dbeafe' if is_admin else 'var(--muted)'};">{m["created_at"]}</div>
+                            <div class="small" style="margin-top:6px;color:{small_color};">{m["created_at"]}</div>
                         </div>
                     </div>
                     """
-                chat_html = chat_blocks or '<div class="empty-state">لا توجد رسائل</div>'
+                chat_html = blocks or '<div class="empty-state">لا توجد رسائل</div>'
                 reply_form = f"""
                 <form method="post" style="margin-top:14px;">
                     <input type="hidden" name="user_id" value="{uid}">
@@ -2143,377 +2170,18 @@ def admin_support():
         <div class="container">
             <a href="/admin/panel"><button class="light-btn">رجوع للوحة الأدمن</button></a>
             <h2>الدعم الفني</h2>
-            <div class="section-subtitle">هنا تظهر محادثات الدعم بين المستخدمين والأدمن داخل التطبيق.</div>
+            <div class="section-subtitle">اختر المستخدم من القائمة ثم رد عليه من داخل المحادثة.</div>
 
-            <div style="display:grid;grid-template-columns:320px 1fr;gap:14px;">
-                <div class="card" style="max-height:700px;overflow:auto;">
+            <div class="map-page-grid">
+                <div class="card map-list-card" style="padding:14px;">
                     <h3 style="margin-bottom:10px;">المحادثات</h3>
                     {conversation_list}
                 </div>
 
-                <div class="card">
-                    <div style="max-height:560px;overflow:auto;padding:6px 2px;">
-                        {chat_html}
-                    </div>
+                <div class="card" style="padding:14px;max-height:650px;overflow:auto;">
+                    {chat_html}
                     {reply_form}
                 </div>
-            </div>
-        </div>
-        </body></html>
-        """
-    )
-
-
-
-@app.route("/profile")
-def profile():
-    if "user" not in session:
-        return redirect(url_for("login"))
-
-    with get_db() as con:
-        user = con.execute("SELECT * FROM users WHERE name=?", (session["user"],)).fetchone()
-
-    if not user:
-        session.clear()
-        return redirect(url_for("login"))
-
-    profile_html = (
-        f'<img src="{url_for("uploaded_file", filename=user["profile_pic"])}" class="profile-img-large" alt="profile">'
-        if user["profile_pic"]
-        else '<div class="profile-placeholder-large">👤</div>'
-    )
-
-    imgs = [x.strip() for x in (user["work_images"] or "").split(",") if x.strip()]
-    work_images_html = ""
-    if imgs:
-        work_images_html = '<div class="work-grid">' + "".join(
-            f'<img src="{url_for("uploaded_file", filename=img)}" alt="work">' for img in imgs
-        ) + '</div>'
-
-    return render_template_string(
-        STYLE + (settings_corner() if 'user' in session else '') + f"""
-        <div class="container">
-            <a href="/workers"><button>رجوع</button></a>
-            <h2>ملفي الشخصي</h2>
-            {profile_html}
-            <h3>{user["name"]}</h3>
-            <div class="inline">
-                <span class="worker-specialty-badge">{get_specialty_icon(user["section"])} {user["section"] or "-"}</span>
-                <span class="badge">{user["governorate"] or "-"}</span>
-            </div>
-            <div><strong>الهاتف:</strong> {user["phone"]}</div>
-            <div><strong>البريد:</strong> {user["email"]}</div>
-            <div><strong>المدينة:</strong> {user["city"] or "-"}</div>
-            <div><strong>الخبرة:</strong> {user["exp"] or "-"}</div>
-            <div style="margin-top:10px;">{user["bio"] or ""}</div>
-
-            <h3>أعمالي</h3>
-            {work_images_html if work_images_html else '<div class="msg">لا توجد أعمال حتى الآن</div>'}
-
-            <a href="/edit-profile"><button>تعديل البروفايل</button></a>
-        </div>
-        </body></html>
-        """
-    )
-
-
-@app.route("/settings")
-def settings():
-    if "user" not in session:
-        return redirect(url_for("login"))
-
-    with get_db() as con:
-        user = con.execute("SELECT * FROM users WHERE name=?", (session["user"],)).fetchone()
-
-    if not user:
-        session.clear()
-        return redirect(url_for("login"))
-
-    with get_db() as con:
-        unread = con.execute(
-            "SELECT COUNT(*) AS c FROM messages WHERE receiver_name=? AND is_read=0",
-            (session["user"],)
-        ).fetchone()["c"]
-
-        comments_count = con.execute(
-            "SELECT COUNT(*) AS c FROM comments WHERE user_id=?",
-            (user["id"],)
-        ).fetchone()["c"]
-
-        rating_row = con.execute(
-            "SELECT AVG(rating) AS avg_rating FROM comments WHERE user_id=?",
-            (user["id"],)
-        ).fetchone()
-
-        sent_messages = con.execute(
-            "SELECT COUNT(*) AS c FROM messages WHERE sender_name=?",
-            (session["user"],)
-        ).fetchone()["c"]
-
-    avg_rating = rating_row["avg_rating"] if rating_row and rating_row["avg_rating"] is not None else None
-
-    profile_html = (
-        f'<img src="{url_for("uploaded_file", filename=user["profile_pic"])}" class="profile-img" alt="profile">'
-        if user["profile_pic"]
-        else '<div class="profile-placeholder">👤</div>'
-    )
-
-    rating_text = f"{round(avg_rating, 1)} / 5" if avg_rating is not None else "لا يوجد"
-
-    return render_template_string(
-        STYLE + (settings_corner() if 'user' in session else '') + f"""
-        <div class="container">
-            <a href="/workers"><button>رجوع</button></a>
-            <h2>الإعدادات</h2>
-
-            <div class="settings-profile-wrap">
-                <div>{profile_html}</div>
-                <div class="settings-profile-info">
-                    <h3 style="margin:0 0 8px;">{user["name"]}</h3>
-                    <div class="inline">
-                        <span class="worker-specialty-badge">{get_specialty_icon(user["section"])} {user["section"] or "-"}</span>
-                        <span class="badge">{user["governorate"] or "-"}</span>
-                    </div>
-                    <div class="small">المدينة: {user["city"] or "-"}</div>
-                    <div class="small">عدد الرسائل غير المقروءة: {unread}</div>
-                    <div class="small">عدد التعليقات: {comments_count}</div>
-                    <div class="small">التقييم العام: {rating_text}</div>
-                    <div class="small">المشاهدات: {user["views"] or 0}</div>
-                    <div class="small">الرسائل المرسلة: {sent_messages}</div>
-                    <div class="small">الحالة: {'عامل موثوق ✔️' if user["verified_worker"] else 'عامل عادي'}</div>
-                </div>
-            </div>
-
-            <div class="settings-group">
-                <div class="settings-section-title">حسابي</div>
-                <div class="actions">
-                    <a href="/profile"><button>عرض الملف الشخصي</button></a>
-                    <a href="/edit-profile"><button>تعديل البروفايل</button></a>
-                </div>
-            </div>
-
-            <div class="settings-group">
-                <div class="settings-section-title">الخصوصية والتواصل</div>
-                <div class="actions">
-                    <a href="/privacy"><button>إعدادات الخصوصية</button></a>
-                    <a href="/inbox"><button>الرسائل</button></a>
-                    <a href="/support"><button class="light-btn">الدعم الفني</button></a>
-                </div>
-            </div>
-
-            <div class="settings-group">
-                <div class="settings-section-title">المحتوى</div>
-                <div class="actions">
-                    <a href="/manage-work-images/{user['id']}"><button>إدارة أعمالي</button></a>
-                </div>
-            </div>
-
-            <div class="settings-group">
-                <div class="settings-section-title">الأمان</div>
-                <div class="actions">
-                    <a href="/change-password"><button>تغيير كلمة المرور</button></a>
-                    <a href="/passkey/setup"><button class="light-btn">تفعيل الدخول بالبصمة</button></a>
-                    <a href="/logout"><button>تسجيل الخروج</button></a>
-                    <a href="/delete-account"><button style="background:red;color:white;">حذف الحساب</button></a>
-                </div>
-            </div>
-        </div>
-        </body></html>
-        """
-    )
-
-
-@app.route("/privacy", methods=["GET", "POST"])
-def privacy():
-    if "user" not in session:
-        return redirect(url_for("login"))
-
-    with get_db() as con:
-        user = con.execute("SELECT * FROM users WHERE name=?", (session["user"],)).fetchone()
-
-    if not user:
-        session.clear()
-        return redirect(url_for("login"))
-
-    if request.method == "POST":
-        show_phone = 1 if request.form.get("show_phone") == "on" else 0
-        show_whatsapp = 1 if request.form.get("show_whatsapp") == "on" else 0
-        allow_messages = 1 if request.form.get("allow_messages") == "on" else 0
-
-        with get_db() as con:
-            con.execute(
-                "UPDATE users SET show_phone=?, show_whatsapp=?, allow_messages=? WHERE id=?",
-                (show_phone, show_whatsapp, allow_messages, user["id"])
-            )
-            con.commit()
-
-        return redirect(url_for("settings"))
-
-    checked_phone = "checked" if user["show_phone"] else ""
-    checked_wa = "checked" if user["show_whatsapp"] else ""
-    checked_msg = "checked" if user["allow_messages"] else ""
-
-    return render_template_string(
-        STYLE + (settings_corner() if 'user' in session else '') + f"""
-        <div class="container">
-            <a href="/settings"><button>رجوع</button></a>
-            <h2>إعدادات الخصوصية</h2>
-            <form method="post">
-                <label><input type="checkbox" name="show_phone" {checked_phone}> إظهار رقم الهاتف</label>
-                <label><input type="checkbox" name="show_whatsapp" {checked_wa}> إظهار زر الواتساب</label>
-                <label><input type="checkbox" name="allow_messages" {checked_msg}> السماح بالرسائل</label>
-                <button>حفظ</button>
-            </form>
-        </div>
-        </body></html>
-        """
-    )
-
-
-@app.route("/change-password", methods=["GET", "POST"])
-def change_password():
-    if "user" not in session:
-        return redirect(url_for("login"))
-
-    with get_db() as con:
-        user = con.execute("SELECT * FROM users WHERE name=?", (session["user"],)).fetchone()
-
-    if not user:
-        session.clear()
-        return redirect(url_for("login"))
-
-    if request.method == "POST":
-        old_pass = request.form.get("old_pass", "")
-        new_pass = request.form.get("new_pass", "")
-        confirm_pass = request.form.get("confirm_pass", "")
-
-        if not check_password_hash(user["password"], old_pass):
-            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">كلمة المرور الحالية غير صحيحة</div><a href="/change-password"><button>رجوع</button></a></div></body></html>')
-
-        if not valid_password(new_pass):
-            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">كلمة المرور الجديدة قصيرة</div><a href="/change-password"><button>رجوع</button></a></div></body></html>')
-
-        if new_pass != confirm_pass:
-            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">تأكيد كلمة المرور غير مطابق</div><a href="/change-password"><button>رجوع</button></a></div></body></html>')
-
-        with get_db() as con:
-            con.execute(
-                "UPDATE users SET password=? WHERE id=?",
-                (generate_password_hash(new_pass), user["id"])
-            )
-            con.commit()
-
-        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">تم تغيير كلمة المرور بنجاح</div><a href="/settings"><button>رجوع</button></a></div></body></html>')
-
-    return render_template_string(
-        STYLE + (settings_corner() if 'user' in session else '') + """
-        <div class="container">
-            <a href="/settings"><button>رجوع</button></a>
-            <h2>تغيير كلمة المرور</h2>
-            <form method="post">
-                <input type="password" name="old_pass" placeholder="كلمة المرور الحالية" required>
-                <input type="password" name="new_pass" placeholder="كلمة المرور الجديدة" required>
-                <input type="password" name="confirm_pass" placeholder="تأكيد كلمة المرور" required>
-                <button>حفظ</button>
-            </form>
-        </div>
-        </body></html>
-        """
-    )
-
-
-@app.route("/manage-work-images/<int:user_id>", methods=["GET", "POST"])
-def manage_work_images(user_id):
-    if "user" not in session:
-        return redirect(url_for("login"))
-
-    with get_db() as con:
-        user = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
-
-    if not user:
-        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">المستخدم غير موجود</div><a href="/settings"><button>رجوع</button></a></div></body></html>')
-
-    if user["name"] != session["user"]:
-        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">غير مصرح لك</div><a href="/settings"><button>رجوع</button></a></div></body></html>')
-
-    current_images = [x.strip() for x in (user["work_images"] or "").split(",") if x.strip()]
-
-    if request.method == "POST":
-        action = request.form.get("action", "").strip()
-
-        if action == "delete":
-            filename = request.form.get("filename", "").strip()
-            if filename in current_images:
-                delete_file_if_exists(filename)
-                current_images = [x for x in current_images if x != filename]
-
-                with get_db() as con:
-                    con.execute(
-                        "UPDATE users SET work_images=? WHERE id=?",
-                        (",".join(current_images), user_id)
-                    )
-                    con.commit()
-
-            return redirect(url_for("manage_work_images", user_id=user_id))
-
-        if action == "add":
-            files = request.files.getlist("work_images")
-            if len(current_images) >= MAX_WORK_IMAGES:
-                return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f'<div class="container"><div class="msg">وصلت الحد الأقصى وهو {MAX_WORK_IMAGES} صور</div><a href="/manage-work-images/{user_id}"><button>رجوع</button></a></div></body></html>')
-
-            for file_obj in files:
-                if len(current_images) >= MAX_WORK_IMAGES:
-                    break
-                if file_obj and file_obj.filename:
-                    valid_img, msg = validate_uploaded_image(file_obj)
-                    if not valid_img:
-                        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f'<div class="container"><div class="msg">{msg}</div><a href="/manage-work-images/{user_id}"><button>رجوع</button></a></div></body></html>')
-                    saved = save_uploaded_file(file_obj)
-                    if saved:
-                        current_images.append(saved)
-
-            with get_db() as con:
-                con.execute(
-                    "UPDATE users SET work_images=? WHERE id=?",
-                    (",".join(current_images), user_id)
-                )
-                con.commit()
-
-            return redirect(url_for("manage_work_images", user_id=user_id))
-
-    images_html = ""
-    if current_images:
-        blocks = []
-        for img in current_images:
-            blocks.append(f"""
-            <div class="card center">
-                <img src="{url_for("uploaded_file", filename=img)}" style="width:100%;max-width:220px;border-radius:14px;border:2px solid #2563eb;">
-                <form method="post" style="margin-top:10px;">
-                    <input type="hidden" name="action" value="delete">
-                    <input type="hidden" name="filename" value="{img}">
-                    <button style="background:red;color:white;">حذف الصورة</button>
-                </form>
-            </div>
-            """)
-        images_html = "".join(blocks)
-    else:
-        images_html = '<div class="msg">لا توجد أعمال حتى الآن حالياً</div>'
-
-    return render_template_string(
-        STYLE + (settings_corner() if 'user' in session else '') + f"""
-        <div class="container">
-            <a href="/edit-profile"><button>رجوع</button></a>
-            <h2>إدارة أعمالي</h2>
-            {images_html}
-
-            <div class="card">
-                <h3>إضافة صور جديدة</h3>
-                <form method="post" enctype="multipart/form-data">
-                    <input type="hidden" name="action" value="add">
-                    <input type="file" name="work_images" accept=".png,.jpg,.jpeg,.gif,.webp" multiple required>
-                    <button>رفع الأعمال</button>
-                </form>
-                <div class="notice">الحد الأقصى {MAX_WORK_IMAGES} صور</div>
             </div>
         </div>
         </body></html>
