@@ -100,11 +100,31 @@ def language_selector_html():
 
 @app.route("/set-language/<lang_code>")
 def set_language(lang_code):
-    session["lang"] = lang_code if lang_code in LANGUAGES else "ar"
+    chosen_lang = lang_code if lang_code in LANGUAGES else "ar"
+
+    # Preserve current login/session data while changing language
+    saved_user = session.get("user")
+    saved_user_id = session.get("user_id")
+    saved_last_email = session.get("last_email")
+    saved_support_thread_id = session.get("support_thread_id")
+
+    session["lang"] = chosen_lang
+
+    if saved_user:
+        session["user"] = saved_user
+    if saved_user_id:
+        session["user_id"] = saved_user_id
+    if saved_last_email:
+        session["last_email"] = saved_last_email
+    if saved_support_thread_id:
+        session["support_thread_id"] = saved_support_thread_id
+
     ref = request.referrer or ""
     if "/choose-language" in ref or ref.endswith("/"):
+        if saved_user:
+            return redirect(url_for("workers"))
         return redirect(url_for("home"))
-    return redirect(ref or url_for("home"))
+    return redirect(ref or (url_for("workers") if saved_user else url_for("home")))
 
 
 def ensure_language_selected():
@@ -996,7 +1016,43 @@ def init_db():
 init_db()
 
 
-def send_mail(to_email, subject, body):
+
+def build_pretty_email_html(title, code, intro_text, note_text="هذا الكود صالح لفترة قصيرة."):
+    return f"""
+    <div dir="rtl" style="margin:0;padding:0;background:#edf3fb;font-family:Arial,Tahoma,sans-serif;">
+        <div style="max-width:640px;margin:0 auto;padding:32px 16px;">
+            <div style="background:linear-gradient(180deg,#0f2747 0%,#0b1d36 100%);border-radius:24px;overflow:hidden;border:1px solid rgba(37,99,235,.18);box-shadow:0 18px 50px rgba(15,39,71,.18);">
+                <div style="padding:28px 24px 12px 24px;text-align:center;color:#ffffff;">
+                    <div style="display:inline-block;background:rgba(255,255,255,.1);padding:8px 16px;border-radius:999px;font-size:14px;margin-bottom:18px;">
+                        منصة المسطر
+                    </div>
+                    <h1 style="margin:0;font-size:32px;font-weight:700;letter-spacing:.3px;">{title}</h1>
+                    <p style="margin:14px 0 0 0;font-size:17px;line-height:1.9;color:#dbeafe;">{intro_text}</p>
+                </div>
+
+                <div style="padding:24px;">
+                    <div style="background:#ffffff;border-radius:22px;padding:28px 22px;text-align:center;border:1px solid #dbeafe;">
+                        <div style="font-size:14px;color:#64748b;margin-bottom:10px;">الكود الخاص بك</div>
+                        <div style="display:inline-block;background:linear-gradient(180deg,#2563eb 0%, #1d4ed8 100%);color:#ffffff;font-size:42px;font-weight:700;letter-spacing:8px;padding:18px 26px;border-radius:18px;box-shadow:0 12px 24px rgba(37,99,235,.22);">
+                            {code}
+                        </div>
+                        <p style="margin:18px 0 0 0;font-size:15px;line-height:1.8;color:#475569;">{note_text}</p>
+                    </div>
+
+                    <div style="margin-top:16px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.08);padding:16px 18px;border-radius:18px;color:#dbeafe;font-size:14px;line-height:1.9;">
+                        إذا لم تطلب هذا الإجراء، تجاهل هذه الرسالة. لا تشارك الكود مع أي شخص.
+                    </div>
+                </div>
+
+                <div style="padding:0 24px 24px 24px;text-align:center;color:#93c5fd;font-size:13px;">
+                    Musattar Platform
+                </div>
+            </div>
+        </div>
+    </div>
+    """
+
+def send_mail(to_email, subject, body, html_body=None):
     if not MAIL_ENABLED:
         print("MAIL DISABLED")
         return False
@@ -1012,7 +1068,7 @@ def send_mail(to_email, subject, body):
             "from": RESEND_FROM_EMAIL,
             "to": [to_email],
             "subject": subject,
-            "html": f"<div dir='rtl' style='font-family:Arial,sans-serif'><p>{body}</p></div>",
+            "html": html_body or f"<div dir='rtl' style='font-family:Arial,sans-serif'><p>{body}</p></div>",
             "text": body,
         }
 
@@ -1381,7 +1437,7 @@ HOME_HTML = STYLE + """
     <h1 style="font-size:42px;margin-bottom:34px;">{{ t('app_name') }}</h1>
 
     <form action="/login" method="post">
-        <input type="email" name="email" placeholder="{{ t('email') }}" required>
+        <input type="email" name="email" value="{{ last_email }}" placeholder="{{ t('email') }}" required>
         <input type="password" name="password" placeholder="{{ t('password') }}" required>
         <button type="submit">{{ t('login') }}</button>
     </form>
@@ -1399,7 +1455,7 @@ HOME_HTML = STYLE + """
 
 @app.route("/")
 def home():
-    return render_template_string(HOME_HTML, t=t)
+    return render_template_string(HOME_HTML, t=t, last_email=(session.get("last_email") or request.cookies.get("remember_email", "")))
 
 
 @app.route("/register", methods=["GET", "POST"])
@@ -1495,7 +1551,18 @@ def register():
         session["otp"] = otp
         session["otp_created_at"] = time.time()
 
-        sent = send_mail(d["email"], "كود التفعيل", f"كود التفعيل الخاص بك هو: {otp}")
+        activation_html = build_pretty_email_html(
+            "كود تفعيل الحساب",
+            otp,
+            "مرحباً بك في منصة المسطر، استخدم الكود التالي لإكمال تفعيل حسابك.",
+            "أدخل هذا الكود داخل التطبيق لإكمال التفعيل."
+        )
+        sent = send_mail(
+            d["email"],
+            "كود التفعيل",
+            f"كود التفعيل الخاص بك هو: {otp}",
+            html_body=activation_html
+        )
 
         if not sent:
             cleanup_saved_files(d)
@@ -1662,6 +1729,7 @@ def login():
         session.permanent = True
         session["user"] = user["name"]
         session["user_id"] = user["id"]
+        session["last_email"] = user["email"] or email
         resp = redirect(url_for("workers"))
         resp.set_cookie("remember_email", email, max_age=60*60*24*30)
         return resp
@@ -1706,7 +1774,18 @@ def forgot():
         session["reset_otp"] = otp
         session["reset_otp_created_at"] = time.time()
 
-        sent = send_mail(email, "استعادة كلمة السر", f"كود استعادة كلمة السر هو: {otp}")
+        reset_html = build_pretty_email_html(
+            "استعادة كلمة السر",
+            otp,
+            "وصلنا طلب استعادة حسابك في منصة المسطر. استخدم الكود التالي للمتابعة.",
+            "أدخل هذا الكود داخل التطبيق ثم اختر كلمة سر جديدة."
+        )
+        sent = send_mail(
+            email,
+            "استعادة كلمة السر",
+            f"كود استعادة كلمة السر هو: {otp}",
+            html_body=reset_html
+        )
         if not sent:
             session.pop("reset_email", None)
             session.pop("reset_otp", None)
@@ -2511,9 +2590,15 @@ def admin_support():
 
 @app.route("/logout")
 def logout():
+    remembered_email = session.get("last_email") or request.cookies.get("remember_email", "")
+    remembered_lang = session.get("lang", "ar")
     session.clear()
+    if remembered_email:
+        session["last_email"] = remembered_email
+    session["lang"] = remembered_lang
     resp = redirect(url_for("home"))
-    resp.delete_cookie("remember_email")
+    if remembered_email:
+        resp.set_cookie("remember_email", remembered_email, max_age=60*60*24*30)
     return resp
 
 
