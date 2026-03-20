@@ -183,6 +183,7 @@ def auto_login_from_cookie():
             if u:
                 session["user"] = u["name"]
                 session["user_id"] = u["id"]
+                session["role"] = u["role"] or "worker"
 
 
 
@@ -1142,21 +1143,22 @@ def settings_corner():
 
 HOME_HTML = STYLE + """
 <div class="container narrow-container" style="margin-top:90px;text-align:center;">
-    <h1 style="font-size:42px;margin-bottom:34px;">المسطر</h1>
+    <h1 style="font-size:42px;margin-bottom:20px;">المسطر</h1>
+    <div class="section-subtitle" style="margin-bottom:18px;">دخول الاختصاصي من هنا، أما الزائر فله صفحة دخول مستقلة من الزر الموجود بالأسفل.</div>
 
     <form action="/login" method="post">
         <input type="email" name="email" value="{{ last_email }}" placeholder="البريد الإلكتروني" required>
         <input type="password" name="password" placeholder="كلمة السر" required>
-        <button type="submit">تسجيل الدخول</button>
+        <button type="submit">تسجيل دخول الاختصاصي</button>
     </form>
 
     <div class="inline" style="justify-content:space-between;margin-top:12px;">
-        <a href="/register" style="color:#60a5fa;font-weight:700;">إنشاء حساب</a>
+        <a href="/register" style="color:#60a5fa;font-weight:700;">إنشاء حساب اختصاصي</a>
         <a href="/forgot" style="color:#cbd5e1;">نسيت كلمة السر</a>
     </div>
 </div>
 <a class="bottom-corner-link bottom-left-link" href="/admin">🛠️</a>
-<a class="bottom-corner-link bottom-right-link" href="/workers">👤 زائر</a>
+<a class="bottom-corner-link bottom-right-link" href="/visitor/login">👤 زائر</a>
 </body></html>
 """
 
@@ -1164,6 +1166,390 @@ HOME_HTML = STYLE + """
 @app.route("/")
 def home():
     return render_template_string(HOME_HTML, last_email=(session.get("last_email") or request.cookies.get("remember_email", "")))
+
+
+def visitor_account_required():
+    return "user" in session and session.get("role") == "visitor"
+
+
+@app.route("/visitor/login", methods=["GET", "POST"])
+def visitor_login():
+    if request.method == "POST":
+        email = sanitize_input(request.form.get("email", ""), 120).lower()
+        password = request.form.get("password", "")
+        ip = get_client_ip()
+
+        if too_many_attempts(LOGIN_ATTEMPTS, f"visitor:{ip}", LOGIN_WINDOW_SECONDS, LOGIN_MAX_ATTEMPTS):
+            return render_template_string(STYLE + '<div class="container"><div class="msg">تم تجاوز عدد محاولات الدخول، حاول لاحقاً</div><a href="/visitor/login"><button>رجوع</button></a></div></body></html>')
+
+        with get_db() as con:
+            user = con.execute("SELECT * FROM users WHERE email=? AND role='visitor'", (email,)).fetchone()
+
+        if not user or not check_password_hash(user["password"], password):
+            return render_template_string(STYLE + '<div class="container"><div class="msg">البريد الإلكتروني أو كلمة المرور غير صحيحة</div><a href="/visitor/login"><button>رجوع</button></a></div></body></html>')
+
+        if user["is_blocked"]:
+            return render_template_string(STYLE + '<div class="container"><div class="msg">هذا الحساب محظور من قبل الإدارة</div><a href="/visitor/login"><button>رجوع</button></a></div></body></html>')
+
+        session.permanent = True
+        session["user"] = user["name"]
+        session["user_id"] = user["id"]
+        session["role"] = "visitor"
+        session["last_email"] = user["email"] or email
+        LOGIN_ATTEMPTS.pop(f"visitor:{ip}", None)
+        resp = redirect(url_for("workers"))
+        resp.set_cookie("remember_email", email, max_age=60*60*24*30)
+        return resp
+
+    return render_template_string(
+        STYLE + """
+        <div class="container narrow-container" style="margin-top:70px;">
+            <a href="/"><button class="light-btn">رجوع للرئيسية</button></a>
+            <h2>دخول الزائر</h2>
+            <div class="section-subtitle">إذا كان عندك حساب زائر، سجّل دخولك من هنا.</div>
+            <form method="post">
+                <input type="email" name="email" placeholder="البريد الإلكتروني" required>
+                <input type="password" name="password" placeholder="كلمة السر" required>
+                <button>دخول الزائر</button>
+            </form>
+            <div class="notice">ما عندك حساب؟ <a href="/visitor/register" style="color:#93c5fd;font-weight:700;">أنشئ حساب جديد</a></div>
+        </div>
+        </body></html>
+        """
+    )
+
+
+@app.route("/visitor/register", methods=["GET", "POST"])
+def visitor_register():
+    if request.method == "POST":
+        d = {
+            "name": sanitize_input(request.form.get("name", ""), 80),
+            "email": sanitize_input(request.form.get("email", ""), 120).lower(),
+            "password": request.form.get("password", "").strip(),
+            "role": "visitor",
+        }
+
+        if not d["name"] or not d["email"] or not d["password"]:
+            return render_template_string(STYLE + '<div class="container"><div class="msg">اكمل الحقول المطلوبة</div><a href="/visitor/register"><button>رجوع</button></a></div></body></html>')
+
+        if not valid_email(d["email"]):
+            return render_template_string(STYLE + '<div class="container"><div class="msg">البريد الإلكتروني غير صحيح</div><a href="/visitor/register"><button>رجوع</button></a></div></body></html>')
+
+        if not valid_password(d["password"]):
+            return render_template_string(STYLE + '<div class="container"><div class="msg">كلمة المرور قصيرة</div><a href="/visitor/register"><button>رجوع</button></a></div></body></html>')
+
+        with get_db() as con:
+            old = con.execute("SELECT id FROM users WHERE email=?", (d["email"],)).fetchone()
+            if old:
+                return render_template_string(STYLE + '<div class="container"><div class="msg">هذا البريد مستخدم مسبقاً</div><a href="/visitor/register"><button>رجوع</button></a></div></body></html>')
+
+        d["password"] = generate_password_hash(d["password"])
+        otp = str(random.randint(100000, 999999))
+        session["pending_visitor"] = d
+        session["visitor_otp"] = otp
+        session["visitor_otp_created_at"] = time.time()
+
+        activation_html = build_pretty_email_html(
+            "كود تفعيل حساب الزائر",
+            otp,
+            "مرحباً بك في المسطر. أكمل إنشاء حساب الزائر بإدخال رمز التحقق التالي.",
+            "أدخل هذا الرمز داخل منصة المسطر لتفعيل حساب الزائر."
+        )
+        sent = send_mail(
+            d["email"],
+            "كود تفعيل حساب الزائر",
+            f"كود تفعيل حساب الزائر هو: {otp}",
+            html_body=activation_html
+        )
+
+        if not sent:
+            session.pop("pending_visitor", None)
+            session.pop("visitor_otp", None)
+            session.pop("visitor_otp_created_at", None)
+            return render_template_string(
+                STYLE + """
+                <div class="container">
+                    <div class="msg">فشل إرسال كود التفعيل إلى البريد الإلكتروني.</div>
+                    <a href="/visitor/register"><button>رجوع</button></a>
+                </div>
+                </body></html>
+                """
+            )
+
+        return redirect(url_for("visitor_verify"))
+
+    return render_template_string(
+        STYLE + """
+        <div class="container narrow-container" style="margin-top:70px;">
+            <a href="/visitor/login"><button class="light-btn">رجوع</button></a>
+            <h2>إنشاء حساب زائر</h2>
+            <div class="section-subtitle">أنشئ حساب زائر بسيط بالاسم والبريد الإلكتروني وكلمة السر فقط.</div>
+            <form method="post">
+                <input name="name" placeholder="الاسم" required>
+                <input type="email" name="email" placeholder="البريد الإلكتروني" required>
+                <input type="password" name="password" placeholder="كلمة السر" required>
+                <button>إرسال كود التفعيل</button>
+            </form>
+            <div class="notice">عند إكمال هذه الخطوة راح نرسل لك كود تحقق على البريد الإلكتروني.</div>
+        </div>
+        </body></html>
+        """
+    )
+
+
+@app.route("/visitor/verify", methods=["GET", "POST"])
+def visitor_verify():
+    pending_user = session.get("pending_visitor")
+    otp_value = session.get("visitor_otp")
+
+    if not pending_user or not otp_value:
+        return render_template_string(STYLE + '<div class="container"><div class="msg">انتهت جلسة التفعيل</div><a href="/visitor/register"><button>الرجوع للتسجيل</button></a></div></body></html>')
+
+    if request.method == "POST":
+        if otp_is_expired("visitor_otp_created_at"):
+            session.pop("pending_visitor", None)
+            session.pop("visitor_otp", None)
+            session.pop("visitor_otp_created_at", None)
+            return render_template_string(STYLE + '<div class="container"><div class="msg">انتهت صلاحية كود التفعيل</div><a href="/visitor/register"><button>الرجوع للتسجيل</button></a></div></body></html>')
+
+        if request.form.get("code", "").strip() == otp_value:
+            d = session["pending_visitor"]
+            try:
+                with get_db() as con:
+                    old = con.execute("SELECT id FROM users WHERE email=?", (d["email"],)).fetchone()
+                    if old:
+                        session.clear()
+                        return render_template_string(STYLE + '<div class="container"><div class="msg">هذا البريد مستخدم مسبقاً</div><a href="/visitor/register"><button>رجوع</button></a></div></body></html>')
+
+                    con.execute("""
+                    INSERT INTO users
+                    (name, phone, email, password, role, birthdate, section, governorate, city, exp, bio, profile_pic, work_images, is_verified)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)
+                    """, (
+                        d["name"], "", d["email"], d["password"], "visitor", "", "", "", "", "", "", "", ""
+                    ))
+                    con.commit()
+            except sqlite3.IntegrityError:
+                session.clear()
+                return render_template_string(STYLE + '<div class="container"><div class="msg">تعذر حفظ الحساب</div><a href="/visitor/register"><button>رجوع</button></a></div></body></html>')
+
+            session.pop("pending_visitor", None)
+            session.pop("visitor_otp", None)
+            session.pop("visitor_otp_created_at", None)
+            return redirect(url_for("visitor_login"))
+
+        return render_template_string(STYLE + '<div class="container"><div class="msg">كود التفعيل غير صحيح</div><a href="/visitor/verify"><button>رجوع</button></a></div></body></html>')
+
+    return render_template_string(
+        STYLE + """
+        <div class="container narrow-container">
+            <a href="/visitor/register"><button class="light-btn">رجوع</button></a>
+            <h2>تفعيل حساب الزائر</h2>
+            <div class="msg">أدخل كود التفعيل المرسل إلى بريدك الإلكتروني</div>
+            <form method="post">
+                <input name="code" placeholder="كود التفعيل" required>
+                <button>تأكيد</button>
+            </form>
+        </div>
+        </body></html>
+        """
+    )
+
+
+@app.route("/visitor/account")
+def visitor_account():
+    if "user" not in session:
+        return redirect(url_for("visitor_login"))
+    if session.get("role") != "visitor":
+        return redirect(url_for("profile"))
+
+    user = get_current_session_user()
+    if not user:
+        session.clear()
+        return redirect(url_for("visitor_login"))
+
+    return render_template_string(
+        STYLE + (settings_corner() if 'user' in session else '') + f"""
+        <div class="container narrow-container">
+            <a href="/settings"><button class="light-btn">رجوع</button></a>
+            <h2>حساب الزائر</h2>
+            <div class="card">
+                <div class="detail-grid">
+                    <div class="detail-box"><strong>الاسم</strong>{user["name"] or "-"}</div>
+                    <div class="detail-box"><strong>البريد الإلكتروني</strong>{user["email"] or "-"}</div>
+                    <div class="detail-box"><strong>نوع الحساب</strong>زائر</div>
+                </div>
+            </div>
+        </div>
+        </body></html>
+        """
+    )
+
+
+@app.route("/visitor/edit-profile", methods=["GET", "POST"])
+def visitor_edit_profile():
+    if "user" not in session:
+        return redirect(url_for("visitor_login"))
+    if session.get("role") != "visitor":
+        return redirect(url_for("edit_profile"))
+
+    user = get_current_session_user()
+    if not user:
+        session.clear()
+        return redirect(url_for("visitor_login"))
+
+    if request.method == "POST":
+        name = sanitize_input(request.form.get("name", ""), 80)
+        email = sanitize_input(request.form.get("email", ""), 120).lower()
+
+        if not name or not email:
+            return render_template_string(STYLE + '<div class="container"><div class="msg">الاسم والبريد الإلكتروني مطلوبان</div><a href="/visitor/edit-profile"><button>رجوع</button></a></div></body></html>')
+
+        if not valid_email(email):
+            return render_template_string(STYLE + '<div class="container"><div class="msg">البريد الإلكتروني غير صحيح</div><a href="/visitor/edit-profile"><button>رجوع</button></a></div></body></html>')
+
+        with get_db() as con:
+            exists = con.execute("SELECT id FROM users WHERE email=? AND id != ?", (email, user["id"])).fetchone()
+            if exists:
+                return render_template_string(STYLE + '<div class="container"><div class="msg">هذا البريد مستخدم من حساب آخر</div><a href="/visitor/edit-profile"><button>رجوع</button></a></div></body></html>')
+
+            con.execute("UPDATE users SET name=?, email=? WHERE id=?", (name, email, user["id"]))
+            con.commit()
+
+        session["user"] = name
+        session["last_email"] = email
+        return render_template_string(STYLE + '<div class="container"><div class="msg">تم تحديث حساب الزائر بنجاح</div><a href="/settings"><button>الرجوع للإعدادات</button></a></div></body></html>')
+
+    return render_template_string(
+        STYLE + f"""
+        <div class="container narrow-container">
+            <a href="/settings"><button class="light-btn">رجوع</button></a>
+            <h2>تعديل حساب الزائر</h2>
+            <form method="post">
+                <input name="name" value="{user['name'] or ''}" placeholder="الاسم" required>
+                <input type="email" name="email" value="{user['email'] or ''}" placeholder="البريد الإلكتروني" required>
+                <button>حفظ التعديلات</button>
+            </form>
+        </div>
+        </body></html>
+        """
+    )
+
+
+@app.route("/change-password", methods=["GET", "POST"])
+def change_password():
+    if "user" not in session:
+        return redirect(url_for("login"))
+
+    user = get_current_session_user()
+    if not user:
+        session.clear()
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+        current_password = request.form.get("current_password", "")
+        new_password = request.form.get("new_password", "").strip()
+        confirm_password = request.form.get("confirm_password", "").strip()
+
+        if not check_password_hash(user["password"], current_password):
+            return render_template_string(STYLE + '<div class="container"><div class="msg">كلمة المرور الحالية غير صحيحة</div><a href="/change-password"><button>رجوع</button></a></div></body></html>')
+
+        if not valid_password(new_password):
+            return render_template_string(STYLE + '<div class="container"><div class="msg">كلمة المرور الجديدة قصيرة</div><a href="/change-password"><button>رجوع</button></a></div></body></html>')
+
+        if new_password != confirm_password:
+            return render_template_string(STYLE + '<div class="container"><div class="msg">تأكيد كلمة المرور غير مطابق</div><a href="/change-password"><button>رجوع</button></a></div></body></html>')
+
+        with get_db() as con:
+            con.execute("UPDATE users SET password=? WHERE id=?", (generate_password_hash(new_password), user["id"]))
+            con.commit()
+
+        return render_template_string(STYLE + '<div class="container"><div class="msg">تم تغيير كلمة المرور بنجاح</div><a href="/settings"><button>الرجوع للإعدادات</button></a></div></body></html>')
+
+    return render_template_string(
+        STYLE + """
+        <div class="container narrow-container">
+            <a href="/settings"><button class="light-btn">رجوع</button></a>
+            <h2>تغيير كلمة المرور</h2>
+            <form method="post">
+                <input type="password" name="current_password" placeholder="كلمة المرور الحالية" required>
+                <input type="password" name="new_password" placeholder="كلمة المرور الجديدة" required>
+                <input type="password" name="confirm_password" placeholder="تأكيد كلمة المرور الجديدة" required>
+                <button>حفظ كلمة المرور الجديدة</button>
+            </form>
+        </div>
+        </body></html>
+        """
+    )
+
+
+@app.route("/manage-work-images/<int:user_id>", methods=["GET", "POST"])
+def manage_work_images(user_id):
+    if "user" not in session:
+        return redirect(url_for("login"))
+    if session.get("role") != "worker":
+        return redirect(url_for("settings"))
+
+    user = get_current_session_user()
+    if not user or int(user["id"]) != int(user_id):
+        return redirect(url_for("profile"))
+
+    existing_images = [x.strip() for x in (user["work_images"] or "").split(",") if x.strip()]
+
+    if request.method == "POST":
+        remove_images = request.form.getlist("remove_images")
+        kept_images = [img for img in existing_images if img not in remove_images]
+
+        for img in remove_images:
+            delete_file_if_exists(img)
+
+        added = []
+        if "work_images" in request.files:
+            files = request.files.getlist("work_images")
+            remaining = max(0, MAX_WORK_IMAGES - len(kept_images))
+            for file_obj in files[:remaining]:
+                if file_obj and file_obj.filename:
+                    valid_img, msg = validate_uploaded_image(file_obj)
+                    if not valid_img:
+                        return render_template_string(STYLE + f'<div class="container"><div class="msg">{msg}</div><a href="/manage-work-images/{user_id}"><button>رجوع</button></a></div></body></html>')
+                    saved = save_uploaded_file(file_obj)
+                    if saved:
+                        added.append(saved)
+
+        final_images = kept_images + added
+
+        with get_db() as con:
+            con.execute("UPDATE users SET work_images=? WHERE id=?", (",".join(final_images), user["id"]))
+            con.commit()
+
+        return render_template_string(STYLE + '<div class="container"><div class="msg">تم تحديث الأعمال بنجاح</div><a href="/edit-profile"><button>رجوع</button></a></div></body></html>')
+
+    previews = ""
+    if existing_images:
+        previews = "<div class='work-grid'>" + "".join(
+            f"<label style='display:block;text-align:center;'><img src='{url_for('uploaded_file', filename=img)}' alt='work'><div class='small'><input type='checkbox' name='remove_images' value='{img}'> حذف هذه الصورة</div></label>"
+            for img in existing_images
+        ) + "</div>"
+    else:
+        previews = '<div class="empty-state">لا توجد أعمال مرفوعة حالياً</div>'
+
+    return render_template_string(
+        STYLE + f"""
+        <div class="container">
+            <a href="/edit-profile"><button class="light-btn">رجوع</button></a>
+            <h2>إدارة أعمالي</h2>
+            <div class="section-subtitle">يمكنك حذف صور قديمة وإضافة صور جديدة، والحد الأعلى {MAX_WORK_IMAGES} صور.</div>
+            <form method="post" enctype="multipart/form-data">
+                {previews}
+                <label>إضافة صور جديدة</label>
+                <input type="file" name="work_images" accept=".png,.jpg,.jpeg,.gif,.webp" multiple>
+                <button>حفظ التعديلات</button>
+            </form>
+        </div>
+        </body></html>
+        """
+    )
+
 
 
 @app.route("/register", methods=["GET", "POST"])
@@ -1318,7 +1704,7 @@ def register():
                 <textarea name="bio" placeholder="نبذة مختصرة عنك"></textarea>
 
                 <label>الصورة الشخصية</label>
-                <input type="file" name="profile_pic" accept=".png,.jpg,.jpeg,.gif,.webp" required>
+                <input type="file" name="profile_pic" accept=".png,.jpg,.jpeg,.gif,.webp">
 
                 <label>أعمالي</label>
                 <input type="file" name="work_images" accept=".png,.jpg,.jpeg,.gif,.webp" multiple>
@@ -1424,27 +1810,27 @@ def login():
         session.permanent = True
         session["user"] = user["name"]
         session["user_id"] = user["id"]
+        session["role"] = user["role"] or "worker"
         session["last_email"] = user["email"] or email
+        LOGIN_ATTEMPTS.pop(ip, None)
         resp = redirect(url_for("workers"))
         resp.set_cookie("remember_email", email, max_age=60*60*24*30)
         return resp
-        session.permanent = True
-        LOGIN_ATTEMPTS.pop(ip, None)
         
 
     return render_template_string(
         STYLE + (settings_corner() if 'user' in session else '') + """
         <div class="container">
             <a href="/"><button>رجوع للرئيسية</button></a>
-            <h2>تسجيل الدخول</h2>
+            <h2>تسجيل دخول الاختصاصي</h2>
             <form method="post">
                 <input type="email" name="email" placeholder="البريد الإلكتروني" required>
                 <input type="password" name="password" placeholder="كلمة المرور" required>
-                <button>دخول</button>
+                <button>دخول الاختصاصي</button>
             </form>
             <a href="/passkey/login"><button class="light-btn">الدخول بالبصمة</button></a>
             <a href="/forgot"><button>نسيت كلمة المرور</button></a>
-
+            <div class="notice">إذا كنت زائر، <a href="/visitor/login" style="color:#93c5fd;font-weight:700;">ادخل من هنا</a></div>
         </div>
         </body></html>
         """
@@ -3018,6 +3404,8 @@ def delete_account():
 def profile():
     if "user" not in session:
         return redirect(url_for("login"))
+    if session.get("role") == "visitor":
+        return redirect(url_for("visitor_account"))
 
     user = get_current_session_user()
     if not user:
@@ -3096,6 +3484,27 @@ def settings():
         session.clear()
         return redirect(url_for("login"))
 
+    if session.get("role") == "visitor":
+        buttons_html = """
+            <a href="/visitor/account"><button>حساب الزائر</button></a>
+            <a href="/visitor/edit-profile"><button class="light-btn">تعديل الحساب</button></a>
+            <a href="/inbox"><button class="light-btn">الرسائل</button></a>
+            <a href="/support"><button class="light-btn">الدعم الفني</button></a>
+            <a href="/workers"><button class="light-btn">تصفح الاختصاصات</button></a>
+            <a href="/change-password"><button class="light-btn">تغيير كلمة المرور</button></a>
+            <a href="/logout"><button>تسجيل الخروج</button></a>
+        """
+    else:
+        buttons_html = """
+            <a href="/profile"><button>ملفي الشخصي</button></a>
+            <a href="/edit-profile"><button class="light-btn">تعديل الملف الشخصي</button></a>
+            <a href="/inbox"><button class="light-btn">الرسائل</button></a>
+            <a href="/support"><button class="light-btn">الدعم الفني</button></a>
+            <a href="/workers"><button class="light-btn">الاختصاصات</button></a>
+            <a href="/change-password"><button class="light-btn">تغيير كلمة المرور</button></a>
+            <a href="/logout"><button>تسجيل الخروج</button></a>
+        """
+
     return render_template_string(
         STYLE + (settings_corner() if 'user' in session else '') + f"""
         <div class="container narrow-container">
@@ -3103,13 +3512,7 @@ def settings():
             <div class="section-subtitle">اختر الصفحة التي تريدها.</div>
 
             <div class="card">
-                <a href="/profile"><button>ملفي الشخصي</button></a>
-                <a href="/edit-profile"><button class="light-btn">تعديل الملف الشخصي</button></a>
-                <a href="/inbox"><button class="light-btn">الرسائل</button></a>
-                <a href="/support"><button class="light-btn">الدعم الفني</button></a>
-                <a href="/workers"><button class="light-btn">الاختصاصات</button></a>
-                <a href="/logout"><button>تسجيل الخروج</button></a>
-            </div>
+                {buttons_html}
             </div>
         </div>
         </body></html>
@@ -3121,6 +3524,8 @@ def settings():
 def edit_profile():
     if "user" not in session:
         return redirect(url_for("login"))
+    if session.get("role") == "visitor":
+        return redirect(url_for("visitor_edit_profile"))
 
     with get_db() as con:
         user = con.execute("SELECT * FROM users WHERE name=?", (session["user"],)).fetchone()
@@ -3293,7 +3698,7 @@ def edit_profile():
                 <textarea name="bio" placeholder="نبذة عنك">{user['bio'] or ''}</textarea>
 
                 <label>تغيير الصورة الشخصية</label>
-                <input type="file" name="profile_pic" accept=".png,.jpg,.jpeg,.gif,.webp" required>
+                <input type="file" name="profile_pic" accept=".png,.jpg,.jpeg,.gif,.webp">
 
                 <button>حفظ التعديلات</button>
             </form>
