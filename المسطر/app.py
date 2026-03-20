@@ -44,310 +44,8 @@ app.permanent_session_lifetime = timedelta(days=30)
 app.secret_key = os.environ.get("SECRET_KEY", "adam_secret_key_2026")
 
 
-LANGUAGES = {
-    "ar": "العربية",
-    "en": "English",
-    "ku": "کوردی",
-}
-
-TR = {
-    "app_name": {"ar": "المسطر", "en": "Al-Musttar", "ku": "المسطر"},
-    "email": {"ar": "البريد الإلكتروني", "en": "Email", "ku": "ئیمەیڵ"},
-    "password": {"ar": "كلمة السر", "en": "Password", "ku": "وشەی نهێنی"},
-    "login": {"ar": "تسجيل الدخول", "en": "Login", "ku": "چوونەژوورەوە"},
-    "create_account": {"ar": "إنشاء حساب", "en": "Create Account", "ku": "دروستکردنی هەژمار"},
-    "forgot_password": {"ar": "نسيت كلمة السر", "en": "Forgot Password", "ku": "وشەی نهێنی لەبیرچووە"},
-    "settings": {"ar": "الإعدادات", "en": "Settings", "ku": "ڕێکخستنەکان"},
-    "profile": {"ar": "ملفي الشخصي", "en": "My Profile", "ku": "پرۆفایلی من"},
-    "edit_profile": {"ar": "تعديل الملف الشخصي", "en": "Edit Profile", "ku": "دەستکاریکردنی پرۆفایل"},
-    "messages": {"ar": "الرسائل", "en": "Messages", "ku": "پەیامەکان"},
-    "support": {"ar": "الدعم الفني", "en": "Technical Support", "ku": "پشتگیری فنی"},
-    "specialties": {"ar": "الاختصاصات", "en": "Specialties", "ku": "پسپۆڕییەکان"},
-    "logout": {"ar": "تسجيل الخروج", "en": "Logout", "ku": "چوونەدەرەوە"},
-    "choose_page": {"ar": "اختر الصفحة التي تريدها.", "en": "Choose the page you want.", "ku": "ئەو پەڕەیە هەڵبژێرە کە دەتەوێت."},
-    "my_works": {"ar": "أعمالي", "en": "My Works", "ku": "کارەکانم"},
-    "uploaded_images": {"ar": "الصور المرفوعة داخل ملفك الشخصي.", "en": "Images uploaded to your profile.", "ku": "وێنە بارکراوەکانی ناو پرۆفایلەکەت."},
-    "no_works": {"ar": "لا توجد أعمال حتى الآن", "en": "No works yet", "ku": "هێشتا هیچ کارێک نییە"},
-    "home_page": {"ar": "الرئيسية", "en": "Home", "ku": "سەرەکی"},
-    "name": {"ar": "الاسم", "en": "Name", "ku": "ناو"},
-    "phone": {"ar": "الهاتف", "en": "Phone", "ku": "تەلەفۆن"},
-    "city": {"ar": "المدينة", "en": "City", "ku": "شار"},
-    "experience": {"ar": "الخبرة", "en": "Experience", "ku": "ئەزموون"},
-    "your_profile_inside": {"ar": "هذه صفحتك الشخصية داخل التطبيق.", "en": "This is your profile page inside the app.", "ku": "ئەمە پەڕەی پرۆفایلی تۆیە لە ناو ئەپەکە."},
-    "main_sections": {"ar": "الأقسام الرئيسية", "en": "Main Sections", "ku": "بەشە سەرەکییەکان"},
-    "organized_browse": {"ar": "تصفح منظم", "en": "Organized browsing", "ku": "گەڕانێکی ڕێکخراو"},
-}
-
-def get_lang():
-    lang = session.get("lang", "ar")
-    return lang if lang in LANGUAGES else "ar"
-
-def t(key):
-    lang = get_lang()
-    return TR.get(key, {}).get(lang, TR.get(key, {}).get("ar", key))
-
-def language_selector_html():
-    current = get_lang()
-    links = []
-    for code, label in LANGUAGES.items():
-        style = "font-weight:700;color:#ffffff;" if code == current else "color:#dbeafe;"
-        links.append(f"<a href='/set-language/{code}' style='{style}'>{label}</a>")
-    return f"""
-    <div style="position:fixed;top:14px;left:14px;z-index:9999;background:rgba(10,25,47,.96);border:1px solid rgba(96,165,250,.28);padding:10px 14px;border-radius:999px;box-shadow:0 6px 18px rgba(0,0,0,.22);font-size:13px;">
-        🌐 {' | '.join(links)}
-    </div>
-    """
-
-@app.route("/set-language/<lang_code>")
-def set_language(lang_code):
-    chosen_lang = lang_code if lang_code in LANGUAGES else "ar"
-
-    # Preserve current login/session data while changing language
-    saved_user = session.get("user")
-    saved_user_id = session.get("user_id")
-    saved_last_email = session.get("last_email")
-    saved_support_thread_id = session.get("support_thread_id")
-
-    session["lang"] = chosen_lang
-
-    if saved_user:
-        session["user"] = saved_user
-    if saved_user_id:
-        session["user_id"] = saved_user_id
-    if saved_last_email:
-        session["last_email"] = saved_last_email
-    if saved_support_thread_id:
-        session["support_thread_id"] = saved_support_thread_id
-
-    ref = request.referrer or ""
-    if "/choose-language" in ref or ref.endswith("/"):
-        if saved_user:
-            return redirect(url_for("workers"))
-        return redirect(url_for("home"))
-    return redirect(ref or (url_for("workers") if saved_user else url_for("home")))
 
 
-def ensure_language_selected():
-    lang = session.get("lang")
-    if lang not in LANGUAGES:
-        return False
-    return True
-
-
-@app.before_request
-def force_language_selection_first():
-    allowed_paths = {
-        "/choose-language",
-        "/",
-    }
-    if request.path.startswith("/set-language/"):
-        return None
-    if request.path.startswith("/uploads/"):
-        return None
-    if request.path in allowed_paths:
-        return None
-    if not ensure_language_selected():
-        return redirect(url_for("choose_language"))
-
-
-@app.route("/choose-language")
-def choose_language():
-    cards = []
-    for code, label in LANGUAGES.items():
-        native = label
-        hint = {"ar": "اختر العربية", "en": "Choose English", "ku": "کوردی هەڵبژێرە"}.get(code, "")
-        cards.append(f"""
-        <a href="/set-language/{code}" class="specialty-group-card" style="display:block;text-align:center;">
-            <div class="specialty-icon" style="font-size:34px;margin-bottom:10px;">🌐</div>
-            <h3>{native}</h3>
-            <div class="section-subtitle">{hint}</div>
-        </a>
-        """)
-    html_cards = '<div class="specialties-grid">' + ''.join(cards) + '</div>'
-
-    return render_template_string(
-        STYLE + f"""
-        <div class="container narrow-container" style="margin-top:90px;text-align:center;">
-            <h1 style="font-size:40px;margin-bottom:16px;">المسطر</h1>
-            <div class="section-subtitle">اختر اللغة التي تريدها للبرنامج</div>
-            {html_cards}
-        </div>
-        </body></html>
-        """
-    )
-
-
-FULL_UI_TRANSLATIONS = {
-    "العربية": {"en": "Arabic", "ku": "عەرەبی"},
-    "English": {"en": "English", "ku": "ئینگلیزی"},
-    "کوردی": {"en": "Kurdish", "ku": "کوردی"},
-    "المسطر": {"en": "Al-Musttar", "ku": "المسطر"},
-    "البريد الإلكتروني": {"en": "Email", "ku": "ئیمەیڵ"},
-    "كلمة السر": {"en": "Password", "ku": "وشەی نهێنی"},
-    "تسجيل الدخول": {"en": "Login", "ku": "چوونەژوورەوە"},
-    "إنشاء حساب": {"en": "Create Account", "ku": "دروستکردنی هەژمار"},
-    "نسيت كلمة السر": {"en": "Forgot Password", "ku": "وشەی نهێنی لەبیرچووە"},
-    "الرئيسية": {"en": "Home", "ku": "سەرەکی"},
-    "الإعدادات": {"en": "Settings", "ku": "ڕێکخستنەکان"},
-    "ملفي الشخصي": {"en": "My Profile", "ku": "پرۆفایلی من"},
-    "تعديل الملف الشخصي": {"en": "Edit Profile", "ku": "دەستکاریکردنی پرۆفایل"},
-    "تعديل الملف": {"en": "Edit Profile", "ku": "دەستکاریکردنی پرۆفایل"},
-    "الرسائل": {"en": "Messages", "ku": "پەیامەکان"},
-    "الدعم الفني": {"en": "Technical Support", "ku": "پشتگیری فنی"},
-    "الاختصاصات": {"en": "Specialties", "ku": "پسپۆڕییەکان"},
-    "تسجيل الخروج": {"en": "Logout", "ku": "چوونەدەرەوە"},
-    "اختر الصفحة التي تريدها.": {"en": "Choose the page you want.", "ku": "ئەو پەڕەیە هەڵبژێرە کە دەتەوێت."},
-    "أعمالي": {"en": "My Works", "ku": "کارەکانم"},
-    "الصور المرفوعة داخل ملفك الشخصي.": {"en": "Images uploaded to your profile.", "ku": "وێنە بارکراوەکانی ناو پرۆفایلەکەت."},
-    "لا توجد أعمال حتى الآن": {"en": "No works yet", "ku": "هێشتا هیچ کارێک نییە"},
-    "الهاتف": {"en": "Phone", "ku": "تەلەفۆن"},
-    "المدينة": {"en": "City", "ku": "شار"},
-    "الخبرة": {"en": "Experience", "ku": "ئەزموون"},
-    "الاسم": {"en": "Name", "ku": "ناو"},
-    "رجوع": {"en": "Back", "ku": "گەڕانەوە"},
-    "إرسال": {"en": "Send", "ku": "ناردن"},
-    "إرسال الرسالة": {"en": "Send Message", "ku": "ناردنی پەیام"},
-    "إرسال الرد": {"en": "Send Reply", "ku": "ناردنی وەڵام"},
-    "الملف الشخصي": {"en": "Profile", "ku": "پرۆفایل"},
-    "القسم الرئيسي": {"en": "Main Category", "ku": "بەشی سەرەکی"},
-    "اختَر القسم الرئيسي": {"en": "Choose the main category", "ku": "بەشی سەرەکی هەڵبژێرە"},
-    "الأقسام الرئيسية": {"en": "Main Categories", "ku": "بەشە سەرەکییەکان"},
-    "تصفح منظم": {"en": "Organized browsing", "ku": "گەڕانێکی ڕێکخراو"},
-    "اختصاصات": {"en": "Specialties", "ku": "پسپۆڕییەکان"},
-    "اختصاصات مهندسون": {"en": "Engineer Specialties", "ku": "پسپۆڕییەکانی ئەندازیاران"},
-    "المستخدمون المسجلون": {"en": "Registered Users", "ku": "بەکارهێنەرە تۆمارکراوەکان"},
-    "المستخدمون المسجلون ضمن اختصاص": {"en": "Users registered under specialty", "ku": "بەکارهێنەرە تۆمارکراوەکان لە ژێر پسپۆڕی"},
-    "اختر الاختصاص الذي تريده من هذا القسم حتى تظهر لك قائمة المستخدمين المسجلين.": {"en": "Choose the specialty from this category to see registered users.", "ku": "پسپۆڕییەکە هەڵبژێرە بۆ بینینی بەکارهێنەرە تۆمارکراوەکان."},
-    "اختر القسم الرئيسي أولاً، وبعدها تفتح لك صفحة الاختصاصات الخاصة به، ثم تظهر لك قائمة المستخدمين المسجلين.": {"en": "Choose the main category first, then its specialties page will open, then the registered users list.", "ku": "سەرەتا بەشی سەرەکی هەڵبژێرە، پاشان پەڕەی پسپۆڕییەکان دەکرێتەوە، دواتر لیستی بەکارهێنەرە تۆمارکراوەکان دەردەکەوێت."},
-    "فتح قائمة المستخدمين المسجلين بهذا الاختصاص": {"en": "Open users registered in this specialty", "ku": "کردنەوەی لیستی بەکارهێنەرە تۆمارکراوەکان لەم پسپۆڕییەدا"},
-    "عرض اختصاصات": {"en": "Show specialties of", "ku": "پیشاندانی پسپۆڕییەکانی"},
-    "خريطة العمال": {"en": "Workers Map", "ku": "نەخشەی کرێکاران"},
-    "صفحتك الشخصية": {"en": "Your profile page", "ku": "پەڕەی پرۆفایلی تۆ"},
-    "هذه صفحتك الشخصية داخل التطبيق.": {"en": "This is your profile page inside the app.", "ku": "ئەمە پەڕەی پرۆفایلی تۆیە لە ناو ئەپەکە."},
-    "الدعم الفني داخل التطبيق": {"en": "In-app technical support", "ku": "پشتگیری فنی لە ناو ئەپەکە"},
-    "اكتب رسالتك للدعم الفني": {"en": "Write your support message", "ku": "پەیامی پشتگیری بنووسە"},
-    "اكتب رسالتك أولاً": {"en": "Write your message first", "ku": "سەرەتا پەیامەکەت بنووسە"},
-    "اكتب ردك هنا": {"en": "Write your reply here", "ku": "لێرە وەڵامەکەت بنووسە"},
-    "اختر محادثة من القائمة": {"en": "Choose a conversation from the list", "ku": "گفتوگۆیەک لە لیستەکە هەڵبژێرە"},
-    "المحادثات": {"en": "Conversations", "ku": "گفتوگۆکان"},
-    "لا توجد رسائل دعم حتى الآن": {"en": "No support messages yet", "ku": "هێشتا هیچ پەیامی پشتگیری نییە"},
-    "لا توجد رسائل": {"en": "No messages", "ku": "هیچ پەیامێک نییە"},
-    "رد دعم فني": {"en": "Support Reply", "ku": "وەڵامی پشتگیری"},
-    "اكتب تقييمك وتعليقك": {"en": "Write your rating and comment", "ku": "هەڵسەنگاندن و بۆچوونەکەت بنووسە"},
-    "إضافة تعليق": {"en": "Add Comment", "ku": "زیادکردنی لێدوان"},
-    "إضافة تعليق وتقييم": {"en": "Add Comment and Rating", "ku": "زیادکردنی لێدوان و هەڵسەنگاندن"},
-    "نشر التعليق": {"en": "Post Comment", "ku": "بڵاوکردنەوەی لێدوان"},
-    "التقييمات والتعليقات": {"en": "Ratings and Comments", "ku": "هەڵسەنگاندن و لێدوانەکان"},
-    "لا توجد تعليقات بعد": {"en": "No comments yet", "ku": "هێشتا هیچ لێدوانێک نییە"},
-    "زائر": {"en": "Guest", "ku": "میوان"},
-    "ملفي": {"en": "My File", "ku": "پرۆفایلم"},
-    "عرض الملف": {"en": "View Profile", "ku": "پیشاندانی پرۆفایل"},
-    "فتح الموقع على الخريطة": {"en": "Open location on map", "ku": "کردنەوەی شوێن لەسەر نەخشە"},
-    "مراسلة واتساب": {"en": "WhatsApp", "ku": "واتساپ"},
-    "إرسال رسالة": {"en": "Send Message", "ku": "ناردنی پەیام"},
-    "صفحة شخصية تعرض المعلومات الأساسية والأعمال وطرق التواصل بشكل أوضح.": {"en": "A profile page showing main info, works, and contact methods clearly.", "ku": "پەڕەیەکی پرۆفایل کە زانیاری سەرەکی و کار و شێوازەکانی پەیوەندی بە شێوەیەکی ڕوون پیشان دەدات."},
-    "استقبال الرسائل": {"en": "Receiving messages", "ku": "وەرگرتنی پەیام"},
-    "مفعل": {"en": "Enabled", "ku": "چالاککراو"},
-    "معطل": {"en": "Disabled", "ku": "ناچالاک"},
-    "لا توجد نبذة حالياً": {"en": "No bio yet", "ku": "هێشتا هیچ کورته‌پێناسەیەک نییە"},
-    "الموقع": {"en": "Location", "ku": "شوێن"},
-    "المحافظة": {"en": "Governorate", "ku": "پارێزگا"},
-    "اختر المحافظة": {"en": "Choose governorate", "ku": "پارێزگا هەڵبژێرە"},
-    "اختر الاختصاص": {"en": "Choose specialty", "ku": "پسپۆڕییەکە هەڵبژێرە"},
-    "سنوات الخبرة": {"en": "Years of experience", "ku": "ساڵانی ئەزموون"},
-    "نبذة مختصرة عنك": {"en": "Short bio about you", "ku": "کورته‌پێناسەیەک دەربارەی تۆ"},
-    "الصورة الشخصية": {"en": "Profile picture", "ku": "وێنەی پرۆفایل"},
-    "أعمالي": {"en": "My works", "ku": "کارەکانم"},
-    "اختيار ملف": {"en": "Choose file", "ku": "هەڵبژاردنی فایل"},
-    "اختيار الملفات": {"en": "Choose files", "ku": "هەڵبژاردنی فایلەکان"},
-    "متابعة التفعيل": {"en": "Continue activation", "ku": "بەردەوامبوونی چالاککردن"},
-    "كلمة السر قصيرة": {"en": "Password is too short", "ku": "وشەی نهێنی کورتە"},
-    "املأ جميع الحقول": {"en": "Fill all fields", "ku": "هەموو خانەکان پڕ بکەرەوە"},
-    "اسم المستخدم مستخدم مسبقاً": {"en": "Username already used", "ku": "ناوی بەکارهێنەر پێشتر بەکارهاتووە"},
-    "تم الحفظ بنجاح": {"en": "Saved successfully", "ku": "بە سەرکەوتوویی پاشەکەوت کرا"},
-}
-
-def translate_html_content(html):
-    lang = get_lang()
-    if lang == "ar" or not html:
-        return html
-
-    import re
-
-    # Keep routes, href/src/action/value attributes, JS, CSS, and option values safe.
-    protected = {}
-
-    def protect_chunk(raw):
-        key = f"__PROTECTED_{len(protected)}__"
-        protected[key] = raw
-        return key
-
-    patterns = [
-        r'<script\b[^>]*>.*?</script>',
-        r'<style\b[^>]*>.*?</style>',
-        r'href="[^"]*"',
-        r"href='[^']*'",
-        r'src="[^"]*"',
-        r"src='[^']*'",
-        r'action="[^"]*"',
-        r"action='[^']*'",
-        r'value="[^"]*"',
-        r"value='[^']*'",
-        r'data-[a-zA-Z0-9_-]+="[^"]*"',
-        r"data-[a-zA-Z0-9_-]+='[^']*'",
-    ]
-
-    for pat in patterns:
-        html = re.sub(pat, lambda m: protect_chunk(m.group(0)), html, flags=re.S)
-
-    html = html.replace('<html lang="ar" dir="rtl">', f'<html lang="{lang}" dir="{"ltr" if lang == "en" else "rtl"}">')
-
-    for ar_text, variants in sorted(FULL_UI_TRANSLATIONS.items(), key=lambda x: len(x[0]), reverse=True):
-        translated = variants.get(lang)
-        if translated:
-            html = html.replace(ar_text, translated)
-
-    dynamic_terms = {
-        "مهندسون": {"en": "Engineers", "ku": "ئەندازیاران"},
-        "خلفه بناء": {"en": "Builders", "ku": "بناغەکاران"},
-        "عمال بناء": {"en": "Construction Workers", "ku": "کرێکارانی بیناسازی"},
-        "مواد بناء": {"en": "Building Materials", "ku": "کەرەستەی بیناسازی"},
-        "فنيين": {"en": "Technicians", "ku": "تەکنیکیەکان"},
-        "مهندس كهربائيات": {"en": "Electrical Engineer", "ku": "ئەندازیاری کارەبا"},
-        "مهندس معماري": {"en": "Architect", "ku": "ئەندازیاری تەلارسازی"},
-        "مهندس انشاء": {"en": "Civil Engineer", "ku": "ئەندازیاری بیناسازی"},
-        "مهندس ديكور وتصميم": {"en": "Interior & Design Engineer", "ku": "ئەندازیاری دیکۆر و دیزاین"},
-        "خلفه اشتايكر": {"en": "Block Builder", "ku": "بڵۆک چێکەر"},
-        "خلفه طابوك": {"en": "Brick Builder", "ku": "توقم چێکەر"},
-        "خلفه سيراميك والرضيه": {"en": "Ceramic & Floor Worker", "ku": "کاری سیرامیک و زەوی"},
-        "خلفه جص (ابياض)": {"en": "Plaster Worker", "ku": "کاری گچ"},
-        "خلفه قالب نجار": {"en": "Formwork Carpenter", "ku": "نەجارێکی قالب"},
-        "فني كهرباء": {"en": "Electrician", "ku": "کارەباکار"},
-        "فني تبريد": {"en": "Cooling Technician", "ku": "تەکنیکی ساردکەرەوە"},
-        "فني صحيات": {"en": "Plumbing Technician", "ku": "تەکنیکی تەندروستی و ئاودەست"},
-    }
-
-    for ar_text, variants in sorted(dynamic_terms.items(), key=lambda x: len(x[0]), reverse=True):
-        translated = variants.get(lang)
-        if translated:
-            html = html.replace(ar_text, translated)
-
-    for key, raw in protected.items():
-        html = html.replace(key, raw)
-
-    return html
-
-
-@app.after_request
-def apply_full_language_translation(response):
-    try:
-        if response.content_type and "text/html" in response.content_type.lower():
-            body = response.get_data(as_text=True)
-            body = translate_html_content(body)
-            response.set_data(body)
-    except Exception:
-        pass
-    return response
 
 
 def env_flag(name, default=False):
@@ -1016,7 +714,53 @@ def init_db():
 init_db()
 
 
-def send_mail(to_email, subject, body):
+
+def build_pretty_email_html(title, code, intro_text, note_text):
+    return f"""
+    <div dir="rtl" style="margin:0;padding:0;background:#eef4fb;font-family:Arial,Tahoma,sans-serif;">
+        <div style="max-width:680px;margin:0 auto;padding:34px 16px;">
+            <div style="background:linear-gradient(180deg,#0a1f3b 0%,#0f2d55 55%,#113766 100%);border-radius:28px;overflow:hidden;border:1px solid rgba(37,99,235,.16);box-shadow:0 22px 60px rgba(15,39,71,.20);">
+
+                <div style="padding:30px 24px 14px 24px;text-align:center;color:#ffffff;">
+                    <div style="display:inline-block;background:rgba(255,255,255,.10);padding:10px 18px;border-radius:999px;font-size:14px;margin-bottom:18px;border:1px solid rgba(255,255,255,.12);">
+                        منصة المسطر
+                    </div>
+
+                    <h1 style="margin:0;font-size:31px;font-weight:800;letter-spacing:.2px;">{title}</h1>
+
+                    <p style="margin:14px 0 0 0;font-size:17px;line-height:2;color:#dbeafe;">
+                        {intro_text}
+                    </p>
+                </div>
+
+                <div style="padding:24px;">
+                    <div style="background:#ffffff;border-radius:24px;padding:30px 22px;text-align:center;border:1px solid #dbeafe;">
+                        <div style="font-size:14px;color:#64748b;margin-bottom:10px;">رمز التحقق الخاص بك</div>
+
+                        <div style="display:inline-block;background:linear-gradient(180deg,#2563eb 0%,#1d4ed8 100%);color:#ffffff;font-size:42px;font-weight:800;letter-spacing:8px;padding:18px 28px;border-radius:20px;box-shadow:0 14px 28px rgba(37,99,235,.24);">
+                            {code}
+                        </div>
+
+                        <p style="margin:18px 0 0 0;font-size:15px;line-height:1.9;color:#475569;">
+                            {note_text}
+                        </p>
+                    </div>
+
+                    <div style="margin-top:16px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.08);padding:16px 18px;border-radius:18px;color:#dbeafe;font-size:14px;line-height:1.95;">
+                        تم إرسال هذه الرسالة من <strong>المسطر</strong>. إذا لم تطلب هذا الإجراء، تجاهل الرسالة ولا تشارك الرمز مع أي شخص.
+                    </div>
+                </div>
+
+                <div style="padding:0 24px 28px 24px;text-align:center;color:#bfdbfe;font-size:14px;line-height:1.9;">
+                    مع التحية<br>
+                    <strong>فريق المسطر</strong>
+                </div>
+            </div>
+        </div>
+    </div>
+    """
+
+def send_mail(to_email, subject, body, html_body=None):
     if not MAIL_ENABLED:
         print("MAIL DISABLED")
         return False
@@ -1032,7 +776,7 @@ def send_mail(to_email, subject, body):
             "from": RESEND_FROM_EMAIL,
             "to": [to_email],
             "subject": subject,
-            "html": f"<div dir='rtl' style='font-family:Arial,sans-serif'><p>{body}</p></div>",
+            "html": html_body or f"<div dir='rtl' style='font-family:Arial,sans-serif'><p>{body}</p></div>",
             "text": body,
         }
 
@@ -1398,17 +1142,17 @@ def settings_corner():
 
 HOME_HTML = STYLE + """
 <div class="container narrow-container" style="margin-top:90px;text-align:center;">
-    <h1 style="font-size:42px;margin-bottom:34px;">{{ t('app_name') }}</h1>
+    <h1 style="font-size:42px;margin-bottom:34px;">المسطر</h1>
 
     <form action="/login" method="post">
-        <input type="email" name="email" value="{{ last_email }}" placeholder="{{ t('email') }}" required>
-        <input type="password" name="password" placeholder="{{ t('password') }}" required>
-        <button type="submit">{{ t('login') }}</button>
+        <input type="email" name="email" value="{{ last_email }}" placeholder="البريد الإلكتروني" required>
+        <input type="password" name="password" placeholder="كلمة السر" required>
+        <button type="submit">تسجيل الدخول</button>
     </form>
 
     <div class="inline" style="justify-content:space-between;margin-top:12px;">
-        <a href="/register" style="color:#60a5fa;font-weight:700;">{{ t('create_account') }}</a>
-        <a href="/forgot" style="color:#cbd5e1;">{{ t('forgot_password') }}</a>
+        <a href="/register" style="color:#60a5fa;font-weight:700;">إنشاء حساب</a>
+        <a href="/forgot" style="color:#cbd5e1;">نسيت كلمة السر</a>
     </div>
 </div>
 <a class="bottom-corner-link bottom-left-link" href="/admin">🛠️</a>
@@ -1419,7 +1163,7 @@ HOME_HTML = STYLE + """
 
 @app.route("/")
 def home():
-    return render_template_string(HOME_HTML, t=t, last_email=(session.get("last_email") or request.cookies.get("remember_email", "")))
+    return render_template_string(HOME_HTML, last_email=(session.get("last_email") or request.cookies.get("remember_email", "")))
 
 
 @app.route("/register", methods=["GET", "POST"])
@@ -1429,7 +1173,6 @@ def register():
             "name": sanitize_input(request.form.get("name", ""), 80),
             "phone": sanitize_input(request.form.get("phone", ""), 25),
             "email": sanitize_input(request.form.get("email", ""), 120).lower(),
-            "birthdate": sanitize_input(request.form.get("birthdate",""),20),
             "password": request.form.get("password", "").strip(),
             "role": "worker",
             "section": sanitize_input(request.form.get("section", ""), 80),
@@ -1444,17 +1187,6 @@ def register():
 
         if d["role"]=="worker" and (not d["section"] or not d["governorate"] or not d["city"] or not d["exp"]):
             return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">اكمل الحقول الأساسية</div><a href="/register"><button>رجوع</button></a></div></body></html>')
-
-        
-        # التحقق من العمر (18+)
-        try:
-            bdate = datetime.datetime.strptime(d["birthdate"], "%Y-%m-%d").date()
-            today = datetime.date.today()
-            age = today.year - bdate.year - ((today.month, today.day) < (bdate.month, bdate.day))
-            if age < 18:
-                return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">يجب أن يكون العمر 18 سنة أو أكثر لإنشاء حساب</div><a href="/register"><button>رجوع</button></a></div></body></html>')
-        except Exception:
-            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">تاريخ الميلاد غير صحيح</div><a href="/register"><button>رجوع</button></a></div></body></html>')
 
         if not valid_email(d["email"]):
             return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">البريد الإلكتروني غير صحيح</div><a href="/register"><button>رجوع</button></a></div></body></html>')
@@ -1515,7 +1247,18 @@ def register():
         session["otp"] = otp
         session["otp_created_at"] = time.time()
 
-        sent = send_mail(d["email"], "كود التفعيل", f"كود التفعيل الخاص بك هو: {otp}")
+        activation_html = build_pretty_email_html(
+            "كود تفعيل الحساب",
+            otp,
+            "مرحباً بك في المسطر، استخدم رمز التحقق التالي لإكمال تفعيل حسابك والاستمرار داخل المنصة.",
+            "أدخل هذا الرمز داخل تطبيق المسطر لإكمال تفعيل حسابك."
+        )
+        sent = send_mail(
+            d["email"],
+            "كود التفعيل",
+            f"كود التفعيل الخاص بك هو: {otp}",
+            html_body=activation_html
+        )
 
         if not sent:
             cleanup_saved_files(d)
@@ -1548,8 +1291,7 @@ def register():
                 <input name="name" placeholder="الاسم الكامل" required>
                 <input name="phone" placeholder="07XXXXXXXXX" required>
                 <input name="email" type="email" placeholder="البريد الإلكتروني" required>
-                <input type="date" name="birthdate" required>
-<input name="password" type="password" placeholder="كلمة المرور" required>
+                <input name="password" type="password" placeholder="كلمة المرور" required>
 
                 
 
@@ -1624,7 +1366,7 @@ def verify():
                     (name, phone, email, password, role, birthdate, section, governorate, city, exp, bio, profile_pic, work_images, is_verified)
                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)
                     """, (
-                        d["name"], d["phone"], d["email"], d["password"], d["role"], d["birthdate"], d["section"],
+                        d["name"], d["phone"], d["email"], d["password"], d["role"], "", d["section"],
                         d["governorate"], d["city"], d["exp"], d["bio"], d["profile_pic"], d["work_images"]
                     ))
                     con.commit()
@@ -1727,7 +1469,18 @@ def forgot():
         session["reset_otp"] = otp
         session["reset_otp_created_at"] = time.time()
 
-        sent = send_mail(email, "استعادة كلمة السر", f"كود استعادة كلمة السر هو: {otp}")
+        reset_html = build_pretty_email_html(
+            "استعادة كلمة السر",
+            otp,
+            "وصلنا طلب استعادة كلمة السر لحسابك في المسطر. استخدم رمز التحقق التالي للمتابعة بأمان.",
+            "أدخل هذا الرمز داخل تطبيق المسطر ثم اختر كلمة سر جديدة."
+        )
+        sent = send_mail(
+            email,
+            "استعادة كلمة السر",
+            f"كود استعادة كلمة السر هو: {otp}",
+            html_body=reset_html
+        )
         if not sent:
             session.pop("reset_email", None)
             session.pop("reset_otp", None)
@@ -1909,10 +1662,10 @@ def workers():
 
             <div class="hero-panel" style="margin-bottom:16px;">
                 <div class="inline" style="margin-bottom:10px;">
-                    <span class="hero-badge">{t("organized_browse")}</span>
+                    <span class="hero-badge">تصفح منظم</span>
                     <span class="hero-badge">قسم ← اختصاص ← مستخدمون</span>
                 </div>
-                <h2>{t("main_sections")}</h2>
+                <h2>الأقسام الرئيسية</h2>
                 <div class="section-subtitle">اختر القسم الرئيسي أولاً، وبعدها تفتح لك صفحة الاختصاصات الخاصة به، ثم تظهر لك قائمة المستخدمين المسجلين.</div>
             </div>
 
@@ -2533,11 +2286,9 @@ def admin_support():
 @app.route("/logout")
 def logout():
     remembered_email = session.get("last_email") or request.cookies.get("remember_email", "")
-    remembered_lang = session.get("lang", "ar")
     session.clear()
     if remembered_email:
         session["last_email"] = remembered_email
-    session["lang"] = remembered_lang
     resp = redirect(url_for("home"))
     if remembered_email:
         resp.set_cookie("remember_email", remembered_email, max_age=60*60*24*30)
@@ -3293,8 +3044,8 @@ def profile():
         STYLE + (settings_corner() if 'user' in session else '') + f"""
         <div class="container">
             <div class="topbar">
-                <a href="/settings"><button class="light-btn">{t("settings")}</button></a>
-                <a href="/edit-profile"><button>{t("edit_profile")}</button></a>
+                <a href="/settings"><button class="light-btn">الإعدادات</button></a>
+                <a href="/edit-profile"><button>تعديل الملف الشخصي</button></a>
             </div>
 
             <div class="worker-hero">
@@ -3311,28 +3062,27 @@ def profile():
                         <div class="worker-rating-line">
                             <span class="rating-stars">{stars}</span>
                         </div>
-                        <div class="section-subtitle">{t("your_profile_inside")}</div>
+                        <div class="section-subtitle">هذه صفحتك الشخصية داخل التطبيق.</div>
                         <div style="margin-top:10px;">{user["bio"] or "لا توجد نبذة حالياً"}</div>
 
                         <div class="detail-grid">
-                            <div class="detail-box"><strong>{t("phone")}</strong>{user["phone"] or "-"}</div>
-                            <div class="detail-box"><strong>{t("email")}</strong>{user["email"] or "-"}</div>
-                            <div class="detail-box"><strong>{t("city")}</strong>{user["city"] or "-"}</div>
-                            <div class="detail-box"><strong>{t("experience")}</strong>{user["exp"] or "-"}</div>
+                            <div class="detail-box"><strong>الهاتف</strong>{user["phone"] or "-"}</div>
+                            <div class="detail-box"><strong>البريد الإلكتروني</strong>{user["email"] or "-"}</div>
+                            <div class="detail-box"><strong>المدينة</strong>{user["city"] or "-"}</div>
+                            <div class="detail-box"><strong>الخبرة</strong>{user["exp"] or "-"}</div>
                         </div>
                     </div>
                 </div>
             </div>
 
             <div class="card">
-                <h3>{t("my_works")}</h3>
-                <div class="section-subtitle">{t("uploaded_images")}</div>
-                {work_images_html if work_images_html else f'<div class="empty-state">{t("no_works")}</div>'}
+                <h3>أعمالي</h3>
+                <div class="section-subtitle">الصور المرفوعة داخل ملفك الشخصي.</div>
+                {work_images_html if work_images_html else f'<div class="empty-state">لا توجد أعمال حتى الآن</div>'}
             </div>
         </div>
         </body></html>
-        """,
-        language_selector=language_selector_html()
+        """
     )
 
 
@@ -3349,31 +3099,21 @@ def settings():
     return render_template_string(
         STYLE + (settings_corner() if 'user' in session else '') + f"""
         <div class="container narrow-container">
-            <h2>{t("settings")}</h2>
-            <div class="section-subtitle">{t("choose_page")}</div>
+            <h2>الإعدادات</h2>
+            <div class="section-subtitle">اختر الصفحة التي تريدها.</div>
 
             <div class="card">
-                <a href="/profile"><button>{t("profile")}</button></a>
-                <a href="/edit-profile"><button class="light-btn">{t("edit_profile")}</button></a>
-                <a href="/inbox"><button class="light-btn">{t("messages")}</button></a>
-                <a href="/support"><button class="light-btn">{t("support")}</button></a>
-                <a href="/workers"><button class="light-btn">{t("specialties")}</button></a>
-                <a href="/logout"><button>{t("logout")}</button></a>
+                <a href="/profile"><button>ملفي الشخصي</button></a>
+                <a href="/edit-profile"><button class="light-btn">تعديل الملف الشخصي</button></a>
+                <a href="/inbox"><button class="light-btn">الرسائل</button></a>
+                <a href="/support"><button class="light-btn">الدعم الفني</button></a>
+                <a href="/workers"><button class="light-btn">الاختصاصات</button></a>
+                <a href="/logout"><button>تسجيل الخروج</button></a>
             </div>
-
-            <div class="card" style="margin-top:14px;">
-                <h3>اللغة</h3>
-                <div class="section-subtitle">يمكنك تغيير لغة البرنامج من هنا</div>
-                <div class="inline">
-                    <a href="/set-language/ar"><button class="light-btn">العربية</button></a>
-                    <a href="/set-language/en"><button class="light-btn">English</button></a>
-                    <a href="/set-language/ku"><button class="light-btn">کوردی</button></a>
-                </div>
             </div>
         </div>
         </body></html>
-        """,
-        language_selector=language_selector_html()
+        """
     )
 
 
