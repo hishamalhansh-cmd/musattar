@@ -1022,6 +1022,8 @@ def send_mail(to_email, subject, body):
             headers={
                 "Authorization": f"Bearer {RESEND_API_KEY}",
                 "Content-Type": "application/json",
+                "User-Agent": "musattar-app/1.0",
+                "Accept": "application/json",
             },
             method="POST",
         )
