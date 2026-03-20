@@ -537,6 +537,43 @@ def delete_file_if_exists(filename):
         except Exception:
             pass
 
+def insert_user_record(con, values_dict):
+    payload = {
+        "name": values_dict.get("name", ""),
+        "phone": values_dict.get("phone", ""),
+        "email": values_dict.get("email", ""),
+        "password": values_dict.get("password", ""),
+        "role": values_dict.get("role", ""),
+        "birthdate": values_dict.get("birthdate", ""),
+        "section": values_dict.get("section", ""),
+        "governorate": values_dict.get("governorate", ""),
+        "city": values_dict.get("city", ""),
+        "exp": values_dict.get("exp", ""),
+        "bio": values_dict.get("bio", ""),
+        "profile_pic": values_dict.get("profile_pic", ""),
+        "work_images": values_dict.get("work_images", ""),
+    }
+
+    try:
+        con.execute("""
+        INSERT INTO users
+        (name, phone, email, password, role, birthdate, section, governorate, city, exp, bio, profile_pic, work_images, is_verified)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)
+        """, (
+            payload["name"], payload["phone"], payload["email"], payload["password"], payload["role"], payload["birthdate"],
+            payload["section"], payload["governorate"], payload["city"], payload["exp"], payload["bio"], payload["profile_pic"], payload["work_images"]
+        ))
+    except sqlite3.OperationalError:
+        con.execute("""
+        INSERT INTO users
+        (name, phone, email, password, role, birthdate, section, governorate, city, exp, bio, profile_pic, work_images)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """, (
+            payload["name"], payload["phone"], payload["email"], payload["password"], payload["role"], payload["birthdate"],
+            payload["section"], payload["governorate"], payload["city"], payload["exp"], payload["bio"], payload["profile_pic"], payload["work_images"]
+        ))
+
+
 
 @app.route("/uploads/<filename>")
 def uploaded_file(filename):
@@ -1167,6 +1204,37 @@ HOME_HTML = STYLE + """
 def home():
     return render_template_string(HOME_HTML, last_email=(session.get("last_email") or request.cookies.get("remember_email", "")))
 
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        email = sanitize_input(request.form.get("email", ""), 120).lower()
+        password = request.form.get("password", "")
+        ip = get_client_ip()
+
+        if too_many_attempts(LOGIN_ATTEMPTS, ip, LOGIN_WINDOW_SECONDS, LOGIN_MAX_ATTEMPTS):
+            return render_template_string(STYLE + '<div class="container"><div class="msg">تم تجاوز عدد محاولات الدخول، حاول لاحقاً</div><a href="/login"><button>رجوع</button></a></div></body></html>')
+
+        with get_db() as con:
+            user = con.execute("SELECT * FROM users WHERE email=? AND role!='visitor'", (email,)).fetchone()
+
+        if not user or not check_password_hash(user["password"], password):
+            return render_template_string(STYLE + '<div class="container"><div class="msg">البريد الإلكتروني أو كلمة المرور غير صحيحة</div><a href="/login"><button>رجوع</button></a></div></body></html>')
+
+        if user["is_blocked"]:
+            return render_template_string(STYLE + '<div class="container"><div class="msg">هذا الحساب محظور من قبل الإدارة</div><a href="/login"><button>رجوع</button></a></div></body></html>')
+
+        session.permanent = True
+        session["user"] = user["name"]
+        session["user_id"] = user["id"]
+        session["role"] = user["role"] or "worker"
+        session["last_email"] = user["email"] or email
+        LOGIN_ATTEMPTS.pop(ip, None)
+        resp = redirect(url_for("workers"))
+        resp.set_cookie("remember_email", email, max_age=60*60*24*30)
+        return resp
+
+    return redirect(url_for("home"))
+
 
 def visitor_account_required():
     return "user" in session and session.get("role") == "visitor"
@@ -1244,39 +1312,35 @@ def visitor_register():
                 return render_template_string(STYLE + '<div class="container"><div class="msg">هذا البريد مستخدم مسبقاً</div><a href="/visitor/register"><button>رجوع</button></a></div></body></html>')
 
         d["password"] = generate_password_hash(d["password"])
-        otp = str(random.randint(100000, 999999))
-        session["pending_visitor"] = d
-        session["visitor_otp"] = otp
-        session["visitor_otp_created_at"] = time.time()
 
-        activation_html = build_pretty_email_html(
-            "كود تفعيل حساب الزائر",
-            otp,
-            "مرحباً بك في المسطر. أكمل إنشاء حساب الزائر بإدخال رمز التحقق التالي.",
-            "أدخل هذا الرمز داخل منصة المسطر لتفعيل حساب الزائر."
-        )
-        sent = send_mail(
-            d["email"],
-            "كود تفعيل حساب الزائر",
-            f"كود تفعيل حساب الزائر هو: {otp}",
-            html_body=activation_html
-        )
+        try:
+            with get_db() as con:
+                old = con.execute("SELECT id FROM users WHERE email=?", (d["email"],)).fetchone()
+                if old:
+                    return render_template_string(STYLE + '<div class="container"><div class="msg">هذا البريد مستخدم مسبقاً</div><a href="/visitor/register"><button>رجوع</button></a></div></body></html>')
 
-        if not sent:
-            session.pop("pending_visitor", None)
-            session.pop("visitor_otp", None)
-            session.pop("visitor_otp_created_at", None)
-            return render_template_string(
-                STYLE + """
-                <div class="container">
-                    <div class="msg">فشل إرسال كود التفعيل إلى البريد الإلكتروني.</div>
-                    <a href="/visitor/register"><button>رجوع</button></a>
-                </div>
-                </body></html>
-                """
-            )
+                insert_user_record(con, {
+                    "name": d["name"],
+                    "phone": "",
+                    "email": d["email"],
+                    "password": d["password"],
+                    "role": "visitor",
+                    "birthdate": "",
+                    "section": "",
+                    "governorate": "",
+                    "city": "",
+                    "exp": "",
+                    "bio": "",
+                    "profile_pic": "",
+                    "work_images": "",
+                })
+                con.commit()
+        except sqlite3.IntegrityError:
+            return render_template_string(STYLE + '<div class="container"><div class="msg">تعذر حفظ الحساب: البريد مستخدم مسبقاً</div><a href="/visitor/register"><button>رجوع</button></a></div></body></html>')
+        except Exception as e:
+            return render_template_string(STYLE + f'<div class="container"><div class="msg">تعذر إنشاء حساب الزائر: {str(e)}</div><a href="/visitor/register"><button>رجوع</button></a></div></body></html>')
 
-        return redirect(url_for("visitor_verify"))
+        return redirect(url_for("visitor_login"))
 
     return render_template_string(
         STYLE + """
@@ -1288,9 +1352,9 @@ def visitor_register():
                 <input name="name" placeholder="الاسم" required>
                 <input type="email" name="email" placeholder="البريد الإلكتروني" required>
                 <input type="password" name="password" placeholder="كلمة السر" required>
-                <button>إرسال كود التفعيل</button>
+                <button>إنشاء حساب الزائر</button>
             </form>
-            <div class="notice">عند إكمال هذه الخطوة راح نرسل لك كود تحقق على البريد الإلكتروني.</div>
+            <div class="notice">بعد إنشاء الحساب تگدر تسجل دخولك مباشرة.</div>
         </div>
         </body></html>
         """
@@ -1299,61 +1363,7 @@ def visitor_register():
 
 @app.route("/visitor/verify", methods=["GET", "POST"])
 def visitor_verify():
-    pending_user = session.get("pending_visitor")
-    otp_value = session.get("visitor_otp")
-
-    if not pending_user or not otp_value:
-        return render_template_string(STYLE + '<div class="container"><div class="msg">انتهت جلسة التفعيل</div><a href="/visitor/register"><button>الرجوع للتسجيل</button></a></div></body></html>')
-
-    if request.method == "POST":
-        if otp_is_expired("visitor_otp_created_at"):
-            session.pop("pending_visitor", None)
-            session.pop("visitor_otp", None)
-            session.pop("visitor_otp_created_at", None)
-            return render_template_string(STYLE + '<div class="container"><div class="msg">انتهت صلاحية كود التفعيل</div><a href="/visitor/register"><button>الرجوع للتسجيل</button></a></div></body></html>')
-
-        if request.form.get("code", "").strip() == otp_value:
-            d = session["pending_visitor"]
-            try:
-                with get_db() as con:
-                    old = con.execute("SELECT id FROM users WHERE email=?", (d["email"],)).fetchone()
-                    if old:
-                        session.clear()
-                        return render_template_string(STYLE + '<div class="container"><div class="msg">هذا البريد مستخدم مسبقاً</div><a href="/visitor/register"><button>رجوع</button></a></div></body></html>')
-
-                    con.execute("""
-                    INSERT INTO users
-                    (name, phone, email, password, role, birthdate, section, governorate, city, exp, bio, profile_pic, work_images, is_verified)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)
-                    """, (
-                        d["name"], "", d["email"], d["password"], "visitor", "", "", "", "", "", "", "", ""
-                    ))
-                    con.commit()
-            except sqlite3.IntegrityError:
-                session.clear()
-                return render_template_string(STYLE + '<div class="container"><div class="msg">تعذر حفظ الحساب</div><a href="/visitor/register"><button>رجوع</button></a></div></body></html>')
-
-            session.pop("pending_visitor", None)
-            session.pop("visitor_otp", None)
-            session.pop("visitor_otp_created_at", None)
-            return redirect(url_for("visitor_login"))
-
-        return render_template_string(STYLE + '<div class="container"><div class="msg">كود التفعيل غير صحيح</div><a href="/visitor/verify"><button>رجوع</button></a></div></body></html>')
-
-    return render_template_string(
-        STYLE + """
-        <div class="container narrow-container">
-            <a href="/visitor/register"><button class="light-btn">رجوع</button></a>
-            <h2>تفعيل حساب الزائر</h2>
-            <div class="msg">أدخل كود التفعيل المرسل إلى بريدك الإلكتروني</div>
-            <form method="post">
-                <input name="code" placeholder="كود التفعيل" required>
-                <button>تأكيد</button>
-            </form>
-        </div>
-        </body></html>
-        """
-    )
+    return redirect(url_for("visitor_register"))
 
 
 @app.route("/visitor/account")
@@ -1622,47 +1632,37 @@ def register():
         d["work_images"] = ",".join(work_images_list)
         d["password"] = generate_password_hash(d["password"])
 
-        with get_db() as con:
-            old = con.execute("SELECT id FROM users WHERE phone=? OR email=?", (d["phone"], d["email"])).fetchone()
-            if old:
-                cleanup_saved_files(d)
-                return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">رقم الهاتف أو البريد مستخدم مسبقاً</div><a href="/register"><button>رجوع</button></a></div></body></html>')
+        try:
+            with get_db() as con:
+                old = con.execute("SELECT id FROM users WHERE phone=? OR email=?", (d["phone"], d["email"])).fetchone()
+                if old:
+                    cleanup_saved_files(d)
+                    return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">رقم الهاتف أو البريد مستخدم مسبقاً</div><a href="/register"><button>رجوع</button></a></div></body></html>')
 
-        otp = str(random.randint(100000, 999999))
-        session["pending_user"] = d
-        session["otp"] = otp
-        session["otp_created_at"] = time.time()
-
-        activation_html = build_pretty_email_html(
-            "كود تفعيل الحساب",
-            otp,
-            "مرحباً بك في المسطر، استخدم رمز التحقق التالي لإكمال تفعيل حسابك والاستمرار داخل المنصة.",
-            "أدخل هذا الرمز داخل تطبيق المسطر لإكمال تفعيل حسابك."
-        )
-        sent = send_mail(
-            d["email"],
-            "كود التفعيل",
-            f"كود التفعيل الخاص بك هو: {otp}",
-            html_body=activation_html
-        )
-
-        if not sent:
+                insert_user_record(con, {
+                    "name": d["name"],
+                    "phone": d["phone"],
+                    "email": d["email"],
+                    "password": d["password"],
+                    "role": d["role"],
+                    "birthdate": "",
+                    "section": d["section"],
+                    "governorate": d["governorate"],
+                    "city": d["city"],
+                    "exp": d["exp"],
+                    "bio": d["bio"],
+                    "profile_pic": d["profile_pic"],
+                    "work_images": d["work_images"],
+                })
+                con.commit()
+        except sqlite3.IntegrityError:
             cleanup_saved_files(d)
-            session.pop("pending_user", None)
-            session.pop("otp", None)
-            session.pop("otp_created_at", None)
-            session.pop("otp_console_notice", None)
-            return render_template_string(
-                STYLE + (settings_corner() if 'user' in session else '') + '''
-                <div class="container">
-                    <div class="msg">فشل إرسال كود التفعيل إلى البريد الإلكتروني. تأكد من إعدادات Gmail.</div>
-                    <a href="/register"><button>رجوع</button></a>
-                </div>
-                </body></html>
-                '''
-            )
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">تعذر حفظ الحساب: رقم الهاتف أو البريد مستخدم مسبقاً</div><a href="/register"><button>رجوع</button></a></div></body></html>')
+        except Exception as e:
+            cleanup_saved_files(d)
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f'<div class="container"><div class="msg">تعذر إنشاء الحساب: {str(e)}</div><a href="/register"><button>رجوع</button></a></div></body></html>')
 
-        return redirect(url_for("verify"))
+        return redirect(url_for("login"))
 
     group_options = build_main_groups_options("")
     gov_options = build_governorates_options("")
@@ -1709,7 +1709,7 @@ def register():
                 <label>أعمالي</label>
                 <input type="file" name="work_images" accept=".png,.jpg,.jpeg,.gif,.webp" multiple>
 
-                <button>متابعة التفعيل</button>
+                <button>إنشاء الحساب</button>
             </form>
 
         </div>
@@ -1721,123 +1721,10 @@ def register():
 
 @app.route("/verify", methods=["GET", "POST"])
 def verify():
-    pending_user = session.get("pending_user")
-    otp_value = session.get("otp")
-    console_notice = ""
-
-    if not pending_user or not otp_value:
-        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">انتهت جلسة التفعيل</div><a href="/register"><button>الرجوع للتسجيل</button></a></div></body></html>')
-
-    if request.method == "POST":
-        if otp_is_expired():
-            cleanup_saved_files(session.get("pending_user"))
-            session.pop("pending_user", None)
-            session.pop("otp", None)
-            session.pop("otp_created_at", None)
-            session.pop("otp_console_notice", None)
-            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">انتهت صلاحية كود التفعيل</div><a href="/register"><button>الرجوع للتسجيل</button></a></div></body></html>')
-
-        if request.form.get("code", "").strip() == otp_value:
-            d = session["pending_user"]
-            try:
-                with get_db() as con:
-                    old = con.execute("SELECT id FROM users WHERE phone=? OR email=?", (d["phone"], d["email"])).fetchone()
-                    if old:
-                        cleanup_saved_files(d)
-                        session.clear()
-                        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">رقم الهاتف أو البريد مستخدم مسبقاً</div><a href="/register"><button>رجوع</button></a></div></body></html>')
-
-                    con.execute("""
-                    INSERT INTO users
-                    (name, phone, email, password, role, birthdate, section, governorate, city, exp, bio, profile_pic, work_images, is_verified)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)
-                    """, (
-                        d["name"], d["phone"], d["email"], d["password"], d["role"], "", d["section"],
-                        d["governorate"], d["city"], d["exp"], d["bio"], d["profile_pic"], d["work_images"]
-                    ))
-                    con.commit()
-            except sqlite3.IntegrityError:
-                cleanup_saved_files(d)
-                session.clear()
-                return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">تعذر حفظ الحساب</div><a href="/register"><button>رجوع</button></a></div></body></html>')
-
-            session.pop("pending_user", None)
-            session.pop("otp", None)
-            session.pop("otp_created_at", None)
-            session.pop("otp_console_notice", None)
-            return redirect(url_for("login"))
-
-        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">كود التفعيل غير صحيح</div><a href="/verify"><button>رجوع</button></a></div></body></html>')
-
-    note_html = f'<div class="msg">{console_notice}</div>' if console_notice else ""
-
-    return render_template_string(
-        STYLE + (settings_corner() if 'user' in session else '') + f"""
-        <div class="container">
-            <a href="/register"><button>رجوع</button></a>
-            <h2>تفعيل الحساب</h2>
-            {note_html}
-            <div class="msg">أدخل كود التفعيل المرسل إلى البريد الإلكتروني</div>
-            <form method="post">
-                <input name="code" placeholder="كود التفعيل" required>
-                <button>تأكيد</button>
-            </form>
-        </div>
-        </body></html>
-        """
-    )
+    return redirect(url_for("register"))
 
 
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    if request.method == "POST":
-        email = sanitize_input(request.form.get("email", ""), 120).lower()
-        password = request.form.get("password", "")
-        ip = get_client_ip()
-
-        if too_many_attempts(LOGIN_ATTEMPTS, ip, LOGIN_WINDOW_SECONDS, LOGIN_MAX_ATTEMPTS):
-            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">تم تجاوز عدد محاولات الدخول، حاول لاحقاً</div><a href="/login"><button>رجوع</button></a></div></body></html>')
-
-        with get_db() as con:
-            user = con.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
-
-        if not user or not check_password_hash(user["password"], password):
-            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">البريد الإلكتروني أو كلمة المرور غير صحيحة</div><a href="/login"><button>رجوع</button></a></div></body></html>')
-
-        if user["is_blocked"]:
-            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">هذا الحساب محظور من قبل الإدارة</div><a href="/login"><button>رجوع</button></a></div></body></html>')
-
-        session.permanent = True
-        session["user"] = user["name"]
-        session["user_id"] = user["id"]
-        session["role"] = user["role"] or "worker"
-        session["last_email"] = user["email"] or email
-        LOGIN_ATTEMPTS.pop(ip, None)
-        resp = redirect(url_for("workers"))
-        resp.set_cookie("remember_email", email, max_age=60*60*24*30)
-        return resp
-        
-
-    return render_template_string(
-        STYLE + (settings_corner() if 'user' in session else '') + """
-        <div class="container">
-            <a href="/"><button>رجوع للرئيسية</button></a>
-            <h2>تسجيل دخول الاختصاصي</h2>
-            <form method="post">
-                <input type="email" name="email" placeholder="البريد الإلكتروني" required>
-                <input type="password" name="password" placeholder="كلمة المرور" required>
-                <button>دخول الاختصاصي</button>
-            </form>
-            <a href="/passkey/login"><button class="light-btn">الدخول بالبصمة</button></a>
-            <a href="/forgot"><button>نسيت كلمة المرور</button></a>
-            <div class="notice">إذا كنت زائر، <a href="/visitor/login" style="color:#93c5fd;font-weight:700;">ادخل من هنا</a></div>
-        </div>
-        </body></html>
-        """
-    )
-
-
-@app.route("/forgot", methods=["GET", "POST"])
+@app.route("/forgot", methods=["GET", "POST"] )
 def forgot():
     if request.method == "POST":
         email = sanitize_input(request.form.get("email", ""), 120).lower()
