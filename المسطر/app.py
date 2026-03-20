@@ -1016,43 +1016,7 @@ def init_db():
 init_db()
 
 
-
-def build_pretty_email_html(title, code, intro_text, note_text="هذا الكود صالح لفترة قصيرة."):
-    return f"""
-    <div dir="rtl" style="margin:0;padding:0;background:#edf3fb;font-family:Arial,Tahoma,sans-serif;">
-        <div style="max-width:640px;margin:0 auto;padding:32px 16px;">
-            <div style="background:linear-gradient(180deg,#0f2747 0%,#0b1d36 100%);border-radius:24px;overflow:hidden;border:1px solid rgba(37,99,235,.18);box-shadow:0 18px 50px rgba(15,39,71,.18);">
-                <div style="padding:28px 24px 12px 24px;text-align:center;color:#ffffff;">
-                    <div style="display:inline-block;background:rgba(255,255,255,.1);padding:8px 16px;border-radius:999px;font-size:14px;margin-bottom:18px;">
-                        منصة المسطر
-                    </div>
-                    <h1 style="margin:0;font-size:32px;font-weight:700;letter-spacing:.3px;">{title}</h1>
-                    <p style="margin:14px 0 0 0;font-size:17px;line-height:1.9;color:#dbeafe;">{intro_text}</p>
-                </div>
-
-                <div style="padding:24px;">
-                    <div style="background:#ffffff;border-radius:22px;padding:28px 22px;text-align:center;border:1px solid #dbeafe;">
-                        <div style="font-size:14px;color:#64748b;margin-bottom:10px;">الكود الخاص بك</div>
-                        <div style="display:inline-block;background:linear-gradient(180deg,#2563eb 0%, #1d4ed8 100%);color:#ffffff;font-size:42px;font-weight:700;letter-spacing:8px;padding:18px 26px;border-radius:18px;box-shadow:0 12px 24px rgba(37,99,235,.22);">
-                            {code}
-                        </div>
-                        <p style="margin:18px 0 0 0;font-size:15px;line-height:1.8;color:#475569;">{note_text}</p>
-                    </div>
-
-                    <div style="margin-top:16px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.08);padding:16px 18px;border-radius:18px;color:#dbeafe;font-size:14px;line-height:1.9;">
-                        إذا لم تطلب هذا الإجراء، تجاهل هذه الرسالة. لا تشارك الكود مع أي شخص.
-                    </div>
-                </div>
-
-                <div style="padding:0 24px 24px 24px;text-align:center;color:#93c5fd;font-size:13px;">
-                    Musattar Platform
-                </div>
-            </div>
-        </div>
-    </div>
-    """
-
-def send_mail(to_email, subject, body, html_body=None):
+def send_mail(to_email, subject, body):
     if not MAIL_ENABLED:
         print("MAIL DISABLED")
         return False
@@ -1068,7 +1032,7 @@ def send_mail(to_email, subject, body, html_body=None):
             "from": RESEND_FROM_EMAIL,
             "to": [to_email],
             "subject": subject,
-            "html": html_body or f"<div dir='rtl' style='font-family:Arial,sans-serif'><p>{body}</p></div>",
+            "html": f"<div dir='rtl' style='font-family:Arial,sans-serif'><p>{body}</p></div>",
             "text": body,
         }
 
@@ -1551,18 +1515,7 @@ def register():
         session["otp"] = otp
         session["otp_created_at"] = time.time()
 
-        activation_html = build_pretty_email_html(
-            "كود تفعيل الحساب",
-            otp,
-            "مرحباً بك في منصة المسطر، استخدم الكود التالي لإكمال تفعيل حسابك.",
-            "أدخل هذا الكود داخل التطبيق لإكمال التفعيل."
-        )
-        sent = send_mail(
-            d["email"],
-            "كود التفعيل",
-            f"كود التفعيل الخاص بك هو: {otp}",
-            html_body=activation_html
-        )
+        sent = send_mail(d["email"], "كود التفعيل", f"كود التفعيل الخاص بك هو: {otp}")
 
         if not sent:
             cleanup_saved_files(d)
@@ -1774,18 +1727,7 @@ def forgot():
         session["reset_otp"] = otp
         session["reset_otp_created_at"] = time.time()
 
-        reset_html = build_pretty_email_html(
-            "استعادة كلمة السر",
-            otp,
-            "وصلنا طلب استعادة حسابك في منصة المسطر. استخدم الكود التالي للمتابعة.",
-            "أدخل هذا الكود داخل التطبيق ثم اختر كلمة سر جديدة."
-        )
-        sent = send_mail(
-            email,
-            "استعادة كلمة السر",
-            f"كود استعادة كلمة السر هو: {otp}",
-            html_body=reset_html
-        )
+        sent = send_mail(email, "استعادة كلمة السر", f"كود استعادة كلمة السر هو: {otp}")
         if not sent:
             session.pop("reset_email", None)
             session.pop("reset_otp", None)
