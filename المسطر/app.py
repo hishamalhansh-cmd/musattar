@@ -430,7 +430,7 @@ def build_whatsapp_link(phone):
         return "#"
     if digits.startswith("00"):
         digits = digits[2:]
-    return f"https://wa.me/{digits}"
+    return f"https://api.whatsapp.com/send?phone={digits}"
 
 
 GOVERNORATE_COORDS = {
