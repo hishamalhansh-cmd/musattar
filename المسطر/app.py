@@ -595,6 +595,26 @@ def uploaded_file(filename):
     return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 
 
+@app.route("/view-image/<filename>")
+def view_image(filename):
+    back = request.args.get("back", "/workers")
+    if not back.startswith("/"):
+        back = "/workers"
+    image_url = url_for("uploaded_file", filename=filename)
+    return render_template_string(
+        STYLE + (settings_corner() if 'user' in session else '') + f"""
+        <div class="container narrow-container" style="text-align:center;">
+            <a href="{back}"><button class="light-btn">رجوع</button></a>
+            <h2>عرض الصورة</h2>
+            <div class="card" style="padding:12px;">
+                <img src="{image_url}" alt="work" style="max-width:100%;max-height:78vh;border-radius:18px;border:1px solid rgba(96,165,250,.22);box-shadow:0 18px 40px rgba(2,8,23,.28);object-fit:contain;background:rgba(255,255,255,.04);">
+            </div>
+        </div>
+        </body></html>
+        """
+    )
+
+
 def get_db():
     con = sqlite3.connect(DB_PATH, timeout=10)
     con.row_factory = sqlite3.Row
@@ -2141,7 +2161,7 @@ def worker_card(worker):
     if imgs:
         blocks = []
         for img in imgs[:6]:
-            blocks.append(f'<img src="{url_for("uploaded_file", filename=img)}" alt="work">')
+            blocks.append(f'<img src="{url_for("uploaded_file", filename=img)}" alt="work" class="work-thumb">')
         work_images_html = f'<div class="work-grid">{"".join(blocks)}</div>'
 
     phone_html = f'<div class="info-chip"><strong>الهاتف</strong><div>{worker["phone"]}</div></div>' if worker["show_phone"] else ""
@@ -2350,17 +2370,20 @@ def worker_profile(user_id):
         con.commit()
         worker = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
 
+    current_session_user = get_current_session_user() if "user" in session else None
+    current_session_user_id = int(current_session_user["id"]) if current_session_user else None
+    current_session_user_role = (current_session_user["role"] if current_session_user and current_session_user["role"] else session.get("role") or "")
+
     is_self_worker_profile = (
-        "user" in session
-        and session.get("role") == "worker"
-        and session.get("user_id") == user_id
+        current_session_user_id is not None
+        and int(current_session_user_id) == int(user_id)
     )
 
     if request.method == "POST":
         if is_self_worker_profile:
             return render_template_string(
                 STYLE + (settings_corner() if 'user' in session else '') +
-                '<div class="container"><div class="msg">لا يمكن للمختص تقييم أو التعليق على نفسه</div><a href="/worker/%d"><button>رجوع</button></a></div></body></html>' % user_id
+                '<div class="container"><div class="msg">لا يمكن لك تقييم أو التعليق على ملفك الشخصي</div><a href="/worker/%d"><button>رجوع</button></a></div></body></html>' % user_id
             )
 
         ip = get_client_ip()
@@ -2403,7 +2426,7 @@ def worker_profile(user_id):
     work_images_html = ""
     if imgs:
         work_images_html = '<div class="work-grid">' + "".join(
-            f'<img src="{url_for("uploaded_file", filename=img)}" alt="work">' for img in imgs
+            f'<a href="{url_for("view_image", filename=img)}?back=/worker/{worker["id"]}"><img src="{url_for("uploaded_file", filename=img)}" alt="work" class="work-thumb"></a>' for img in imgs
         ) + '</div>'
 
     phone_html = f'<div class="detail-box"><strong>الهاتف</strong>{worker["phone"]}</div>' if worker["show_phone"] else ""
@@ -2528,6 +2551,7 @@ def worker_profile(user_id):
                 </div>
                 <div class="section-subtitle">صور الأعمال المعروضة داخل الملف الشخصي.</div>
                 {work_images_html if work_images_html else '<div class="empty-state">لا توجد أعمال حتى الآن</div>'}
+
             </div>
 
             <div class="card">
