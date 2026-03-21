@@ -1,0 +1,26 @@
+<!DOCTYPE html><html dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>قائمة العمال</title>
+</head><body style="font-family:Arial;text-align:center"><h1>قائمة العمال</h1><form action="/add_worker" method="post">
+<input name="name" placeholder="اسم العامل"><br><br>
+<input name="job" placeholder="المهنة"><br><br>
+<input name="phone" placeholder="رقم الهاتف"><br><br>
+<button type="submit">إضافة عامل</button>
+</form><hr>{% for w in workers %}
+
+<h3>{{w.name}}</h3>
+<p>{{w.job}}</p>
+<p>{{w.phone}}</p><form action="/rate/{{w.id}}" method="post">
+<select name="rating">
+<option value="1">⭐</option>
+<option value="2">⭐⭐</option>
+<option value="3">⭐⭐⭐</option>
+<option value="4">⭐⭐⭐⭐</option>
+<option value="5">⭐⭐⭐⭐⭐</option>
+</select><button type="submit">تقييم</button>
+
+</form><hr>{% endfor %}
+
+</body>
+</html>
