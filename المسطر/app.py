@@ -44,16 +44,11 @@ app.permanent_session_lifetime = timedelta(days=30)
 app.secret_key = os.environ.get("SECRET_KEY", "adam_secret_key_2026")
 
 
-
-
-
-
 def env_flag(name, default=False):
     value = os.environ.get(name)
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
-
 
 
 def b64url_encode_bytes(data: bytes) -> str:
@@ -173,7 +168,6 @@ COMMENT_WINDOW_SECONDS = 120
 COMMENT_MAX_COUNT = 3
 
 
-
 def auto_login_from_cookie():
     if "user" not in session:
         email_cookie = request.cookies.get("remember_email")
@@ -184,7 +178,6 @@ def auto_login_from_cookie():
                 session["user"] = u["name"]
                 session["user_id"] = u["id"]
                 session["role"] = u["role"] or "worker"
-
 
 
 def get_current_session_user():
@@ -298,7 +291,6 @@ def validate_uploaded_image(file_obj):
     if not file_obj or file_obj.filename == "":
         return False, "لا يوجد ملف"
     return True, ""
-
 
 
 def get_main_group_by_specialty(specialty):
@@ -496,6 +488,30 @@ def governorate_coords(governorate):
     return GOVERNORATE_COORDS.get(governorate or "", (33.3152, 44.3661))
 
 
+def is_favorite(visitor_id, worker_id):
+    try:
+        with get_db() as con:
+            row = con.execute(
+                "SELECT id FROM favorites WHERE visitor_id=? AND worker_id=?",
+                (visitor_id, worker_id)
+            ).fetchone()
+            return row is not None
+    except Exception:
+        return False
+
+
+def favorites_count(visitor_id):
+    try:
+        with get_db() as con:
+            row = con.execute(
+                "SELECT COUNT(*) AS c FROM favorites WHERE visitor_id=?",
+                (visitor_id,)
+            ).fetchone()
+            return int((row["c"] if row else 0) or 0)
+    except Exception:
+        return 0
+
+
 def allowed_file(filename):
     return True
 
@@ -572,7 +588,6 @@ def insert_user_record(con, values_dict):
             payload["name"], payload["phone"], payload["email"], payload["password"], payload["role"], payload["birthdate"],
             payload["section"], payload["governorate"], payload["city"], payload["exp"], payload["bio"], payload["profile_pic"], payload["work_images"]
         ))
-
 
 
 @app.route("/uploads/<filename>")
@@ -740,6 +755,15 @@ def init_db():
         )
         """)
 
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS favorites(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            visitor_id INTEGER NOT NULL,
+            worker_id INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(visitor_id, worker_id)
+        )
+        """)
 
         cur.execute("""
         CREATE TABLE IF NOT EXISTS support_messages(
@@ -781,7 +805,6 @@ def init_db():
 
 
 init_db()
-
 
 
 def build_pretty_email_html(title, code, intro_text, note_text):
@@ -1200,6 +1223,33 @@ label input[type="checkbox"]{
 .msg-toast{position:fixed;top:66px;left:50%;transform:translateX(-50%) translateY(-8px);z-index:10000;min-width:150px;max-width:84vw;padding:8px 12px;border-radius:999px;background:rgba(15,23,42,.82);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);color:#fff;text-align:center;font-size:12px;font-weight:700;box-shadow:0 8px 24px rgba(15,23,42,.18);opacity:0;transition:all .22s ease;border:1px solid rgba(255,255,255,.12)}
 .msg-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 @media (max-width:520px){.settings-floating{top:14px;left:60px}.settings-btn{width:40px;height:40px;font-size:19px}.message-floating-wrap{top:62px;left:14px}.message-floating-btn{width:40px;height:40px;font-size:20px}.msg-toast{top:104px;font-size:11px;min-width:132px;padding:7px 10px}}
+
+
+.worker-hero-pro{position:relative;overflow:hidden}
+.worker-hero-pro::after{content:"";position:absolute;inset:auto -40px -60px auto;width:180px;height:180px;border-radius:50%;background:radial-gradient(circle,rgba(96,165,250,.18),transparent 65%);pointer-events:none}
+.stat-mini-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-top:14px}
+.stat-mini-card{background:rgba(255,255,255,.05);border:1px solid rgba(96,165,250,.16);border-radius:18px;padding:12px 10px;text-align:center}
+.stat-mini-label{font-size:12px;color:#bfd4ee;margin-bottom:6px}
+.stat-mini-value{font-size:18px;font-weight:800;color:#fff}
+.profile-actions-bar{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
+.action-pill{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:11px 16px;border-radius:999px;background:linear-gradient(135deg,rgba(37,99,235,.95),rgba(59,130,246,.82));color:#fff!important;font-weight:800;border:1px solid rgba(147,197,253,.24);box-shadow:0 10px 24px rgba(37,99,235,.18)}
+.action-pill.secondary{background:rgba(255,255,255,.06);color:#dbeafe!important}
+.action-pill:hover{transform:translateY(-1px);filter:brightness(1.04)}
+.profile-bio-box{margin-top:12px;padding:14px 16px;background:rgba(255,255,255,.04);border:1px solid rgba(96,165,250,.14);border-radius:18px;line-height:1.9}
+.gallery-head,.reviews-head{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap}
+.work-grid img{cursor:zoom-in}
+.review-card-pro{padding:14px 16px;border-radius:20px;background:rgba(255,255,255,.045);border:1px solid rgba(96,165,250,.14);margin-top:10px}
+.review-top{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+.review-name{font-weight:800;color:#fff}
+.review-date{font-size:12px;color:#bcd0ea}
+.review-text{line-height:1.9;color:#e6eefb}
+.rating-pill{display:inline-flex;align-items:center;gap:6px;background:rgba(245,158,11,.14);color:#fde68a;border:1px solid rgba(245,158,11,.24);padding:6px 10px;border-radius:999px;font-size:13px;font-weight:700}
+.review-form-pro .rating-row{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.review-form-pro input[type=radio]{display:none}
+.review-form-pro .rate-pill{display:inline-flex;align-items:center;justify-content:center;padding:10px 14px;border-radius:999px;border:1px solid rgba(96,165,250,.2);background:rgba(255,255,255,.04);color:#dbeafe;font-weight:800;cursor:pointer;min-width:78px}
+.review-form-pro input[type=radio]:checked + .rate-pill{background:linear-gradient(135deg,rgba(37,99,235,.95),rgba(59,130,246,.82));color:#fff;border-color:rgba(147,197,253,.35)}
+.review-form-pro textarea{min-height:120px}
+@media (max-width:720px){.profile-actions-bar{display:grid;grid-template-columns:1fr 1fr}.action-pill{padding:10px 12px;font-size:14px}.stat-mini-grid{grid-template-columns:1fr 1fr}}
 
 </style>
 </head>
@@ -1682,7 +1732,6 @@ def manage_work_images(user_id):
     )
 
 
-
 @app.route("/register", methods=["GET", "POST"])
 def register():
     if request.method == "POST":
@@ -1966,7 +2015,6 @@ def reset_password():
     )
 
 
-
 def get_or_create_conversation(visitor_id, worker_id):
     visitor_id = int(visitor_id)
     worker_id = int(worker_id)
@@ -2046,24 +2094,23 @@ def build_conversation_messages_html(messages, current_user, other):
     chat_html = ""
     for m in messages:
         mine = int(m["sender_id"] or 0) == int(current_user["id"])
-        align = "justify-content:flex-end;" if mine else "justify-content:flex-start;"
-        bg = "linear-gradient(180deg,#2563eb 0%, #1d4ed8 100%)" if mine else "rgba(255,255,255,.08)"
-        color = "#ffffff" if mine else "var(--text)"
+        row_class = "chat-row mine" if mine else "chat-row theirs"
+        bubble_class = "chat-bubble mine" if mine else "chat-bubble theirs"
         label = "أنت" if mine else other["name"]
-        small_color = "#dbeafe" if mine else "var(--muted)"
         read_state = ""
         if mine:
             is_read = int(m["is_read"] or 0)
             state_text = "مقروءة" if is_read else "مرسلة"
             state_icon = "✓✓" if is_read else "✓"
-            read_state = f'<span style="margin-inline-start:8px;opacity:.96;font-size:11px;">{state_icon} {state_text}</span>'
+            read_state = f'<span class="msg-read-state">{state_icon} {state_text}</span>'
         chat_html += f"""
-        <div style="display:flex;{align}margin:10px 0;">
-            <div style="max-width:78%;background:{bg};color:{color};padding:12px 14px;border-radius:18px;border:1px solid rgba(96,165,250,.18);">
-                <div style="font-size:12px;opacity:.85;margin-bottom:5px;">{label}</div>
-                <div style="white-space:pre-wrap;word-break:break-word;">{m["msg"]}</div>
-                <div class="small" style="margin-top:6px;color:{small_color};display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
-                    <span>{format_chat_datetime(m["created_at"] or "")}</span>{read_state}
+        <div class="{row_class}">
+            <div class="{bubble_class}">
+                <div class="msg-label">{label}</div>
+                <div class="msg-text">{m["msg"]}</div>
+                <div class="msg-meta">
+                    <span>{format_chat_datetime(m["created_at"] or "")}</span>
+                    {read_state}
                 </div>
             </div>
         </div>
@@ -2098,8 +2145,8 @@ def worker_card(worker):
         work_images_html = f'<div class="work-grid">{"".join(blocks)}</div>'
 
     phone_html = f'<div class="info-chip"><strong>الهاتف</strong><div>{worker["phone"]}</div></div>' if worker["show_phone"] else ""
-    wa_html = f'<a class="link-btn" target="_blank" href="{build_whatsapp_link(worker["phone"])}">واتساب</a>' if worker["show_whatsapp"] else ""
-    map_html = f'<a class="link-btn map-link-btn" target="_blank" href="{worker_map_link(worker)}">الخريطة</a>'
+    wa_html = ""
+    map_html = ""
     avg_rating, rating_count = get_worker_rating_summary(worker["id"])
     stars = render_stars(avg_rating)
     verified_badge = trusted_badge_html(worker)
@@ -2142,19 +2189,24 @@ def worker_card(worker):
     """
 
 
-
-
 @app.route("/workers")
 def workers():
     auto_login_from_cookie()
 
     if "user" in session:
-        user_buttons = '''
-        <a href="/profile"><button>ملفي الشخصي</button></a>
-        <a href="/inbox"><button>الرسائل</button></a>
-        
-        <a href="/logout"><button>تسجيل الخروج</button></a>
-        '''
+        if session.get("role") == "visitor":
+            user_buttons = '''
+            <a href="/visitor/account"><button>حسابي</button></a>
+            <a href="/inbox"><button>الرسائل</button></a>
+            <a href="/favorites"><button>المفضلة ❤️</button></a>
+            <a href="/logout"><button>تسجيل الخروج</button></a>
+            '''
+        else:
+            user_buttons = '''
+            <a href="/profile"><button>ملفي الشخصي</button></a>
+            <a href="/inbox"><button>الرسائل</button></a>
+            <a href="/logout"><button>تسجيل الخروج</button></a>
+            '''
     else:
         user_buttons = '''
         
@@ -2208,11 +2260,17 @@ def workers_group(group_name):
     specialties_cards = build_group_specialties_cards(group_name)
 
     if "user" in session:
-        user_buttons = '''
-        <a href="/profile"><button>ملفي الشخصي</button></a>
-        <a href="/inbox"><button>الرسائل</button></a>
-        
-        '''
+        if session.get("role") == "visitor":
+            user_buttons = '''
+            <a href="/visitor/account"><button>حسابي</button></a>
+            <a href="/inbox"><button>الرسائل</button></a>
+            <a href="/favorites"><button>المفضلة ❤️</button></a>
+            '''
+        else:
+            user_buttons = '''
+            <a href="/profile"><button>ملفي الشخصي</button></a>
+            <a href="/inbox"><button>الرسائل</button></a>
+            '''
     else:
         user_buttons = '''
         
@@ -2275,11 +2333,17 @@ def workers_specialty(specialty_name):
     cards = "".join(worker_card(row) for row in rows) if rows else '<div class="msg">لا يوجد مستخدمون مسجلون حالياً بهذا الاختصاص</div>'
 
     if "user" in session:
-        user_buttons = '''
-        <a href="/profile"><button>ملفي الشخصي</button></a>
-        <a href="/inbox"><button>الرسائل</button></a>
-        
-        '''
+        if session.get("role") == "visitor":
+            user_buttons = '''
+            <a href="/visitor/account"><button>حسابي</button></a>
+            <a href="/inbox"><button>الرسائل</button></a>
+            <a href="/favorites"><button>المفضلة ❤️</button></a>
+            '''
+        else:
+            user_buttons = '''
+            <a href="/profile"><button>ملفي الشخصي</button></a>
+            <a href="/inbox"><button>الرسائل</button></a>
+            '''
     else:
         user_buttons = '''
         
@@ -2378,8 +2442,9 @@ def worker_profile(user_id):
         ) + '</div>'
 
     phone_html = f'<div class="detail-box"><strong>الهاتف</strong>{worker["phone"]}</div>' if worker["show_phone"] else ""
-    wa_html = f'<a class="link-btn" target="_blank" href="{build_whatsapp_link(worker["phone"])}">مراسلة واتساب</a>' if worker["show_whatsapp"] else ""
-    map_html = f'<a class="link-btn map-link-btn" target="_blank" href="{worker_map_link(worker)}">فتح الموقع على الخريطة</a>'
+    wa_html = ""
+    map_html = ""
+    call_html = f'<a class="action-pill secondary" href="tel:{worker["phone"]}">📞 اتصال</a>' if worker["show_phone"] and worker["phone"] else ""
 
     comments_html = ""
     if comments:
@@ -2387,37 +2452,61 @@ def worker_profile(user_id):
         for c in comments:
             cstars = "★" * int(c["rating"] or 0) + "☆" * (5 - int(c["rating"] or 0))
             blocks.append(f"""
-            <div class="comment-card">
-                <div><strong>{c["commenter_name"]}</strong></div>
-                <div class="star">{cstars}</div>
-                <div>{c["comment"]}</div>
-                <div class="small">{c["created_at"]}</div>
+            <div class="review-card-pro">
+                <div class="review-top">
+                    <div>
+                        <div class="review-name">{c["commenter_name"]}</div>
+                        <div class="review-date">{format_chat_datetime(c["created_at"] or "")}</div>
+                    </div>
+                    <div class="rating-pill">{cstars}</div>
+                </div>
+                <div class="review-text">{c["comment"]}</div>
             </div>
             """)
         comments_html = "".join(blocks)
     else:
-        comments_html = '<div class="msg">لا توجد تعليقات بعد</div>'
+        comments_html = '<div class="empty-state">لا توجد تقييمات بعد</div>'
 
     message_button = ""
     if "user" in session and worker["allow_messages"]:
-        message_button = f'<a class="link-btn" href="/message/{worker["id"]}">إرسال رسالة</a>'
+        message_button = f'<a class="action-pill" href="/message/{worker["id"]}">✉️ مراسلة</a>'
+
+    favorite_button = ""
+    if "user" in session and session.get("role") == "visitor":
+        fav_on = is_favorite(session.get("user_id"), worker["id"])
+        fav_text = "💔 إزالة من المفضلة" if fav_on else "❤️ إضافة للمفضلة"
+        favorite_button = f'<a class="action-pill secondary" href="/toggle-favorite/{worker["id"]}?next=/worker/{worker["id"]}">{fav_text}</a>'
+
+    works_count = len(imgs)
+    city_value = worker["city"] or "-"
+    exp_value = worker["exp"] or "-"
+    message_status_value = 'مفعل' if worker['allow_messages'] else 'معطل'
+    stats_html = f"""
+        <div class="stat-mini-grid">
+            <div class="stat-mini-card"><div class="stat-mini-label">التقييم</div><div class="stat-mini-value">{avg_rating}</div></div>
+            <div class="stat-mini-card"><div class="stat-mini-label">التقييمات</div><div class="stat-mini-value">{rating_count}</div></div>
+            <div class="stat-mini-card"><div class="stat-mini-label">الأعمال</div><div class="stat-mini-value">{works_count}</div></div>
+            <div class="stat-mini-card"><div class="stat-mini-label">المشاهدات</div><div class="stat-mini-value">{worker['views'] or 0}</div></div>
+        </div>
+    """
 
     verified_badge = trusted_badge_html(worker)
     pinned_badge = pinned_badge_html(worker)
 
     comment_form = f"""
-        <div class="card">
-            <h3>إضافة تعليق وتقييم</h3><div class="section-subtitle">يمكن للمستخدم أو الزائر إضافة رأيه وتقييمه هنا.</div>
+        <div class="card review-form-pro">
+            <h3>إضافة تقييم</h3>
+            <div class="section-subtitle">اختر التقييم ثم اكتب رأيك بشكل مختصر وواضح.</div>
             <form method="post">
-                <select name="rating" required>
-                    <option value="5">5 نجوم</option>
-                    <option value="4">4 نجوم</option>
-                    <option value="3">3 نجوم</option>
-                    <option value="2">2 نجوم</option>
-                    <option value="1">1 نجمة</option>
-                </select>
+                <div class="rating-row">
+                    <label><input type="radio" name="rating" value="5" checked><span class="rate-pill">⭐⭐⭐⭐⭐</span></label>
+                    <label><input type="radio" name="rating" value="4"><span class="rate-pill">⭐⭐⭐⭐</span></label>
+                    <label><input type="radio" name="rating" value="3"><span class="rate-pill">⭐⭐⭐</span></label>
+                    <label><input type="radio" name="rating" value="2"><span class="rate-pill">⭐⭐</span></label>
+                    <label><input type="radio" name="rating" value="1"><span class="rate-pill">⭐</span></label>
+                </div>
                 <textarea name="comment" placeholder="اكتب تقييمك وتعليقك" required></textarea>
-                <button>نشر التعليق</button>
+                <button>نشر التقييم</button>
             </form>
         </div>
         """
@@ -2427,7 +2516,7 @@ def worker_profile(user_id):
         <div class="container">
             <a href="/workers"><button class="light-btn">رجوع</button></a>
 
-            <div class="worker-hero">
+            <div class="worker-hero worker-hero-pro">
                 <div class="worker-hero-grid">
                     <div class="center">{profile_html}</div>
                     <div>
@@ -2436,7 +2525,6 @@ def worker_profile(user_id):
                             <span class="badge">{worker["governorate"] or "-"}</span>
                             {verified_badge}
                             {pinned_badge}
-                            <span class="badge">👁 {worker["views"] or 0} مشاهدة</span>
                         </div>
                         <h2>{worker["name"]}</h2>
                         <div class="worker-rating-line">
@@ -2444,19 +2532,22 @@ def worker_profile(user_id):
                             <span class="badge">⭐ {avg_rating} / 5</span>
                             <span class="badge">{rating_count} تقييم</span>
                         </div>
-                        <div class="section-subtitle">صفحة شخصية تعرض المعلومات الأساسية والأعمال وطرق التواصل بشكل أوضح.</div>
-                        <div style="margin-top:10px;">{worker["bio"] or "لا توجد نبذة حالياً"}</div>
+                        <div class="section-subtitle">ملف مرتب يعرض نبذة المختص وأعماله وطرق التواصل بشكل أوضح وأسهل.</div>
+                        <div class="profile-bio-box">{worker["bio"] or "لا توجد نبذة حالياً"}</div>
+                        {stats_html}
 
                         <div class="detail-grid">
-                            <div class="detail-box"><strong>المدينة</strong>{worker["city"] or "-"}</div>
-                            <div class="detail-box"><strong>الخبرة</strong>{worker["exp"] or "-"}</div>
+                            <div class="detail-box"><strong>المدينة</strong>{city_value}</div>
+                            <div class="detail-box"><strong>الخبرة</strong>{exp_value}</div>
                             {phone_html}
-                            <div class="detail-box"><strong>استقبال الرسائل</strong>{'مفعل' if worker['allow_messages'] else 'معطل'}</div>
+                            <div class="detail-box"><strong>استقبال الرسائل</strong>{message_status_value}</div>
                         </div>
 
-                        <div class="inline" style="margin-top:12px;">
-                            {wa_html}
+                        <div class="profile-actions-bar">
                             {message_button}
+                            {favorite_button}
+                            {wa_html}
+                            {call_html}
                             {map_html}
                         </div>
                     </div>
@@ -2464,13 +2555,19 @@ def worker_profile(user_id):
             </div>
 
             <div class="card">
-                <h3>أعمالي</h3>
-                <div class="section-subtitle">معرض مرتب لأعمال العامل داخل الملف الشخصي.</div>
+                <div class="gallery-head">
+                    <h3>معرض الأعمال</h3>
+                    <span class="badge">{works_count} صورة</span>
+                </div>
+                <div class="section-subtitle">صور الأعمال المعروضة داخل الملف الشخصي.</div>
                 {work_images_html if work_images_html else '<div class="empty-state">لا توجد أعمال حتى الآن</div>'}
             </div>
 
             <div class="card">
-                <h3>التقييمات والتعليقات</h3>
+                <div class="reviews-head">
+                    <h3>التقييمات</h3>
+                    <span class="badge">{rating_count} تقييم</span>
+                </div>
                 {comments_html}
             </div>
             {comment_form}
@@ -2480,6 +2577,89 @@ def worker_profile(user_id):
     )
 
 
+@app.route("/favorites")
+def favorites_page():
+    if "user" not in session:
+        return redirect(url_for("visitor_login"))
+    if session.get("role") != "visitor":
+        return redirect(url_for("workers"))
+
+    current_user = get_current_session_user()
+    if not current_user:
+        session.clear()
+        return redirect(url_for("visitor_login"))
+
+    with get_db() as con:
+        rows = con.execute(
+            """
+            SELECT u.*, f.created_at AS favorited_at
+            FROM favorites f
+            JOIN users u ON u.id = f.worker_id
+            WHERE f.visitor_id=?
+              AND COALESCE(u.is_blocked,0)=0
+              AND COALESCE(u.hidden_by_admin,0)=0
+            ORDER BY f.id DESC
+            """,
+            (current_user["id"],)
+        ).fetchall()
+
+    cards = "".join(worker_card(row) for row in rows) if rows else '<div class="empty-state">ماكو مختصين محفوظين بالمفضلة بعد</div>'
+    total = len(rows)
+
+    return render_template_string(
+        STYLE + (settings_corner() if 'user' in session else '') + f"""
+        <div class="container">
+            <a href="/workers"><button class="light-btn">رجوع</button></a>
+            <h2>المفضلة ❤️</h2>
+            <div class="section-subtitle">هنا تظهر كل المختصين اللي حفظتهم حتى ترجع لهم بسرعة.</div>
+            <div class="inline" style="margin-bottom:14px;">
+                <span class="badge">عدد المحفوظين: {total}</span>
+            </div>
+            {cards}
+        </div>
+        </body></html>
+        """
+    )
+
+
+@app.route("/toggle-favorite/<int:worker_id>")
+def toggle_favorite(worker_id):
+    if "user" not in session:
+        return redirect(url_for("visitor_login"))
+    if session.get("role") != "visitor":
+        return redirect(url_for("worker_profile", user_id=worker_id))
+
+    current_user = get_current_session_user()
+    if not current_user:
+        session.clear()
+        return redirect(url_for("visitor_login"))
+
+    with get_db() as con:
+        worker = con.execute("SELECT * FROM users WHERE id=?", (worker_id,)).fetchone()
+        if not worker or worker["role"] != "worker":
+            return redirect(url_for("workers"))
+
+        row = con.execute(
+            "SELECT id FROM favorites WHERE visitor_id=? AND worker_id=?",
+            (current_user["id"], worker_id)
+        ).fetchone()
+
+        if row:
+            con.execute(
+                "DELETE FROM favorites WHERE visitor_id=? AND worker_id=?",
+                (current_user["id"], worker_id)
+            )
+        else:
+            con.execute(
+                "INSERT OR IGNORE INTO favorites (visitor_id, worker_id) VALUES (?, ?)",
+                (current_user["id"], worker_id)
+            )
+        con.commit()
+
+    next_url = request.args.get("next", "").strip()
+    if next_url.startswith("/"):
+        return redirect(next_url)
+    return redirect(url_for("worker_profile", user_id=worker_id))
 
 
 @app.route("/message/<int:user_id>", methods=["GET", "POST"])
@@ -2655,41 +2835,82 @@ def conversation_view(conversation_id):
 
     return render_template_string(
         STYLE + (settings_corner() if 'user' in session else '') + f"""
-        <div class="container narrow-container">
-            <a href="/inbox"><button class="light-btn">رجوع للرسائل</button></a>
+        <style>
+        .conversation-shell{{max-width:860px;margin:0 auto;}}
+        .chat-screen{{background:linear-gradient(180deg, rgba(255,255,255,.03) 0%, rgba(255,255,255,.02) 100%);border:1px solid rgba(96,165,250,.20);border-radius:26px;box-shadow:0 18px 45px rgba(2,6,23,.22);overflow:hidden;}}
+        .chat-topbar{{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;background:linear-gradient(180deg, rgba(37,99,235,.22), rgba(37,99,235,.10));border-bottom:1px solid rgba(96,165,250,.18);}}
+        .chat-topbar-right{{display:flex;align-items:center;gap:12px;min-width:0;}}
+        .chat-user-meta{{min-width:0;}}
+        .chat-user-meta h3{{margin:0 0 4px 0;font-size:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
+        .chat-user-sub{{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
+        .chat-header-actions{{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;}}
+        .chat-status-chip{{padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.10);font-size:12px;color:var(--muted);}}
+        .chat-body{{padding:16px;background:
+            radial-gradient(circle at top right, rgba(59,130,246,.10), transparent 30%),
+            radial-gradient(circle at bottom left, rgba(99,102,241,.08), transparent 26%),
+            rgba(15,23,42,.18);}}
+        .chat-messages{{padding:8px 6px;max-height:480px;overflow:auto;scroll-behavior:smooth;}}
+        .chat-row{{display:flex;margin:10px 0;}}
+        .chat-row.mine{{justify-content:flex-end;}}
+        .chat-row.theirs{{justify-content:flex-start;}}
+        .chat-bubble{{max-width:min(78%, 560px);padding:12px 14px;border-radius:22px;border:1px solid rgba(148,163,184,.14);backdrop-filter:blur(6px);}}
+        .chat-bubble.mine{{background:linear-gradient(180deg,#2563eb 0%, #1d4ed8 100%);color:#fff;border-bottom-left-radius:22px;border-bottom-right-radius:8px;box-shadow:0 10px 24px rgba(37,99,235,.24);}}
+        .chat-bubble.theirs{{background:rgba(255,255,255,.08);color:var(--text);border-bottom-left-radius:8px;border-bottom-right-radius:22px;}}
+        .msg-label{{font-size:12px;opacity:.84;margin-bottom:5px;}}
+        .msg-text{{white-space:pre-wrap;word-break:break-word;line-height:1.7;font-size:15px;}}
+        .msg-meta{{margin-top:7px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11px;opacity:.92;}}
+        .msg-read-state{{opacity:.98;}}
+        .chat-compose{{padding:14px 16px 16px 16px;background:rgba(2,6,23,.18);border-top:1px solid rgba(96,165,250,.14);}}
+        .chat-compose form{{margin:0;display:flex;align-items:flex-end;gap:10px;}}
+        .chat-compose textarea{{margin:0;min-height:54px;max-height:140px;border-radius:18px;padding:14px 16px;resize:vertical;background:rgba(255,255,255,.08);}}
+        .chat-send-btn{{min-width:56px;height:54px;border-radius:18px;padding:0 16px;font-size:22px;display:flex;align-items:center;justify-content:center;box-shadow:0 12px 24px rgba(37,99,235,.22);}}
+        .chat-empty-note{{padding:0 0 10px 0;font-size:12px;color:var(--muted);}}
+        @media (max-width: 640px){{
+            .conversation-shell{{max-width:100%;}}
+            .chat-topbar{{padding:12px;}}
+            .chat-user-meta h3{{font-size:18px;}}
+            .chat-header-actions{{gap:6px;}}
+            .chat-bubble{{max-width:88%;}}
+            .chat-compose form{{gap:8px;}}
+            .chat-send-btn{{min-width:50px;height:50px;border-radius:16px;font-size:20px;}}
+        }}
+        </style>
+        <div class="container narrow-container conversation-shell">
+            <div style="margin-bottom:12px;"><a href="/inbox"><button class="light-btn">رجوع للرسائل</button></a></div>
 
-            <div class="card" style="margin-bottom:14px;">
-                <div class="settings-profile-wrap">
-                    <div>{header_profile}</div>
-                    <div class="settings-profile-info">
-                        <h3 style="margin-bottom:4px;">{other["name"]}</h3>
-                        <div class="small">{other["email"] or ""}</div>
-                        <div class="inline" style="margin-top:8px;">
-                            <span class="badge">{header_badge}</span>
-                            {"<a class='link-btn' href='/worker/%d'>فتح الملف</a>" % other["id"] if other["role"] == "worker" else ""}
+            <div class="chat-screen">
+                <div class="chat-topbar">
+                    <div class="chat-topbar-right">
+                        <div>{header_profile}</div>
+                        <div class="chat-user-meta">
+                            <h3>{other["name"]}</h3>
+                            <div class="chat-user-sub">{other["email"] or header_badge}</div>
                         </div>
                     </div>
+                    <div class="chat-header-actions">
+                        <span class="chat-status-chip">{header_badge}</span>
+                        {"<a class='link-btn' href='/worker/%d'>الملف</a>" % other["id"] if other["role"] == "worker" else ""}
+                    </div>
+                </div>
+
+                <div class="chat-body">
+                    <div class="chat-empty-note">✓ مرسلة &nbsp;&nbsp; ✓✓ مقروءة</div>
+                    <div id="chat-box" class="chat-messages">{chat_html}</div>
+                </div>
+
+                <div class="chat-compose">
+                    <form method="post" id="chat-form">
+                        <textarea id="msg-input" name="msg" placeholder="اكتب رسالتك هنا" required></textarea>
+                        <button class="chat-send-btn" aria-label="إرسال">📨</button>
+                    </form>
                 </div>
             </div>
-
-            <div class="inline" style="margin:8px 0 10px 0;gap:8px;">
-                <span class="badge">✓ مرسلة</span>
-                <span class="badge">✓✓ مقروءة</span>
-            </div>
-
-            <div id="chat-box" class="card" style="padding:14px;max-height:420px;overflow:auto;">
-                {chat_html}
-            </div>
-
-            <form method="post" style="margin-top:14px;">
-                <textarea id="msg-input" name="msg" placeholder="اكتب رسالتك هنا" required></textarea>
-                <button>إرسال</button>
-            </form>
         </div>
         <script>
         (function() {{
             const chatBox = document.getElementById('chat-box');
             const msgInput = document.getElementById('msg-input');
+            const chatForm = document.getElementById('chat-form');
             let lastHtml = chatBox ? chatBox.innerHTML : '';
 
             function nearBottom() {{
@@ -2718,6 +2939,16 @@ def conversation_view(conversation_id):
                         scrollToBottom(shouldStickBottom);
                     }}
                 }} catch (e) {{}}
+            }}
+
+            if (msgInput && chatForm) {{
+                msgInput.addEventListener('keydown', function(e) {{
+                    if (e.key === 'Enter' && !e.shiftKey) {{
+                        e.preventDefault();
+                        if (msgInput.value.trim()) chatForm.submit();
+                    }}
+                }});
+                setTimeout(() => msgInput.focus(), 180);
             }}
 
             scrollToBottom(true);
@@ -3278,7 +3509,7 @@ def admin_panel():
                     <a href="/admin/messages"><button class="light-btn">كل الرسائل</button></a>
                     <a href="/admin/comments"><button class="light-btn">كل التعليقات</button></a>
                     <a href="/admin/support"><button class="light-btn">الدعم الفني</button></a>
-                    <a href="/workers-map"><button class="light-btn">الخريطة</button></a>
+                    
                     <a href="/admin/logout"><button>خروج الأدمن</button></a>
                 </div>
                 <span class="badge">لوحة تحكم الأدمن</span>
@@ -3336,7 +3567,6 @@ def admin_panel():
     )
 
 
-
 @app.route("/admin/verify-worker/<int:user_id>")
 def admin_verify_worker(user_id):
     if not admin_required():
@@ -3389,98 +3619,6 @@ def admin_unpin_worker(user_id):
     return redirect(url_for("admin_panel"))
 
 
-@app.route("/workers-map")
-def workers_map():
-    with get_db() as con:
-        workers = con.execute("""
-            SELECT * FROM users
-            WHERE is_verified=1 AND (role='worker' OR role IS NULL)
-            ORDER BY is_pinned DESC, views DESC, id DESC
-        """).fetchall()
-
-    markers = []
-    list_html = ""
-    for w in workers:
-        avg_rating, rating_count = get_worker_rating_summary(w["id"])
-        lat, lng = governorate_coords(w["governorate"])
-        popup = f"""
-        <div style='min-width:190px;text-align:right;direction:rtl;line-height:1.7'>
-            <div style='font-weight:700;font-size:15px;color:#0f172a'>⭐ {avg_rating} / 5</div>
-            <div style='font-weight:800;font-size:16px;margin-top:2px;color:#111827'>{w["name"]}</div>
-            <div style='font-size:13px;color:#334155'>{w["section"] or "-"}</div>
-            <div style='font-size:13px;color:#475569'>📍 {w["city"] or "-"} - {w["governorate"] or "-"}</div>
-        </div>
-        """
-        markers.append({
-            "lat": lat,
-            "lng": lng,
-            "popup": popup,
-            "link": f"/worker/{w['id']}"
-        })
-        list_html += f"""
-        <div class="card" style="margin-bottom:10px;">
-            <div class="inline" style="margin-bottom:8px;">
-                <span class="worker-specialty-badge">{get_specialty_icon(w["section"])} {w["section"] or "-"}</span>
-                <span class="badge">{w["governorate"] or "-"}</span>
-                {trusted_badge_html(w)}
-                {pinned_badge_html(w)}
-            </div>
-            <div class="worker-rating-line" style="margin-bottom:8px;">
-                <span class="badge">⭐ {avg_rating} / 5</span>
-                <span class="rating-stars">{render_stars(avg_rating)}</span>
-                <span class="badge">👁 {w["views"] or 0}</span>
-            </div>
-            <h3>{w["name"]}</h3>
-            <div class="small">📍 {w["city"] or "-"} - {w["governorate"] or "-"}</div>
-            <div class="inline" style="margin-top:10px;">
-                <a class="link-btn" href="/worker/{w['id']}">فتح الملف</a>
-                <a class="link-btn map-link-btn" target="_blank" href="{worker_map_link(w)}">خرائط Google</a>
-            </div>
-        </div>
-        """
-
-    markers_json = json.dumps(markers, ensure_ascii=False)
-
-    return render_template_string(
-        STYLE + f"""
-        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-        <div class="container">
-            <div class="topbar">
-                <div><a href="/workers"><button class="light-btn">رجوع للعمال</button></a></div>
-                <div class="inline"><span class="badge">خريطة العمال</span></div>
-            </div>
-            <div class="hero-panel" style="margin-bottom:16px;">
-                <h2>خريطة العمال</h2>
-                <div class="section-subtitle">عرض تقريبي لمواقع العمال حسب المحافظة ليسهل الوصول السريع لهم.</div>
-            </div>
-
-            <div class="map-page-grid">
-                <div id="workersMap"></div>
-                <div class="map-list-card">{list_html if list_html else '<div class="msg">لا يوجد عمال لعرضهم على الخريطة</div>'}</div>
-            </div>
-        </div>
-        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-        <script>
-        const markers = {markers_json};
-        const map = L.map('workersMap').setView([33.3152, 44.3661], 6);
-        L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
-            maxZoom: 18,
-            attribution: '&copy; OpenStreetMap'
-        }}).addTo(map);
-
-        markers.forEach(function(item) {{
-            const marker = L.marker([item.lat, item.lng]).addTo(map);
-            marker.bindPopup(item.popup + '<div style="margin-top:8px"><a href="' + item.link + '">فتح الملف</a></div>');
-        }});
-        </script>
-        </body></html>
-        """
-    )
-
-
-
-
-
 @app.route("/admin/block-user/<int:user_id>")
 def admin_block_user(user_id):
     if not admin_required():
@@ -3531,7 +3669,6 @@ def admin_unhide_user(user_id):
             con.commit()
             log_admin_action("إظهار ملف", user["name"], f"تم إظهار ملف المستخدم رقم {user_id}")
     return redirect(url_for("admin_panel"))
-
 
 
 @app.route("/admin/messages")
@@ -3734,8 +3871,6 @@ def admin_delete_user(user_id):
     return redirect(url_for("admin_panel"))
 
 
-
-
 @app.route("/admin/settings", methods=["GET", "POST"])
 def admin_settings_page():
     if not admin_required():
@@ -3860,7 +3995,6 @@ def delete_account():
     return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + """<div class="container"><a href="/settings"><button>رجوع</button></a><h2>حذف الحساب</h2><div class="msg">هذه العملية نهائية. اكتب كلمة المرور الحالية، ثم اكتب العبارة: احذف حسابي</div><form method="post"><input type="password" name="password" placeholder="كلمة المرور الحالية" required><input name="confirm_text" placeholder="اكتب هنا: احذف حسابي" required><button style="background:red;color:white;">تأكيد حذف الحساب</button></form></div></body></html>""")
 
 
-
 @app.route("/profile")
 def profile():
     if "user" not in session:
@@ -3950,6 +4084,7 @@ def settings():
             <a href="/visitor/account"><button>حساب الزائر</button></a>
             <a href="/visitor/edit-profile"><button class="light-btn">تعديل الحساب</button></a>
             <a href="/inbox"><button class="light-btn">الرسائل</button></a>
+            <a href="/favorites"><button class="light-btn">المفضلة ❤️</button></a>
             <a href="/support"><button class="light-btn">الدعم الفني</button></a>
             <a href="/workers"><button class="light-btn">تصفح الاختصاصات</button></a>
             <a href="/change-password"><button class="light-btn">تغيير كلمة المرور</button></a>
@@ -4172,7 +4307,6 @@ def edit_profile():
         </body></html>
         """
     )
-
 
 
 @app.route("/passkey/setup")
