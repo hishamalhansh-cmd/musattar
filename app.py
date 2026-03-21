@@ -1,6 +1,14 @@
 import os
 import re
 import sqlite3
+
+try:
+    import psycopg2
+    import psycopg2.extras
+    PSYCOPG2_AVAILABLE = True
+except Exception:
+    psycopg2 = None
+    PSYCOPG2_AVAILABLE = False
 import random
 import smtplib
 import uuid
@@ -16,6 +24,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
+# For PostgreSQL on Render free plan, install psycopg2-binary in requirements.txt
 
 try:
     from webauthn import (
@@ -41,7 +50,6 @@ except Exception:
 app = Flask(__name__)
 from datetime import timedelta
 app.permanent_session_lifetime = timedelta(days=30)
-app.secret_key = os.environ.get("SECRET_KEY", "adam_secret_key_2026")
 
 
 def env_flag(name, default=False):
@@ -86,17 +94,33 @@ CONTACT_PHONE = "+9647864145165"
 CONTACT_EMAIL = "hishamalhansh@gmail.com"
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-DB_PATH = os.path.join(BASE_DIR, "database.db")
-UPLOAD_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
+APP_DATA_DIR = os.environ.get("APP_DATA_DIR", "").strip() or os.environ.get("RENDER_DISK_PATH", "").strip()
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+DB_PATH = os.path.join(APP_DATA_DIR or BASE_DIR, "database.db")
+UPLOAD_FOLDER = os.environ.get("UPLOAD_FOLDER", "").strip() or os.path.join(APP_DATA_DIR or BASE_DIR, "static", "uploads")
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+
+APP_ENV = os.environ.get("APP_ENV", os.environ.get("FLASK_ENV", "production")).strip().lower()
+USING_POSTGRES = bool(DATABASE_URL and PSYCOPG2_AVAILABLE)
 
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = APP_ENV == "production"
 app.config["MAX_CONTENT_LENGTH"] = None  # unlimited upload size
 app.config["PERMANENT_SESSION_LIFETIME"] = 60 * 30
 
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
+DEFAULT_SECRET_KEY = "adam_secret_key_2026"
+app.secret_key = os.environ.get("SECRET_KEY", DEFAULT_SECRET_KEY)
+if APP_ENV == "production" and app.secret_key == DEFAULT_SECRET_KEY:
+    raise RuntimeError("SECRET_KEY must be set in production environment")
+
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+DB_INTEGRITY_ERRORS = (sqlite3.IntegrityError,)
+DB_OPERATIONAL_ERRORS = (sqlite3.OperationalError,)
+if PSYCOPG2_AVAILABLE:
+    DB_INTEGRITY_ERRORS = DB_INTEGRITY_ERRORS + (psycopg2.IntegrityError,)
+    DB_OPERATIONAL_ERRORS = DB_OPERATIONAL_ERRORS + (psycopg2.OperationalError,)
 
 ALLOWED_EXTENSIONS = None
 MAX_SINGLE_FILE_SIZE = 3 * 1024 * 1024
@@ -579,7 +603,7 @@ def insert_user_record(con, values_dict):
             payload["name"], payload["phone"], payload["email"], payload["password"], payload["role"], payload["birthdate"],
             payload["section"], payload["governorate"], payload["city"], payload["exp"], payload["bio"], payload["profile_pic"], payload["work_images"]
         ))
-    except sqlite3.OperationalError:
+    except DB_OPERATIONAL_ERRORS:
         con.execute("""
         INSERT INTO users
         (name, phone, email, password, role, birthdate, section, governorate, city, exp, bio, profile_pic, work_images)
@@ -615,13 +639,92 @@ def view_image(filename):
     )
 
 
+class PostgresCursorWrapper:
+    def __init__(self, cursor):
+        self.cursor = cursor
+
+    def execute(self, sql, params=None):
+        self.cursor.execute(convert_sql_for_backend(sql), params or ())
+        return self
+
+    def fetchone(self):
+        row = self.cursor.fetchone()
+        return dict(row) if row is not None else None
+
+    def fetchall(self):
+        return [dict(row) for row in self.cursor.fetchall()]
+
+
+class PostgresConnectionWrapper:
+    def __init__(self, dsn):
+        self.connection = psycopg2.connect(dsn, cursor_factory=psycopg2.extras.RealDictCursor)
+
+    def cursor(self):
+        return PostgresCursorWrapper(self.connection.cursor())
+
+    def execute(self, sql, params=None):
+        cur = self.cursor()
+        cur.execute(sql, params or ())
+        return cur
+
+    def commit(self):
+        self.connection.commit()
+
+    def rollback(self):
+        self.connection.rollback()
+
+    def close(self):
+        self.connection.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type:
+            try:
+                self.rollback()
+            finally:
+                self.close()
+        else:
+            try:
+                self.commit()
+            finally:
+                self.close()
+
+
+def convert_sql_for_backend(sql):
+    sql_text = sql
+    if USING_POSTGRES:
+        sql_text = sql_text.replace("INSERT OR IGNORE INTO", "INSERT INTO")
+        sql_text = sql_text.replace("?", "%s")
+        if "INSERT INTO favorites" in sql_text and "ON CONFLICT" not in sql_text:
+            sql_text = sql_text.strip().rstrip(";") + " ON CONFLICT (visitor_id, worker_id) DO NOTHING"
+    return sql_text
+
+
 def get_db():
+    if USING_POSTGRES:
+        return PostgresConnectionWrapper(DATABASE_URL)
+
     con = sqlite3.connect(DB_PATH, timeout=10)
     con.row_factory = sqlite3.Row
+    try:
+        con.execute("PRAGMA journal_mode=WAL")
+        con.execute("PRAGMA foreign_keys=ON")
+        con.execute("PRAGMA synchronous=NORMAL")
+    except Exception:
+        pass
     return con
 
 
 def table_columns(cur, table_name):
+    if USING_POSTGRES:
+        cur.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=%s ORDER BY ordinal_position",
+            (table_name,)
+        )
+        return [row["column_name"] for row in cur.fetchall()]
+
     cur.execute(f"PRAGMA table_info({table_name})")
     return [col[1] for col in cur.fetchall()]
 
@@ -630,187 +733,349 @@ def column_exists(cur, table_name, column_name):
     return column_name in table_columns(cur, table_name)
 
 
+def init_db_sqlite(cur):
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS users(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        phone TEXT UNIQUE,
+        email TEXT UNIQUE,
+        password TEXT,
+        role TEXT,
+        birthdate TEXT,
+        section TEXT,
+        city TEXT,
+        exp TEXT,
+        bio TEXT
+    )
+    """)
+
+    if not column_exists(cur, "users", "is_verified"):
+        cur.execute("ALTER TABLE users ADD COLUMN is_verified INTEGER DEFAULT 0")
+
+    if not column_exists(cur, "users", "birthdate"):
+        cur.execute("ALTER TABLE users ADD COLUMN birthdate TEXT DEFAULT ''")
+
+    if not column_exists(cur, "users", "profile_pic"):
+        cur.execute("ALTER TABLE users ADD COLUMN profile_pic TEXT DEFAULT ''")
+
+    if not column_exists(cur, "users", "work_images"):
+        cur.execute("ALTER TABLE users ADD COLUMN work_images TEXT DEFAULT ''")
+
+    if not column_exists(cur, "users", "governorate"):
+        cur.execute("ALTER TABLE users ADD COLUMN governorate TEXT DEFAULT ''")
+
+    if not column_exists(cur, "users", "show_phone"):
+        cur.execute("ALTER TABLE users ADD COLUMN show_phone INTEGER DEFAULT 1")
+
+    if not column_exists(cur, "users", "show_whatsapp"):
+        cur.execute("ALTER TABLE users ADD COLUMN show_whatsapp INTEGER DEFAULT 1")
+
+    if not column_exists(cur, "users", "allow_messages"):
+        cur.execute("ALTER TABLE users ADD COLUMN allow_messages INTEGER DEFAULT 1")
+
+    if not column_exists(cur, "users", "views"):
+        cur.execute("ALTER TABLE users ADD COLUMN views INTEGER DEFAULT 0")
+
+    if not column_exists(cur, "users", "verified_worker"):
+        cur.execute("ALTER TABLE users ADD COLUMN verified_worker INTEGER DEFAULT 0")
+
+    if not column_exists(cur, "users", "is_pinned"):
+        cur.execute("ALTER TABLE users ADD COLUMN is_pinned INTEGER DEFAULT 0")
+
+    if not column_exists(cur, "users", "is_blocked"):
+        cur.execute("ALTER TABLE users ADD COLUMN is_blocked INTEGER DEFAULT 0")
+
+    if not column_exists(cur, "users", "hidden_by_admin"):
+        cur.execute("ALTER TABLE users ADD COLUMN hidden_by_admin INTEGER DEFAULT 0")
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS user_passkeys(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        credential_id TEXT UNIQUE,
+        public_key TEXT,
+        sign_count INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS conversations(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        visitor_id INTEGER NOT NULL,
+        worker_id INTEGER NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_message_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(visitor_id, worker_id)
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS messages(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id INTEGER,
+        sender_id INTEGER,
+        receiver_id INTEGER,
+        sender_role TEXT,
+        receiver_role TEXT,
+        sender_name TEXT,
+        receiver_name TEXT,
+        msg TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    if not column_exists(cur, "messages", "conversation_id"):
+        cur.execute("ALTER TABLE messages ADD COLUMN conversation_id INTEGER")
+
+    if not column_exists(cur, "messages", "sender_id"):
+        cur.execute("ALTER TABLE messages ADD COLUMN sender_id INTEGER")
+
+    if not column_exists(cur, "messages", "receiver_id"):
+        cur.execute("ALTER TABLE messages ADD COLUMN receiver_id INTEGER")
+
+    if not column_exists(cur, "messages", "sender_role"):
+        cur.execute("ALTER TABLE messages ADD COLUMN sender_role TEXT DEFAULT ''")
+
+    if not column_exists(cur, "messages", "receiver_role"):
+        cur.execute("ALTER TABLE messages ADD COLUMN receiver_role TEXT DEFAULT ''")
+
+    if not column_exists(cur, "messages", "is_read"):
+        cur.execute("ALTER TABLE messages ADD COLUMN is_read INTEGER DEFAULT 0")
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS admin_settings(
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        username TEXT NOT NULL,
+        password TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS admin_logs(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        admin_username TEXT,
+        action TEXT,
+        target_name TEXT,
+        details TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS comments(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        commenter_name TEXT,
+        rating INTEGER,
+        comment TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS favorites(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        visitor_id INTEGER NOT NULL,
+        worker_id INTEGER NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(visitor_id, worker_id)
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS support_messages(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        sender_type TEXT,
+        message TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        is_read_admin INTEGER DEFAULT 0,
+        is_read_user INTEGER DEFAULT 0
+    )
+    """)
+
+    if not column_exists(cur, "support_messages", "user_id"):
+        cur.execute("ALTER TABLE support_messages ADD COLUMN user_id INTEGER DEFAULT 0")
+
+    if not column_exists(cur, "support_messages", "sender_type"):
+        cur.execute("ALTER TABLE support_messages ADD COLUMN sender_type TEXT DEFAULT 'user'")
+
+    if not column_exists(cur, "support_messages", "message"):
+        cur.execute("ALTER TABLE support_messages ADD COLUMN message TEXT DEFAULT ''")
+
+    if not column_exists(cur, "support_messages", "is_read_admin"):
+        cur.execute("ALTER TABLE support_messages ADD COLUMN is_read_admin INTEGER DEFAULT 0")
+
+    if not column_exists(cur, "support_messages", "is_read_user"):
+        cur.execute("ALTER TABLE support_messages ADD COLUMN is_read_user INTEGER DEFAULT 0")
+
+
+def init_db_postgres(cur):
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS users(
+        id BIGSERIAL PRIMARY KEY,
+        name TEXT,
+        phone TEXT UNIQUE,
+        email TEXT UNIQUE,
+        password TEXT,
+        role TEXT,
+        birthdate TEXT DEFAULT '',
+        section TEXT DEFAULT '',
+        city TEXT DEFAULT '',
+        exp TEXT DEFAULT '',
+        bio TEXT DEFAULT '',
+        is_verified INTEGER DEFAULT 0,
+        profile_pic TEXT DEFAULT '',
+        work_images TEXT DEFAULT '',
+        governorate TEXT DEFAULT '',
+        show_phone INTEGER DEFAULT 1,
+        show_whatsapp INTEGER DEFAULT 1,
+        allow_messages INTEGER DEFAULT 1,
+        views INTEGER DEFAULT 0,
+        verified_worker INTEGER DEFAULT 0,
+        is_pinned INTEGER DEFAULT 0,
+        is_blocked INTEGER DEFAULT 0,
+        hidden_by_admin INTEGER DEFAULT 0
+    )
+    """)
+
+    for alter_sql in [
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified INTEGER DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS birthdate TEXT DEFAULT ''",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_pic TEXT DEFAULT ''",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS work_images TEXT DEFAULT ''",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS governorate TEXT DEFAULT ''",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS show_phone INTEGER DEFAULT 1",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS show_whatsapp INTEGER DEFAULT 1",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS allow_messages INTEGER DEFAULT 1",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS views INTEGER DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS verified_worker INTEGER DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_pinned INTEGER DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_blocked INTEGER DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS hidden_by_admin INTEGER DEFAULT 0"
+    ]:
+        cur.execute(alter_sql)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS user_passkeys(
+        id BIGSERIAL PRIMARY KEY,
+        user_id BIGINT NOT NULL,
+        credential_id TEXT UNIQUE,
+        public_key TEXT,
+        sign_count INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS conversations(
+        id BIGSERIAL PRIMARY KEY,
+        visitor_id BIGINT NOT NULL,
+        worker_id BIGINT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_message_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(visitor_id, worker_id)
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS messages(
+        id BIGSERIAL PRIMARY KEY,
+        conversation_id BIGINT,
+        sender_id BIGINT,
+        receiver_id BIGINT,
+        sender_role TEXT DEFAULT '',
+        receiver_role TEXT DEFAULT '',
+        sender_name TEXT,
+        receiver_name TEXT,
+        msg TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        is_read INTEGER DEFAULT 0
+    )
+    """)
+
+    for alter_sql in [
+        "ALTER TABLE messages ADD COLUMN IF NOT EXISTS conversation_id BIGINT",
+        "ALTER TABLE messages ADD COLUMN IF NOT EXISTS sender_id BIGINT",
+        "ALTER TABLE messages ADD COLUMN IF NOT EXISTS receiver_id BIGINT",
+        "ALTER TABLE messages ADD COLUMN IF NOT EXISTS sender_role TEXT DEFAULT ''",
+        "ALTER TABLE messages ADD COLUMN IF NOT EXISTS receiver_role TEXT DEFAULT ''",
+        "ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_read INTEGER DEFAULT 0"
+    ]:
+        cur.execute(alter_sql)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS admin_settings(
+        id INTEGER PRIMARY KEY,
+        username TEXT NOT NULL,
+        password TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS admin_logs(
+        id BIGSERIAL PRIMARY KEY,
+        admin_username TEXT,
+        action TEXT,
+        target_name TEXT,
+        details TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS comments(
+        id BIGSERIAL PRIMARY KEY,
+        user_id BIGINT,
+        commenter_name TEXT,
+        rating INTEGER,
+        comment TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS favorites(
+        id BIGSERIAL PRIMARY KEY,
+        visitor_id BIGINT NOT NULL,
+        worker_id BIGINT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(visitor_id, worker_id)
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS support_messages(
+        id BIGSERIAL PRIMARY KEY,
+        user_id BIGINT,
+        sender_type TEXT DEFAULT 'user',
+        message TEXT DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        is_read_admin INTEGER DEFAULT 0,
+        is_read_user INTEGER DEFAULT 0
+    )
+    """)
+
+    for alter_sql in [
+        "ALTER TABLE support_messages ADD COLUMN IF NOT EXISTS user_id BIGINT",
+        "ALTER TABLE support_messages ADD COLUMN IF NOT EXISTS sender_type TEXT DEFAULT 'user'",
+        "ALTER TABLE support_messages ADD COLUMN IF NOT EXISTS message TEXT DEFAULT ''",
+        "ALTER TABLE support_messages ADD COLUMN IF NOT EXISTS is_read_admin INTEGER DEFAULT 0",
+        "ALTER TABLE support_messages ADD COLUMN IF NOT EXISTS is_read_user INTEGER DEFAULT 0"
+    ]:
+        cur.execute(alter_sql)
+
+
 def init_db():
     with get_db() as con:
         cur = con.cursor()
 
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS users(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT,
-            phone TEXT UNIQUE,
-            email TEXT UNIQUE,
-            password TEXT,
-            role TEXT,
-            birthdate TEXT,
-            section TEXT,
-            city TEXT,
-            exp TEXT,
-            bio TEXT
-        )
-        """)
-
-        if not column_exists(cur, "users", "is_verified"):
-            cur.execute("ALTER TABLE users ADD COLUMN is_verified INTEGER DEFAULT 0")
-
-        if not column_exists(cur, "users", "birthdate"):
-            cur.execute("ALTER TABLE users ADD COLUMN birthdate TEXT DEFAULT ''")
-
-        if not column_exists(cur, "users", "profile_pic"):
-            cur.execute("ALTER TABLE users ADD COLUMN profile_pic TEXT DEFAULT ''")
-
-        if not column_exists(cur, "users", "work_images"):
-            cur.execute("ALTER TABLE users ADD COLUMN work_images TEXT DEFAULT ''")
-
-        if not column_exists(cur, "users", "governorate"):
-            cur.execute("ALTER TABLE users ADD COLUMN governorate TEXT DEFAULT ''")
-
-        if not column_exists(cur, "users", "show_phone"):
-            cur.execute("ALTER TABLE users ADD COLUMN show_phone INTEGER DEFAULT 1")
-
-        if not column_exists(cur, "users", "show_whatsapp"):
-            cur.execute("ALTER TABLE users ADD COLUMN show_whatsapp INTEGER DEFAULT 1")
-
-        if not column_exists(cur, "users", "allow_messages"):
-            cur.execute("ALTER TABLE users ADD COLUMN allow_messages INTEGER DEFAULT 1")
-
-        if not column_exists(cur, "users", "views"):
-            cur.execute("ALTER TABLE users ADD COLUMN views INTEGER DEFAULT 0")
-
-        if not column_exists(cur, "users", "verified_worker"):
-            cur.execute("ALTER TABLE users ADD COLUMN verified_worker INTEGER DEFAULT 0")
-
-        if not column_exists(cur, "users", "is_pinned"):
-            cur.execute("ALTER TABLE users ADD COLUMN is_pinned INTEGER DEFAULT 0")
-
-        if not column_exists(cur, "users", "is_blocked"):
-            cur.execute("ALTER TABLE users ADD COLUMN is_blocked INTEGER DEFAULT 0")
-
-        if not column_exists(cur, "users", "hidden_by_admin"):
-            cur.execute("ALTER TABLE users ADD COLUMN hidden_by_admin INTEGER DEFAULT 0")
-
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS user_passkeys(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            credential_id TEXT UNIQUE,
-            public_key TEXT,
-            sign_count INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        """)
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS conversations(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            visitor_id INTEGER NOT NULL,
-            worker_id INTEGER NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_message_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(visitor_id, worker_id)
-        )
-        """)
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS messages(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            conversation_id INTEGER,
-            sender_id INTEGER,
-            receiver_id INTEGER,
-            sender_role TEXT,
-            receiver_role TEXT,
-            sender_name TEXT,
-            receiver_name TEXT,
-            msg TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        """)
-
-        if not column_exists(cur, "messages", "conversation_id"):
-            cur.execute("ALTER TABLE messages ADD COLUMN conversation_id INTEGER")
-
-        if not column_exists(cur, "messages", "sender_id"):
-            cur.execute("ALTER TABLE messages ADD COLUMN sender_id INTEGER")
-
-        if not column_exists(cur, "messages", "receiver_id"):
-            cur.execute("ALTER TABLE messages ADD COLUMN receiver_id INTEGER")
-
-        if not column_exists(cur, "messages", "sender_role"):
-            cur.execute("ALTER TABLE messages ADD COLUMN sender_role TEXT DEFAULT ''")
-
-        if not column_exists(cur, "messages", "receiver_role"):
-            cur.execute("ALTER TABLE messages ADD COLUMN receiver_role TEXT DEFAULT ''")
-
-        if not column_exists(cur, "messages", "is_read"):
-            cur.execute("ALTER TABLE messages ADD COLUMN is_read INTEGER DEFAULT 0")
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS admin_settings(
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            username TEXT NOT NULL,
-            password TEXT NOT NULL
-        )
-        """)
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS admin_logs(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            admin_username TEXT,
-            action TEXT,
-            target_name TEXT,
-            details TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        """)
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS comments(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            commenter_name TEXT,
-            rating INTEGER,
-            comment TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        """)
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS favorites(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            visitor_id INTEGER NOT NULL,
-            worker_id INTEGER NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(visitor_id, worker_id)
-        )
-        """)
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS support_messages(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            sender_type TEXT,
-            message TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            is_read_admin INTEGER DEFAULT 0,
-            is_read_user INTEGER DEFAULT 0
-        )
-        """)
-
-        if not column_exists(cur, "support_messages", "user_id"):
-            cur.execute("ALTER TABLE support_messages ADD COLUMN user_id INTEGER DEFAULT 0")
-
-        if not column_exists(cur, "support_messages", "sender_type"):
-            cur.execute("ALTER TABLE support_messages ADD COLUMN sender_type TEXT DEFAULT 'user'")
-
-        if not column_exists(cur, "support_messages", "message"):
-            cur.execute("ALTER TABLE support_messages ADD COLUMN message TEXT DEFAULT ''")
-
-        if not column_exists(cur, "support_messages", "is_read_admin"):
-            cur.execute("ALTER TABLE support_messages ADD COLUMN is_read_admin INTEGER DEFAULT 0")
-
-        if not column_exists(cur, "support_messages", "is_read_user"):
-            cur.execute("ALTER TABLE support_messages ADD COLUMN is_read_user INTEGER DEFAULT 0")
+        if USING_POSTGRES:
+            init_db_postgres(cur)
+        else:
+            init_db_sqlite(cur)
 
         admin_row = cur.execute("SELECT * FROM admin_settings WHERE id=1").fetchone()
         if not admin_row:
@@ -821,7 +1086,8 @@ def init_db():
 
         con.commit()
 
-    print("تم تجهيز قاعدة البيانات بنجاح")
+    db_label = "PostgreSQL" if USING_POSTGRES else "SQLite"
+    print(f"تم تجهيز قاعدة البيانات بنجاح: {db_label}")
 
 
 init_db()
@@ -1526,7 +1792,7 @@ def visitor_register():
                     "work_images": "",
                 })
                 con.commit()
-        except sqlite3.IntegrityError:
+        except DB_INTEGRITY_ERRORS:
             return render_template_string(STYLE + '<div class="container"><div class="msg">تعذر حفظ الحساب: البريد مستخدم مسبقاً</div><a href="/visitor/register"><button>رجوع</button></a></div></body></html>')
         except Exception as e:
             return render_template_string(STYLE + f'<div class="container"><div class="msg">تعذر إنشاء حساب الزائر: {str(e)}</div><a href="/visitor/register"><button>رجوع</button></a></div></body></html>')
@@ -1845,7 +2111,7 @@ def register():
                     "work_images": d["work_images"],
                 })
                 con.commit()
-        except sqlite3.IntegrityError:
+        except DB_INTEGRITY_ERRORS:
             cleanup_saved_files(d)
             return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">تعذر حفظ الحساب: رقم الهاتف أو البريد مستخدم مسبقاً</div><a href="/register"><button>رجوع</button></a></div></body></html>')
         except Exception as e:
