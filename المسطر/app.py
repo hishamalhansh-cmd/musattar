@@ -667,14 +667,45 @@ def init_db():
         """)
 
         cur.execute("""
+        CREATE TABLE IF NOT EXISTS conversations(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            visitor_id INTEGER NOT NULL,
+            worker_id INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_message_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(visitor_id, worker_id)
+        )
+        """)
+
+        cur.execute("""
         CREATE TABLE IF NOT EXISTS messages(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id INTEGER,
+            sender_id INTEGER,
+            receiver_id INTEGER,
+            sender_role TEXT,
+            receiver_role TEXT,
             sender_name TEXT,
             receiver_name TEXT,
             msg TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """)
+
+        if not column_exists(cur, "messages", "conversation_id"):
+            cur.execute("ALTER TABLE messages ADD COLUMN conversation_id INTEGER")
+
+        if not column_exists(cur, "messages", "sender_id"):
+            cur.execute("ALTER TABLE messages ADD COLUMN sender_id INTEGER")
+
+        if not column_exists(cur, "messages", "receiver_id"):
+            cur.execute("ALTER TABLE messages ADD COLUMN receiver_id INTEGER")
+
+        if not column_exists(cur, "messages", "sender_role"):
+            cur.execute("ALTER TABLE messages ADD COLUMN sender_role TEXT DEFAULT ''")
+
+        if not column_exists(cur, "messages", "receiver_role"):
+            cur.execute("ALTER TABLE messages ADD COLUMN receiver_role TEXT DEFAULT ''")
 
         if not column_exists(cur, "messages", "is_read"):
             cur.execute("ALTER TABLE messages ADD COLUMN is_read INTEGER DEFAULT 0")
@@ -969,7 +1000,7 @@ hr{border:none;border-top:1px solid var(--border);margin:18px 0}
 .link-btn,.bottom-corner-link,.settings-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px}
 .link-btn{background:linear-gradient(180deg,#2563eb 0%, #1d4ed8 100%);color:#eff6ff;padding:10px 14px;border-radius:14px;margin:4px 0;font-size:14px;font-weight:700;border:1px solid rgba(147,197,253,.28);box-shadow:0 6px 18px rgba(0,0,0,.22)}.link-red{background:linear-gradient(180deg,#dc2626 0%, #b91c1c 100%);color:#fff}
 .search-panel{display:none;margin-bottom:16px}.search-panel.show{display:block}.search-inline-grid{display:grid;grid-template-columns:1.3fr 1fr 1fr auto;gap:10px;align-items:end}
-.settings-floating{position:fixed;top:14px;left:14px;z-index:9999}.settings-btn{width:auto;min-width:46px;height:46px;padding:0 14px;background:linear-gradient(180deg,#1d4ed8 0%, #1e40af 100%);color:#eff6ff;border-radius:999px;font-size:14px;font-weight:700;box-shadow:0 6px 18px rgba(0,0,0,.22);border:1px solid rgba(147,197,253,.28)}
+.settings-floating{position:fixed;top:14px;left:66px;z-index:9999}.settings-btn{position:relative;display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;background:rgba(255,255,255,.88);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);color:#0f172a;border-radius:999px;font-size:21px;text-decoration:none;box-shadow:0 8px 22px rgba(15,23,42,.14);border:1px solid rgba(148,163,184,.22);transition:transform .18s ease, box-shadow .18s ease, background .18s ease}.settings-btn:hover{transform:translateY(-1px);box-shadow:0 10px 26px rgba(15,23,42,.18);background:rgba(255,255,255,.96)}
 .bottom-corner-link{position:fixed;bottom:18px;z-index:9999;min-width:86px;height:46px;padding:0 16px;background:linear-gradient(180deg,#1d4ed8 0%, #1e40af 100%);color:#eff6ff;border-radius:999px;box-shadow:0 6px 18px rgba(0,0,0,.22);font-size:14px;font-weight:700;border:1px solid rgba(147,197,253,.28)}.bottom-left-link{left:16px}.bottom-right-link{right:16px}
 .global-back-wrap{position:fixed;top:14px;right:14px;z-index:9999}.global-back-btn{display:inline-flex;align-items:center;justify-content:center;min-width:112px;height:46px;padding:0 16px;background:linear-gradient(180deg,#2563eb 0%, #1d4ed8 100%);color:#eff6ff;border-radius:999px;box-shadow:0 6px 18px rgba(0,0,0,.22);font-size:14px;font-weight:800;border:1px solid rgba(147,197,253,.28)}
 .settings-profile-wrap{display:flex;align-items:center;gap:14px}.settings-profile-info{flex:1}.settings-section-title{font-size:18px;font-weight:700;margin:0 0 10px;text-align:right}
@@ -1127,7 +1158,7 @@ button{font-weight:700}
 .global-back-btn:hover,.settings-btn:hover,.bottom-corner-link:hover{transform:translateY(-1px);opacity:.98}
 .global-back-btn:before{content:"↩ ";font-size:15px}
 @media (max-width:520px){
-  .global-back-btn,.settings-btn{height:40px;min-width:94px;font-size:13px;padding:0 12px}
+  .global-back-btn{height:40px;min-width:94px;font-size:13px;padding:0 12px}.settings-floating{top:14px;left:62px}.settings-btn{width:40px;height:40px;font-size:19px;padding:0}
   .bottom-corner-link{height:40px;min-width:70px}
 }
 
@@ -1162,19 +1193,109 @@ label input[type="checkbox"]{
     margin-left:8px;
 }
 
+.message-floating-wrap{position:fixed;top:14px;left:118px;z-index:9999}
+.message-floating-btn{position:relative;display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;background:rgba(255,255,255,.88);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);color:#0f172a;border-radius:999px;box-shadow:0 8px 22px rgba(15,23,42,.14);font-size:22px;text-decoration:none;border:1px solid rgba(148,163,184,.22);transition:transform .18s ease, box-shadow .18s ease, background .18s ease}
+.message-floating-btn:hover{transform:translateY(-1px);box-shadow:0 10px 26px rgba(15,23,42,.18);background:rgba(255,255,255,.96)}
+.msg-badge-count{position:absolute;top:-3px;right:-3px;display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:#ef4444;color:#fff;font-size:10px;font-weight:800;border:2px solid #fff;line-height:1}
+.msg-toast{position:fixed;top:66px;left:50%;transform:translateX(-50%) translateY(-8px);z-index:10000;min-width:150px;max-width:84vw;padding:8px 12px;border-radius:999px;background:rgba(15,23,42,.82);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);color:#fff;text-align:center;font-size:12px;font-weight:700;box-shadow:0 8px 24px rgba(15,23,42,.18);opacity:0;transition:all .22s ease;border:1px solid rgba(255,255,255,.12)}
+.msg-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+@media (max-width:520px){.settings-floating{top:14px;left:60px}.settings-btn{width:40px;height:40px;font-size:19px}.message-floating-wrap{top:62px;left:14px}.message-floating-btn{width:40px;height:40px;font-size:20px}.msg-toast{top:104px;font-size:11px;min-width:132px;padding:7px 10px}}
+
 </style>
 </head>
 <body>
 """
+
+def get_unread_message_count(user_id):
+    try:
+        with get_db() as con:
+            row = con.execute(
+                "SELECT COUNT(*) AS c FROM messages WHERE receiver_id=? AND COALESCE(is_read,0)=0",
+                (user_id,)
+            ).fetchone()
+            return int((row["c"] if row else 0) or 0)
+    except Exception:
+        return 0
+
+
+def message_notifier_html():
+    if "user" not in session:
+        return ""
+    current_user = get_current_session_user()
+    if not current_user:
+        return ""
+
+    unread_count = get_unread_message_count(current_user["id"])
+    badge_html = f'<span id="msg-badge-count" class="msg-badge-count" style="display:{"inline-flex" if unread_count > 0 else "none"};">{unread_count}</span>'
+
+    return f'''
+    <div class="message-floating-wrap">
+        <a class="message-floating-btn" href="/inbox" title="الرسائل" aria-label="الرسائل">
+            💬
+            {badge_html}
+        </a>
+    </div>
+    <div id="msg-toast" class="msg-toast" style="display:none;">💬 رسالة جديدة</div>
+    <script>
+    (function() {{
+        let lastUnread = {unread_count};
+        let lastToastAt = 0;
+
+        function updateBadge(count) {{
+            const badge = document.getElementById('msg-badge-count');
+            if (!badge) return;
+            if (count > 0) {{
+                badge.style.display = 'inline-flex';
+                badge.textContent = count;
+            }} else {{
+                badge.style.display = 'none';
+            }}
+        }}
+
+        function showToast(text) {{
+            const toast = document.getElementById('msg-toast');
+            if (!toast) return;
+            toast.textContent = text || '💬 رسالة جديدة';
+            toast.style.display = 'block';
+            toast.classList.add('show');
+            setTimeout(function() {{
+                toast.classList.remove('show');
+                setTimeout(function() {{
+                    toast.style.display = 'none';
+                }}, 250);
+            }}, 3500);
+        }}
+
+        async function pollMessageStatus() {{
+            if (document.hidden) return;
+            try {{
+                const res = await fetch('/api/message_status', {{cache: 'no-store'}});
+                const data = await res.json();
+                if (!data.ok) return;
+                const unread = Number(data.unread_count || 0);
+                updateBadge(unread);
+                if (unread > lastUnread && Date.now() - lastToastAt > 2500) {{
+                    lastToastAt = Date.now();
+                    showToast('💬 رسالة جديدة');
+                }}
+                lastUnread = unread;
+            }} catch (e) {{}}
+        }}
+
+        setInterval(pollMessageStatus, 7000);
+    }})();
+    </script>
+    '''
+
 
 def settings_corner():
     hidden_paths = {"/login", "/register", "/forgot", "/reset"}
     if "user" in session and request.path not in hidden_paths:
         return '''
         <div class="settings-floating">
-            <a class="settings-btn" href="/settings" title="الإعدادات">الإعدادات</a>
+            <a class="settings-btn" href="/settings" title="الإعدادات" aria-label="الإعدادات">⚙️</a>
         </div>
-        '''
+        ''' + message_notifier_html()
     return ""
 
 
@@ -1845,6 +1966,114 @@ def reset_password():
     )
 
 
+
+def get_or_create_conversation(visitor_id, worker_id):
+    visitor_id = int(visitor_id)
+    worker_id = int(worker_id)
+
+    with get_db() as con:
+        row = con.execute(
+            "SELECT * FROM conversations WHERE visitor_id=? AND worker_id=?",
+            (visitor_id, worker_id)
+        ).fetchone()
+        if row:
+            return row["id"]
+
+        con.execute(
+            "INSERT INTO conversations (visitor_id, worker_id, last_message_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+            (visitor_id, worker_id)
+        )
+        con.commit()
+
+        row = con.execute(
+            "SELECT * FROM conversations WHERE visitor_id=? AND worker_id=?",
+            (visitor_id, worker_id)
+        ).fetchone()
+        return row["id"] if row else 0
+
+
+def get_conversation_for_user(conversation_id, current_user_id):
+    with get_db() as con:
+        return con.execute(
+            """
+            SELECT c.*,
+                   v.name AS visitor_name,
+                   v.email AS visitor_email,
+                   v.profile_pic AS visitor_profile_pic,
+                   w.name AS worker_name,
+                   w.email AS worker_email,
+                   w.profile_pic AS worker_profile_pic,
+                   w.allow_messages AS worker_allow_messages
+            FROM conversations c
+            JOIN users v ON v.id = c.visitor_id
+            JOIN users w ON w.id = c.worker_id
+            WHERE c.id=? AND (c.visitor_id=? OR c.worker_id=?)
+            """,
+            (conversation_id, current_user_id, current_user_id)
+        ).fetchone()
+
+
+def get_other_party_from_conversation(conversation, current_user_id):
+    if int(conversation["visitor_id"]) == int(current_user_id):
+        return {
+            "id": conversation["worker_id"],
+            "name": conversation["worker_name"],
+            "email": conversation["worker_email"],
+            "profile_pic": conversation["worker_profile_pic"],
+            "role": "worker",
+        }
+    return {
+        "id": conversation["visitor_id"],
+        "name": conversation["visitor_name"],
+        "email": conversation["visitor_email"],
+        "profile_pic": conversation["visitor_profile_pic"],
+        "role": "visitor",
+    }
+
+
+def format_chat_datetime(value):
+    value = (value or "").strip()
+    if not value:
+        return ""
+    try:
+        dt = datetime.datetime.fromisoformat(value)
+    except Exception:
+        return value
+    return dt.strftime("%Y-%m-%d %H:%M")
+
+
+def build_conversation_messages_html(messages, current_user, other):
+    chat_html = ""
+    for m in messages:
+        mine = int(m["sender_id"] or 0) == int(current_user["id"])
+        align = "justify-content:flex-end;" if mine else "justify-content:flex-start;"
+        bg = "linear-gradient(180deg,#2563eb 0%, #1d4ed8 100%)" if mine else "rgba(255,255,255,.08)"
+        color = "#ffffff" if mine else "var(--text)"
+        label = "أنت" if mine else other["name"]
+        small_color = "#dbeafe" if mine else "var(--muted)"
+        chat_html += f"""
+        <div style="display:flex;{align}margin:10px 0;">
+            <div style="max-width:78%;background:{bg};color:{color};padding:12px 14px;border-radius:18px;border:1px solid rgba(96,165,250,.18);">
+                <div style="font-size:12px;opacity:.85;margin-bottom:5px;">{label}</div>
+                <div style="white-space:pre-wrap;word-break:break-word;">{m["msg"]}</div>
+                <div class="small" style="margin-top:6px;color:{small_color};">{format_chat_datetime(m["created_at"] or "")}</div>
+            </div>
+        </div>
+        """
+
+    if not chat_html:
+        chat_html = '<div class="empty-state">لا توجد رسائل بعد. اكتب أول رسالة الآن.</div>'
+    return chat_html
+
+
+def profile_thumb_html(filename, size_class="profile-img"):
+    if filename:
+        return f'<img src="{url_for("uploaded_file", filename=filename)}" class="{size_class}" alt="profile">'
+    if size_class == "profile-img-large":
+        return '<div class="profile-placeholder-large">👤</div>'
+    return '<div class="profile-placeholder">👤</div>'
+
+
 def worker_card(worker):
     profile_html = (
         f'<img src="{url_for("uploaded_file", filename=worker["profile_pic"])}" class="profile-img" alt="profile">'
@@ -2244,9 +2473,15 @@ def worker_profile(user_id):
 
 
 
+
 @app.route("/message/<int:user_id>", methods=["GET", "POST"])
 def message_user(user_id):
     if "user" not in session:
+        return redirect(url_for("login"))
+
+    sender = get_current_session_user()
+    if not sender:
+        session.clear()
         return redirect(url_for("login"))
 
     with get_db() as con:
@@ -2255,38 +2490,227 @@ def message_user(user_id):
     if not receiver:
         return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">المستخدم غير موجود</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
 
-    if not receiver["allow_messages"]:
+    if int(receiver["id"]) == int(sender["id"]):
+        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">لا يمكنك مراسلة نفسك</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
+
+    if session.get("role") != "visitor" and receiver["role"] == "visitor":
+        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">المحادثات متاحة بين الزائر والمختص فقط</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
+
+    if session.get("role") == "visitor" and not receiver["allow_messages"]:
         return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">هذا المستخدم عطّل استقبال الرسائل</div><a href="/worker/%d"><button>رجوع</button></a></div></body></html>' % user_id)
+
+    if session.get("role") == "visitor":
+        conversation_id = get_or_create_conversation(sender["id"], receiver["id"])
+    else:
+        conversation_id = get_or_create_conversation(receiver["id"], sender["id"])
 
     if request.method == "POST":
         msg = sanitize_input(request.form.get("msg", ""), 1000)
         if not msg:
-            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">اكتب الرسالة أولاً</div><a href="/message/%d"><button>رجوع</button></a></div></body></html>' % user_id)
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">اكتب الرسالة أولاً</div><a href="/conversation/%d"><button>رجوع</button></a></div></body></html>' % conversation_id)
 
         ip = get_client_ip()
-        key = f"{ip}:{session['user']}:{receiver['name']}"
+        key = f"{ip}:{sender['id']}:{receiver['id']}"
         if too_many_attempts(MESSAGE_RATE_LIMIT, key, MESSAGE_WINDOW_SECONDS, MESSAGE_MAX_COUNT):
-            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">تم تجاوز عدد الرسائل المسموح مؤقتاً</div><a href="/worker/%d"><button>رجوع</button></a></div></body></html>' % user_id)
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">تم تجاوز عدد الرسائل المسموح مؤقتاً</div><a href="/conversation/%d"><button>رجوع</button></a></div></body></html>' % conversation_id)
 
         with get_db() as con:
             con.execute(
-                "INSERT INTO messages (sender_name, receiver_name, msg) VALUES (?, ?, ?)",
-                (session["user"], receiver["name"], msg)
+                """
+                INSERT INTO messages
+                (conversation_id, sender_id, receiver_id, sender_role, receiver_role, sender_name, receiver_name, msg, is_read)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+                """,
+                (
+                    conversation_id,
+                    sender["id"],
+                    receiver["id"],
+                    sender["role"] or session.get("role", ""),
+                    receiver["role"] or "",
+                    sender["name"],
+                    receiver["name"],
+                    msg,
+                )
+            )
+            con.execute(
+                "UPDATE conversations SET last_message_at=CURRENT_TIMESTAMP WHERE id=?",
+                (conversation_id,)
             )
             con.commit()
 
-        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">تم إرسال الرسالة</div><a href="/inbox"><button>فتح الرسائل</button></a></div></body></html>')
+        return redirect(url_for("conversation_view", conversation_id=conversation_id))
+
+    return redirect(url_for("conversation_view", conversation_id=conversation_id))
+
+
+@app.route("/conversation/<int:conversation_id>/messages_fragment")
+def conversation_messages_fragment(conversation_id):
+    if "user" not in session:
+        return jsonify({"ok": False, "error": "not_logged_in"}), 401
+
+    current_user = get_current_session_user()
+    if not current_user:
+        session.clear()
+        return jsonify({"ok": False, "error": "session_expired"}), 401
+
+    conversation = get_conversation_for_user(conversation_id, current_user["id"])
+    if not conversation:
+        return jsonify({"ok": False, "error": "not_found"}), 404
+
+    other = get_other_party_from_conversation(conversation, current_user["id"])
+
+    with get_db() as con:
+        messages = con.execute(
+            "SELECT * FROM messages WHERE conversation_id=? ORDER BY id ASC",
+            (conversation_id,)
+        ).fetchall()
+        con.execute(
+            "UPDATE messages SET is_read=1 WHERE conversation_id=? AND receiver_id=?",
+            (conversation_id, current_user["id"])
+        )
+        con.commit()
+
+    html = build_conversation_messages_html(messages, current_user, other)
+    last_id = messages[-1]["id"] if messages else 0
+    return jsonify({"ok": True, "html": html, "last_id": last_id, "count": len(messages)})
+
+
+@app.route("/conversation/<int:conversation_id>", methods=["GET", "POST"])
+def conversation_view(conversation_id):
+    if "user" not in session:
+        return redirect(url_for("login"))
+
+    current_user = get_current_session_user()
+    if not current_user:
+        session.clear()
+        return redirect(url_for("login"))
+
+    conversation = get_conversation_for_user(conversation_id, current_user["id"])
+    if not conversation:
+        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">المحادثة غير موجودة أو غير متاحة لك</div><a href="/inbox"><button>رجوع</button></a></div></body></html>')
+
+    other = get_other_party_from_conversation(conversation, current_user["id"])
+
+    if request.method == "POST":
+        msg = sanitize_input(request.form.get("msg", ""), 1000)
+        if not msg:
+            return redirect(url_for("conversation_view", conversation_id=conversation_id))
+
+        if session.get("role") == "visitor" and other["role"] == "worker" and not int(conversation["worker_allow_messages"] or 0):
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">هذا المستخدم عطّل استقبال الرسائل</div><a href="/inbox"><button>رجوع</button></a></div></body></html>')
+
+        ip = get_client_ip()
+        key = f"{ip}:{current_user['id']}:{other['id']}"
+        if too_many_attempts(MESSAGE_RATE_LIMIT, key, MESSAGE_WINDOW_SECONDS, MESSAGE_MAX_COUNT):
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">تم تجاوز عدد الرسائل المسموح مؤقتاً</div><a href="/conversation/%d"><button>رجوع</button></a></div></body></html>' % conversation_id)
+
+        with get_db() as con:
+            con.execute(
+                """
+                INSERT INTO messages
+                (conversation_id, sender_id, receiver_id, sender_role, receiver_role, sender_name, receiver_name, msg, is_read)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+                """,
+                (
+                    conversation_id,
+                    current_user["id"],
+                    other["id"],
+                    current_user["role"] or session.get("role", ""),
+                    other["role"],
+                    current_user["name"],
+                    other["name"],
+                    msg,
+                )
+            )
+            con.execute(
+                "UPDATE conversations SET last_message_at=CURRENT_TIMESTAMP WHERE id=?",
+                (conversation_id,)
+            )
+            con.commit()
+
+        return redirect(url_for("conversation_view", conversation_id=conversation_id))
+
+    with get_db() as con:
+        messages = con.execute(
+            "SELECT * FROM messages WHERE conversation_id=? ORDER BY id ASC",
+            (conversation_id,)
+        ).fetchall()
+        con.execute(
+            "UPDATE messages SET is_read=1 WHERE conversation_id=? AND receiver_id=?",
+            (conversation_id, current_user["id"])
+        )
+        con.commit()
+
+    chat_html = build_conversation_messages_html(messages, current_user, other)
+    header_profile = profile_thumb_html(other.get("profile_pic"), "profile-img")
+    header_badge = "مختص" if other["role"] == "worker" else "زائر"
 
     return render_template_string(
         STYLE + (settings_corner() if 'user' in session else '') + f"""
-        <div class="container">
-            <a href="/worker/{user_id}"><button>رجوع</button></a>
-            <h2>إرسال رسالة إلى {receiver["name"]}</h2>
-            <form method="post">
-                <textarea name="msg" placeholder="اكتب رسالتك" required></textarea>
+        <div class="container narrow-container">
+            <a href="/inbox"><button class="light-btn">رجوع للرسائل</button></a>
+
+            <div class="card" style="margin-bottom:14px;">
+                <div class="settings-profile-wrap">
+                    <div>{header_profile}</div>
+                    <div class="settings-profile-info">
+                        <h3 style="margin-bottom:4px;">{other["name"]}</h3>
+                        <div class="small">{other["email"] or ""}</div>
+                        <div class="inline" style="margin-top:8px;">
+                            <span class="badge">{header_badge}</span>
+                            {"<a class='link-btn' href='/worker/%d'>فتح الملف</a>" % other["id"] if other["role"] == "worker" else ""}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="chat-box" class="card" style="padding:14px;max-height:420px;overflow:auto;">
+                {chat_html}
+            </div>
+
+            <form method="post" style="margin-top:14px;">
+                <textarea id="msg-input" name="msg" placeholder="اكتب رسالتك هنا" required></textarea>
                 <button>إرسال</button>
             </form>
         </div>
+        <script>
+        (function() {{
+            const chatBox = document.getElementById('chat-box');
+            const msgInput = document.getElementById('msg-input');
+            let lastHtml = chatBox ? chatBox.innerHTML : '';
+
+            function nearBottom() {{
+                if (!chatBox) return true;
+                return (chatBox.scrollHeight - chatBox.scrollTop - chatBox.clientHeight) < 120;
+            }}
+
+            function scrollToBottom(force) {{
+                if (!chatBox) return;
+                if (force || nearBottom()) {{
+                    chatBox.scrollTop = chatBox.scrollHeight;
+                }}
+            }}
+
+            async function refreshChat() {{
+                if (document.hidden) return;
+                if (msgInput && msgInput.value.trim().length > 0) return;
+                try {{
+                    const res = await fetch('/conversation/{conversation_id}/messages_fragment', {{cache: 'no-store'}});
+                    const data = await res.json();
+                    if (!data.ok) return;
+                    const shouldStickBottom = nearBottom();
+                    if (typeof data.html === 'string' && data.html !== lastHtml) {{
+                        chatBox.innerHTML = data.html;
+                        lastHtml = data.html;
+                        scrollToBottom(shouldStickBottom);
+                    }}
+                }} catch (e) {{}}
+            }}
+
+            scrollToBottom(true);
+            setInterval(refreshChat, 5000);
+        }})();
+        </script>
         </body></html>
         """
     )
@@ -2297,41 +2721,123 @@ def inbox():
     if "user" not in session:
         return redirect(url_for("login"))
 
+    current_user = get_current_session_user()
+    if not current_user:
+        session.clear()
+        return redirect(url_for("login"))
+
     with get_db() as con:
-        rows = con.execute(
-            "SELECT * FROM messages WHERE receiver_name=? OR sender_name=? ORDER BY id DESC",
-            (session["user"], session["user"])
+        conversations = con.execute(
+            """
+            SELECT c.*,
+                   v.name AS visitor_name,
+                   v.profile_pic AS visitor_profile_pic,
+                   w.name AS worker_name,
+                   w.profile_pic AS worker_profile_pic,
+                   (
+                       SELECT msg FROM messages m
+                       WHERE m.conversation_id = c.id
+                       ORDER BY m.id DESC
+                       LIMIT 1
+                   ) AS last_message,
+                   (
+                       SELECT COUNT(*)
+                       FROM messages um
+                       WHERE um.conversation_id = c.id
+                         AND um.receiver_id = ?
+                         AND COALESCE(um.is_read,0)=0
+                   ) AS unread_count
+            FROM conversations c
+            JOIN users v ON v.id = c.visitor_id
+            JOIN users w ON w.id = c.worker_id
+            WHERE c.visitor_id=? OR c.worker_id=?
+            ORDER BY COALESCE(c.last_message_at, c.created_at) DESC, c.id DESC
+            """,
+            (current_user["id"], current_user["id"], current_user["id"])
         ).fetchall()
 
-        con.execute("UPDATE messages SET is_read=1 WHERE receiver_name=?", (session["user"],))
-        con.commit()
-
-    if not rows:
-        messages_html = '<div class="msg">لا توجد رسائل</div>'
+    if not conversations:
+        messages_html = '<div class="msg">لا توجد محادثات بعد</div>'
     else:
         blocks = []
-        for row in rows:
-            direction = "واردة" if row["receiver_name"] == session["user"] else "صادرة"
-            other_name = row["sender_name"] if direction == "واردة" else row["receiver_name"]
+        for row in conversations:
+            if int(row["visitor_id"]) == int(current_user["id"]):
+                other_name = row["worker_name"]
+                other_profile = row["worker_profile_pic"]
+                other_role = "مختص"
+            else:
+                other_name = row["visitor_name"]
+                other_profile = row["visitor_profile_pic"]
+                other_role = "زائر"
+
+            last_message = row["last_message"] or "لا توجد رسائل بعد"
+            unread_count = int(row["unread_count"] or 0)
+            unread_badge = f"<span class='badge' style='background:#1d4ed8;color:#fff;border-color:#1d4ed8;'>{unread_count} جديد</span>" if unread_count > 0 else "<span class='badge'>مقروءة</span>"
+            card_style = "border:1px solid rgba(37,99,235,.45);box-shadow:0 0 0 1px rgba(37,99,235,.18) inset;" if unread_count > 0 else ""
+            preview_weight = "font-weight:700;" if unread_count > 0 else ""
+
             blocks.append(f"""
-            <div class="card">
-                <div><strong>{direction}</strong> - مع {other_name}</div>
-                <div style="margin-top:8px;">{row["msg"]}</div>
-                <div class="small">{row["created_at"]}</div>
-            </div>
+            <a href="/conversation/{row['id']}" style="display:block;">
+                <div class="card" style="{card_style}">
+                    <div class="settings-profile-wrap">
+                        <div>{profile_thumb_html(other_profile, "profile-img")}</div>
+                        <div class="settings-profile-info">
+                            <div class="inline" style="justify-content:space-between;">
+                                <strong>{other_name}</strong>
+                                {unread_badge}
+                            </div>
+                            <div class="small">{other_role}</div>
+                            <div style="margin-top:8px;white-space:pre-wrap;word-break:break-word;{preview_weight}">{last_message}</div>
+                            <div class="small" style="margin-top:6px;">آخر تحديث: {format_chat_datetime(row["last_message_at"] or row["created_at"] or "")}</div>
+                        </div>
+                    </div>
+                </div>
+            </a>
             """)
         messages_html = "".join(blocks)
+
+    title = "محادثاتي" if session.get("role") == "visitor" else "الرسائل الواردة"
+
+    total_unread = sum(int(row["unread_count"] or 0) for row in conversations)
 
     return render_template_string(
         STYLE + (settings_corner() if 'user' in session else '') + f"""
         <div class="container">
             <a href="/workers"><button>رجوع</button></a>
-            <h2>الرسائل</h2>
+            <h2>{title}</h2>
+            <div class="inline" style="margin-bottom:8px;">
+                <span class="badge">غير المقروء: {total_unread}</span>
+                <span class="badge">تحديث تلقائي كل 10 ثواني</span>
+            </div>
+            <div class="section-subtitle">هنا تظهر المحادثات الثابتة بين الزائر والمختص. افتح أي محادثة للرد داخل نفس الصفحة.</div>
             {messages_html}
         </div>
+        <script>
+        setInterval(function() {{
+            if (!document.hidden) {{
+                window.location.reload();
+            }}
+        }}, 10000);
+        </script>
         </body></html>
         """
     )
+
+
+@app.route("/api/message_status")
+def api_message_status():
+    if "user" not in session:
+        return jsonify({"ok": False, "error": "not_logged_in"}), 401
+
+    current_user = get_current_session_user()
+    if not current_user:
+        session.clear()
+        return jsonify({"ok": False, "error": "session_expired"}), 401
+
+    return jsonify({
+        "ok": True,
+        "unread_count": get_unread_message_count(current_user["id"]),
+    })
 
 
 @app.route("/support", methods=["GET", "POST"])
