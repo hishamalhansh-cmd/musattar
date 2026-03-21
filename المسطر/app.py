@@ -2193,24 +2193,7 @@ def worker_card(worker):
 def workers():
     auto_login_from_cookie()
 
-    if "user" in session:
-        if session.get("role") == "visitor":
-            user_buttons = '''
-            <a href="/visitor/account"><button>حسابي</button></a>
-            <a href="/inbox"><button>الرسائل</button></a>
-            <a href="/favorites"><button>المفضلة ❤️</button></a>
-            <a href="/logout"><button>تسجيل الخروج</button></a>
-            '''
-        else:
-            user_buttons = '''
-            <a href="/profile"><button>ملفي الشخصي</button></a>
-            <a href="/inbox"><button>الرسائل</button></a>
-            <a href="/logout"><button>تسجيل الخروج</button></a>
-            '''
-    else:
-        user_buttons = '''
-        
-        '''
+    user_buttons = ""
 
     groups_cards = build_main_groups_cards()
 
@@ -2228,7 +2211,7 @@ def workers():
                     <span class="hero-badge">قسم ← اختصاص ← مستخدمون</span>
                 </div>
                 <h2>الأقسام الرئيسية</h2>
-                <div class="section-subtitle">اختر القسم الرئيسي أولاً، وبعدها تفتح لك صفحة الاختصاصات الخاصة به، ثم تظهر لك قائمة المستخدمين المسجلين.</div>
+                
             </div>
 
             {user_buttons}
@@ -2259,22 +2242,7 @@ def workers_group(group_name):
 
     specialties_cards = build_group_specialties_cards(group_name)
 
-    if "user" in session:
-        if session.get("role") == "visitor":
-            user_buttons = '''
-            <a href="/visitor/account"><button>حسابي</button></a>
-            <a href="/inbox"><button>الرسائل</button></a>
-            <a href="/favorites"><button>المفضلة ❤️</button></a>
-            '''
-        else:
-            user_buttons = '''
-            <a href="/profile"><button>ملفي الشخصي</button></a>
-            <a href="/inbox"><button>الرسائل</button></a>
-            '''
-    else:
-        user_buttons = '''
-        
-        '''
+    user_buttons = ""
 
     return render_template_string(
         STYLE + (settings_corner() if 'user' in session else '') + f'''
@@ -2286,7 +2254,7 @@ def workers_group(group_name):
 
             <div class="hero-panel" style="margin-bottom:16px;">
                 <h2>اختصاصات {group_name}</h2>
-                <div class="section-subtitle">اختر الاختصاص الذي تريده من هذا القسم حتى تظهر لك قائمة المستخدمين المسجلين.</div>
+                
             </div>
 
             {user_buttons}
@@ -2332,22 +2300,7 @@ def workers_specialty(specialty_name):
 
     cards = "".join(worker_card(row) for row in rows) if rows else '<div class="msg">لا يوجد مستخدمون مسجلون حالياً بهذا الاختصاص</div>'
 
-    if "user" in session:
-        if session.get("role") == "visitor":
-            user_buttons = '''
-            <a href="/visitor/account"><button>حسابي</button></a>
-            <a href="/inbox"><button>الرسائل</button></a>
-            <a href="/favorites"><button>المفضلة ❤️</button></a>
-            '''
-        else:
-            user_buttons = '''
-            <a href="/profile"><button>ملفي الشخصي</button></a>
-            <a href="/inbox"><button>الرسائل</button></a>
-            '''
-    else:
-        user_buttons = '''
-        
-        '''
+    user_buttons = ""
 
     return render_template_string(
         STYLE + (settings_corner() if 'user' in session else '') + f'''
@@ -2366,7 +2319,7 @@ def workers_specialty(specialty_name):
                     <span class="hero-badge">{specialty_name}</span>
                 </div>
                 <h2>المستخدمون المسجلون ضمن اختصاص {specialty_name}</h2>
-                <div class="section-subtitle">هذه الصفحة تعرض فقط المستخدمين المسجلين داخل هذا الاختصاص.</div>
+                
             </div>
 
             {user_buttons}
@@ -2397,7 +2350,19 @@ def worker_profile(user_id):
         con.commit()
         worker = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
 
+    is_self_worker_profile = (
+        "user" in session
+        and session.get("role") == "worker"
+        and session.get("user_id") == user_id
+    )
+
     if request.method == "POST":
+        if is_self_worker_profile:
+            return render_template_string(
+                STYLE + (settings_corner() if 'user' in session else '') +
+                '<div class="container"><div class="msg">لا يمكن للمختص تقييم أو التعليق على نفسه</div><a href="/worker/%d"><button>رجوع</button></a></div></body></html>' % user_id
+            )
+
         ip = get_client_ip()
         if too_many_attempts(COMMENT_RATE_LIMIT, f"{ip}:{user_id}", COMMENT_WINDOW_SECONDS, COMMENT_MAX_COUNT):
             return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">تم تجاوز عدد التعليقات المسموح مؤقتاً</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
@@ -2493,7 +2458,9 @@ def worker_profile(user_id):
     verified_badge = trusted_badge_html(worker)
     pinned_badge = pinned_badge_html(worker)
 
-    comment_form = f"""
+    comment_form = ""
+    if not is_self_worker_profile:
+        comment_form = f"""
         <div class="card review-form-pro">
             <h3>إضافة تقييم</h3>
             <div class="section-subtitle">اختر التقييم ثم اكتب رأيك بشكل مختصر وواضح.</div>
