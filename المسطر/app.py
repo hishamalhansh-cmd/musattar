@@ -2051,12 +2051,20 @@ def build_conversation_messages_html(messages, current_user, other):
         color = "#ffffff" if mine else "var(--text)"
         label = "أنت" if mine else other["name"]
         small_color = "#dbeafe" if mine else "var(--muted)"
+        read_state = ""
+        if mine:
+            is_read = int(m["is_read"] or 0)
+            state_text = "مقروءة" if is_read else "مرسلة"
+            state_icon = "✓✓" if is_read else "✓"
+            read_state = f'<span style="margin-inline-start:8px;opacity:.96;font-size:11px;">{state_icon} {state_text}</span>'
         chat_html += f"""
         <div style="display:flex;{align}margin:10px 0;">
             <div style="max-width:78%;background:{bg};color:{color};padding:12px 14px;border-radius:18px;border:1px solid rgba(96,165,250,.18);">
                 <div style="font-size:12px;opacity:.85;margin-bottom:5px;">{label}</div>
                 <div style="white-space:pre-wrap;word-break:break-word;">{m["msg"]}</div>
-                <div class="small" style="margin-top:6px;color:{small_color};">{format_chat_datetime(m["created_at"] or "")}</div>
+                <div class="small" style="margin-top:6px;color:{small_color};display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+                    <span>{format_chat_datetime(m["created_at"] or "")}</span>{read_state}
+                </div>
             </div>
         </div>
         """
@@ -2664,6 +2672,11 @@ def conversation_view(conversation_id):
                 </div>
             </div>
 
+            <div class="inline" style="margin:8px 0 10px 0;gap:8px;">
+                <span class="badge">✓ مرسلة</span>
+                <span class="badge">✓✓ مقروءة</span>
+            </div>
+
             <div id="chat-box" class="card" style="padding:14px;max-height:420px;overflow:auto;">
                 {chat_html}
             </div>
@@ -2770,25 +2783,34 @@ def inbox():
                 other_profile = row["visitor_profile_pic"]
                 other_role = "زائر"
 
-            last_message = row["last_message"] or "لا توجد رسائل بعد"
+            last_message = (row["last_message"] or "لا توجد رسائل بعد").strip()
+            if len(last_message) > 70:
+                last_message = last_message[:70] + "..."
+
             unread_count = int(row["unread_count"] or 0)
-            unread_badge = f"<span class='badge' style='background:#1d4ed8;color:#fff;border-color:#1d4ed8;'>{unread_count} جديد</span>" if unread_count > 0 else "<span class='badge'>مقروءة</span>"
-            card_style = "border:1px solid rgba(37,99,235,.45);box-shadow:0 0 0 1px rgba(37,99,235,.18) inset;" if unread_count > 0 else ""
-            preview_weight = "font-weight:700;" if unread_count > 0 else ""
+            updated_at = format_chat_datetime(row["last_message_at"] or row["created_at"] or "")
+            unread_dot = f"<div class='chat-unread-badge'>{unread_count}</div>" if unread_count > 0 else ""
+            row_border = "border-bottom:1px solid rgba(148,163,184,.18);" 
+            preview_style = "font-weight:700;color:#0f172a;" if unread_count > 0 else "color:#475569;"
+            name_style = "color:#0f172a;font-weight:800;" if unread_count > 0 else "color:#0f172a;font-weight:700;"
 
             blocks.append(f"""
-            <a href="/conversation/{row['id']}" style="display:block;">
-                <div class="card" style="{card_style}">
-                    <div class="settings-profile-wrap">
-                        <div>{profile_thumb_html(other_profile, "profile-img")}</div>
-                        <div class="settings-profile-info">
-                            <div class="inline" style="justify-content:space-between;">
-                                <strong>{other_name}</strong>
-                                {unread_badge}
+            <a href="/conversation/{row['id']}" class="chat-list-link">
+                <div class="chat-list-row" style="{row_border}">
+                    <div class="chat-avatar-wrap">
+                        {profile_thumb_html(other_profile, "profile-img")}
+                    </div>
+                    <div class="chat-main-col">
+                        <div class="chat-row-top">
+                            <div style="{name_style}">{other_name}</div>
+                            <div class="chat-time">{updated_at}</div>
+                        </div>
+                        <div class="chat-row-bottom">
+                            <div class="chat-preview">
+                                <span class="small" style="margin-left:6px;">{other_role}</span>
+                                <span style="{preview_style}">{last_message}</span>
                             </div>
-                            <div class="small">{other_role}</div>
-                            <div style="margin-top:8px;white-space:pre-wrap;word-break:break-word;{preview_weight}">{last_message}</div>
-                            <div class="small" style="margin-top:6px;">آخر تحديث: {format_chat_datetime(row["last_message_at"] or row["created_at"] or "")}</div>
+                            {unread_dot}
                         </div>
                     </div>
                 </div>
@@ -2797,20 +2819,66 @@ def inbox():
         messages_html = "".join(blocks)
 
     title = "محادثاتي" if session.get("role") == "visitor" else "الرسائل الواردة"
-
     total_unread = sum(int(row["unread_count"] or 0) for row in conversations)
 
     return render_template_string(
         STYLE + (settings_corner() if 'user' in session else '') + f"""
+        <style>
+            .chat-list-shell {{
+                margin-top: 14px;
+                background: rgba(255,255,255,.88);
+                border: 1px solid rgba(148,163,184,.18);
+                border-radius: 18px;
+                overflow: hidden;
+                box-shadow: 0 12px 28px rgba(15,23,42,.06);
+                backdrop-filter: blur(10px);
+            }}
+            .chat-list-link {{ display:block; text-decoration:none; color:inherit; }}
+            .chat-list-row {{
+                display:flex; align-items:center; gap:12px; padding:14px 12px;
+                transition: background .18s ease, transform .18s ease;
+            }}
+            .chat-list-link:hover .chat-list-row {{ background: rgba(37,99,235,.05); }}
+            .chat-avatar-wrap .profile-img {{ width:54px; height:54px; border-radius:50%; object-fit:cover; }}
+            .chat-main-col {{ flex:1; min-width:0; }}
+            .chat-row-top, .chat-row-bottom {{
+                display:flex; align-items:center; justify-content:space-between; gap:10px;
+            }}
+            .chat-row-bottom {{ margin-top:6px; }}
+            .chat-time {{ font-size:12px; color:#64748b; white-space:nowrap; }}
+            .chat-preview {{
+                min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+                font-size:14px;
+            }}
+            .chat-unread-badge {{
+                min-width:22px; height:22px; padding:0 7px; border-radius:999px;
+                background:#2563eb; color:#fff; display:flex; align-items:center; justify-content:center;
+                font-size:12px; font-weight:700; box-shadow:0 6px 14px rgba(37,99,235,.18);
+            }}
+            .chat-list-header {{
+                display:flex; align-items:center; justify-content:space-between; gap:10px;
+                margin-bottom:10px; flex-wrap:wrap;
+            }}
+            .chat-list-chip {{
+                display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:999px;
+                background:rgba(37,99,235,.08); color:#1d4ed8; font-size:13px; font-weight:700;
+                border:1px solid rgba(37,99,235,.12);
+            }}
+            @media (max-width: 640px) {{
+                .chat-list-row {{ padding:12px 10px; gap:10px; }}
+                .chat-avatar-wrap .profile-img {{ width:48px; height:48px; }}
+                .chat-preview {{ font-size:13px; }}
+            }}
+        </style>
         <div class="container">
             <a href="/workers"><button>رجوع</button></a>
             <h2>{title}</h2>
-            <div class="inline" style="margin-bottom:8px;">
-                <span class="badge">غير المقروء: {total_unread}</span>
-                <span class="badge">تحديث تلقائي كل 10 ثواني</span>
+            <div class="chat-list-header">
+                <div class="chat-list-chip">💬 غير المقروء: {total_unread}</div>
             </div>
-            <div class="section-subtitle">هنا تظهر المحادثات الثابتة بين الزائر والمختص. افتح أي محادثة للرد داخل نفس الصفحة.</div>
-            {messages_html}
+            <div class="chat-list-shell">
+                {messages_html}
+            </div>
         </div>
         <script>
         setInterval(function() {{
