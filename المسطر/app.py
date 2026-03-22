@@ -4487,10 +4487,20 @@ def edit_profile():
                     )
 
                 saved_profile = save_uploaded_file(profile_file)
-                if saved_profile:
-                    if user["profile_pic"]:
-                        delete_file_if_exists(user["profile_pic"])
-                    new_profile_pic = saved_profile
+                if not saved_profile:
+                    return render_template_string(
+                        STYLE + (settings_corner() if 'user' in session else '') + """
+                        <div class="container">
+                            <div class="msg">فشل رفع الصورة، حاول بصورة أصغر أو أعد المحاولة بعد قليل</div>
+                            <a href="/edit-profile"><button>رجوع</button></a>
+                        </div>
+                        </body></html>
+                        """
+                    )
+
+                if user["profile_pic"]:
+                    delete_file_if_exists(user["profile_pic"])
+                new_profile_pic = saved_profile
 
             cur.execute(
                 "UPDATE users SET name=?, phone=?, email=?, section=?, governorate=?, city=?, exp=?, bio=?, profile_pic=? WHERE id=?",
