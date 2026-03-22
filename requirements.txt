@@ -2,3 +2,4 @@ flask
 gunicorn
 webauthn==2.7.1
 psycopg2-binary>=2.9
+cloudinary>=1.41.0
