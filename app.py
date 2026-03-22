@@ -18,21 +18,12 @@ import datetime
 import time
 import urllib.request
 import urllib.error
-from urllib.parse import quote
 
 from flask import Flask, render_template_string, request, redirect, session, url_for, send_from_directory, jsonify
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
-
-try:
-    import cloudinary
-    import cloudinary.uploader
-    CLOUDINARY_SDK_AVAILABLE = True
-except Exception:
-    cloudinary = None
-    CLOUDINARY_SDK_AVAILABLE = False
 # For PostgreSQL on Render free plan, install psycopg2-binary in requirements.txt
 
 try:
@@ -108,26 +99,6 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 DB_PATH = os.path.join(APP_DATA_DIR or BASE_DIR, "database.db")
 UPLOAD_FOLDER = os.environ.get("UPLOAD_FOLDER", "").strip() or os.path.join(APP_DATA_DIR or BASE_DIR, "static", "uploads")
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-
-CLOUDINARY_URL = os.environ.get("CLOUDINARY_URL", "").strip()
-CLOUDINARY_CLOUD_NAME = os.environ.get("CLOUDINARY_CLOUD_NAME", "").strip()
-CLOUDINARY_API_KEY = os.environ.get("CLOUDINARY_API_KEY", "").strip()
-CLOUDINARY_API_SECRET = os.environ.get("CLOUDINARY_API_SECRET", "").strip()
-CLOUDINARY_UPLOAD_FOLDER = os.environ.get("CLOUDINARY_UPLOAD_FOLDER", "musattar").strip() or "musattar"
-CLOUDINARY_ENABLED = bool(CLOUDINARY_SDK_AVAILABLE and (CLOUDINARY_URL or (CLOUDINARY_CLOUD_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET)))
-if CLOUDINARY_ENABLED:
-    if CLOUDINARY_URL:
-        cloudinary.config(cloudinary_url=CLOUDINARY_URL, secure=True)
-    else:
-        cloudinary.config(
-            cloud_name=CLOUDINARY_CLOUD_NAME,
-            api_key=CLOUDINARY_API_KEY,
-            api_secret=CLOUDINARY_API_SECRET,
-            secure=True,
-        )
-
-print("CLOUDINARY_ENABLED =", CLOUDINARY_ENABLED)
-print("CLOUDINARY_CLOUD_NAME =", CLOUDINARY_CLOUD_NAME)
 
 APP_ENV = os.environ.get("APP_ENV", os.environ.get("FLASK_ENV", "production")).strip().lower()
 USING_POSTGRES = bool(DATABASE_URL and PSYCOPG2_AVAILABLE)
@@ -569,34 +540,7 @@ def allowed_file(filename):
     return True
 
 
-def make_cloudinary_ref(public_id, secure_url):
-    return f"cld|{public_id}|{secure_url}"
-
-
-def parse_cloudinary_ref(value):
-    value = (value or "").strip()
-    if not value.startswith("cld|"):
-        return None
-    parts = value.split("|", 2)
-    if len(parts) != 3:
-        return None
-    return {"public_id": parts[1], "url": parts[2]}
-
-
-def media_url(value):
-    value = (value or "").strip()
-    if not value:
-        return ""
-    cloud_ref = parse_cloudinary_ref(value)
-    if cloud_ref:
-        return cloud_ref["url"]
-    if value.startswith("http://") or value.startswith("https://"):
-        return value
-    return url_for("uploaded_file", filename=value)
-
-
 def save_uploaded_file(file_obj):
-    print("UPLOAD DEBUG - CLOUDINARY_ENABLED =", CLOUDINARY_ENABLED)
     if not file_obj or file_obj.filename == "":
         return ""
 
@@ -605,36 +549,20 @@ def save_uploaded_file(file_obj):
         return ""
 
     original = secure_filename(file_obj.filename)
-    ext = ""
     if "." in original:
         ext = original.rsplit(".", 1)[1].lower()
         if ext == "jpeg":
             ext = "jpg"
+        unique_name = f"{uuid.uuid4().hex}.{ext}"
+    else:
+        unique_name = f"{uuid.uuid4().hex}"
+    save_path = os.path.join(app.config["UPLOAD_FOLDER"], unique_name)
 
     try:
         file_obj.stream.seek(0)
     except Exception:
         pass
 
-    if CLOUDINARY_ENABLED:
-        public_id = f"{CLOUDINARY_UPLOAD_FOLDER}/{uuid.uuid4().hex}"
-        upload_options = {
-            "folder": CLOUDINARY_UPLOAD_FOLDER,
-            "public_id": public_id,
-            "resource_type": "image",
-            "overwrite": True,
-        }
-        if ext:
-            upload_options["format"] = ext
-        result = cloudinary.uploader.upload(file_obj, **upload_options)
-        secure_url = (result or {}).get("secure_url", "")
-        uploaded_public_id = (result or {}).get("public_id", public_id)
-        if secure_url:
-            return make_cloudinary_ref(uploaded_public_id, secure_url)
-        return ""
-
-    unique_name = f"{uuid.uuid4().hex}.{ext}" if ext else f"{uuid.uuid4().hex}"
-    save_path = os.path.join(app.config["UPLOAD_FOLDER"], unique_name)
     file_obj.save(save_path)
     return unique_name
 
@@ -642,15 +570,6 @@ def save_uploaded_file(file_obj):
 def delete_file_if_exists(filename):
     if not filename:
         return
-
-    cloud_ref = parse_cloudinary_ref(filename)
-    if cloud_ref and CLOUDINARY_ENABLED:
-        try:
-            cloudinary.uploader.destroy(cloud_ref["public_id"], resource_type="image", invalidate=True)
-        except Exception:
-            pass
-        return
-
     path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
     if os.path.exists(path):
         try:
@@ -695,20 +614,17 @@ def insert_user_record(con, values_dict):
         ))
 
 
-@app.route("/uploads/<path:filename>")
+@app.route("/uploads/<filename>")
 def uploaded_file(filename):
     return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 
 
-@app.route("/view-image")
-def view_image():
+@app.route("/view-image/<filename>")
+def view_image(filename):
     back = request.args.get("back", "/workers")
     if not back.startswith("/"):
         back = "/workers"
-    image_ref = (request.args.get("image") or "").strip()
-    image_url = media_url(image_ref)
-    if not image_url:
-        return redirect(back)
+    image_url = url_for("uploaded_file", filename=filename)
     return render_template_string(
         STYLE + (settings_corner() if 'user' in session else '') + f"""
         <div class="container narrow-container" style="text-align:center;">
@@ -2078,7 +1994,7 @@ def manage_work_images(user_id):
     previews = ""
     if existing_images:
         previews = "<div class='work-grid'>" + "".join(
-            f"<label style='display:block;text-align:center;'><img src='{media_url(img)}' alt='work'><div class='small'><input type='checkbox' name='remove_images' value='{img}'> حذف هذه الصورة</div></label>"
+            f"<label style='display:block;text-align:center;'><img src='{url_for('uploaded_file', filename=img)}' alt='work'><div class='small'><input type='checkbox' name='remove_images' value='{img}'> حذف هذه الصورة</div></label>"
             for img in existing_images
         ) + "</div>"
     else:
@@ -2493,11 +2409,7 @@ def build_conversation_messages_html(messages, current_user, other):
 
 def profile_thumb_html(filename, size_class="profile-img"):
     if filename:
-        placeholder_class = "profile-placeholder-large" if size_class == "profile-img-large" else "profile-placeholder"
-        return (
-            f'<img src="{media_url(filename)}" class="{size_class}" alt="" '
-            f'onerror="this.outerHTML=\'<div class=&quot;{placeholder_class}&quot;>👤</div>\'">'
-        )
+        return f'<img src="{url_for("uploaded_file", filename=filename)}" class="{size_class}" alt="profile">'
     if size_class == "profile-img-large":
         return '<div class="profile-placeholder-large">👤</div>'
     return '<div class="profile-placeholder">👤</div>'
@@ -2505,7 +2417,7 @@ def profile_thumb_html(filename, size_class="profile-img"):
 
 def worker_card(worker):
     profile_html = (
-        f'<img src="{media_url(worker["profile_pic"])}" class="profile-img" alt="" onerror="this.outerHTML=\'<div class=&quot;profile-placeholder&quot;>👤</div>\'">'
+        f'<img src="{url_for("uploaded_file", filename=worker["profile_pic"])}" class="profile-img" alt="profile">'
         if worker["profile_pic"]
         else '<div class="profile-placeholder">👤</div>'
     )
@@ -2515,7 +2427,7 @@ def worker_card(worker):
     if imgs:
         blocks = []
         for img in imgs[:6]:
-            blocks.append(f'<img src="{media_url(img)}" alt="work" class="work-thumb">')
+            blocks.append(f'<img src="{url_for("uploaded_file", filename=img)}" alt="work" class="work-thumb">')
         work_images_html = f'<div class="work-grid">{"".join(blocks)}</div>'
 
     phone_html = f'<div class="info-chip"><strong>الهاتف</strong><div>{worker["phone"]}</div></div>' if worker["show_phone"] else ""
@@ -2771,7 +2683,7 @@ def worker_profile(user_id):
     avg_rating, rating_count = get_worker_rating_summary(user_id)
     stars = render_stars(avg_rating)
     profile_html = (
-        f'<img src="{media_url(worker["profile_pic"])}" class="profile-img-large" alt="" onerror="this.outerHTML=\'<div class=&quot;profile-placeholder-large&quot;>👤</div>\'">'
+        f'<img src="{url_for("uploaded_file", filename=worker["profile_pic"])}" class="profile-img-large" alt="profile">'
         if worker["profile_pic"]
         else '<div class="profile-placeholder-large">👤</div>'
     )
@@ -2780,7 +2692,7 @@ def worker_profile(user_id):
     work_images_html = ""
     if imgs:
         work_images_html = '<div class="work-grid">' + "".join(
-            f'<a href="{url_for("view_image")}?image={quote(img, safe="")}&back=/worker/{worker["id"]}"><img src="{media_url(img)}" alt="work" class="work-thumb"></a>' for img in imgs
+            f'<a href="{url_for("view_image", filename=img)}?back=/worker/{worker["id"]}"><img src="{url_for("uploaded_file", filename=img)}" alt="work" class="work-thumb"></a>' for img in imgs
         ) + '</div>'
 
     phone_html = f'<div class="detail-box"><strong>الهاتف</strong>{worker["phone"]}</div>' if worker["show_phone"] else ""
@@ -4356,7 +4268,7 @@ def profile():
     stars = render_stars(avg_rating)
 
     profile_html = (
-        f'<img src="{media_url(user["profile_pic"])}" class="profile-img-large" alt="" onerror="this.outerHTML=\'<div class=&quot;profile-placeholder-large&quot;>👤</div>\'">'
+        f'<img src="{url_for("uploaded_file", filename=user["profile_pic"])}" class="profile-img-large" alt="profile">'
         if user["profile_pic"]
         else '<div class="profile-placeholder-large">👤</div>'
     )
@@ -4365,7 +4277,7 @@ def profile():
     work_images_html = ""
     if imgs:
         work_images_html = '<div class="work-grid">' + "".join(
-            f'<img src="{media_url(img)}" alt="work">' for img in imgs
+            f'<img src="{url_for("uploaded_file", filename=img)}" alt="work">' for img in imgs
         ) + '</div>'
 
     return render_template_string(
@@ -4575,10 +4487,20 @@ def edit_profile():
                     )
 
                 saved_profile = save_uploaded_file(profile_file)
-                if saved_profile:
-                    if user["profile_pic"]:
-                        delete_file_if_exists(user["profile_pic"])
-                    new_profile_pic = saved_profile
+                if not saved_profile:
+                    return render_template_string(
+                        STYLE + (settings_corner() if 'user' in session else '') + """
+                        <div class="container">
+                            <div class="msg">فشل رفع الصورة، حاول بصورة أصغر أو أعد المحاولة بعد قليل</div>
+                            <a href="/edit-profile"><button>رجوع</button></a>
+                        </div>
+                        </body></html>
+                        """
+                    )
+
+                if user["profile_pic"]:
+                    delete_file_if_exists(user["profile_pic"])
+                new_profile_pic = saved_profile
 
             cur.execute(
                 "UPDATE users SET name=?, phone=?, email=?, section=?, governorate=?, city=?, exp=?, bio=?, profile_pic=? WHERE id=?",
@@ -4598,7 +4520,7 @@ def edit_profile():
         )
 
     profile_preview = (
-        f'<img src="{media_url(user["profile_pic"])}" class="profile-img-large" alt="" onerror="this.outerHTML=\'<div class=&quot;profile-placeholder-large&quot;>👤</div>\'">'
+        f'<img src="{url_for("uploaded_file", filename=user["profile_pic"])}" class="profile-img-large" alt="profile">'
         if user["profile_pic"]
         else '<div class="profile-placeholder-large">👤</div>'
     )
