@@ -2409,7 +2409,12 @@ def build_conversation_messages_html(messages, current_user, other):
 
 def profile_thumb_html(filename, size_class="profile-img"):
     if filename:
-        return f'<img src="{url_for("uploaded_file", filename=filename)}" class="{size_class}" alt="profile">'
+        placeholder_class = "profile-placeholder-large" if size_class == "profile-img-large" else "profile-placeholder"
+        return (
+            f'<img src="{url_for("uploaded_file", filename=filename)}" '
+            f'class="{size_class}" alt="" '
+            f'onerror="this.outerHTML=\'<div class=&quot;{placeholder_class}&quot;>👤</div>\'">'
+        )
     if size_class == "profile-img-large":
         return '<div class="profile-placeholder-large">👤</div>'
     return '<div class="profile-placeholder">👤</div>'
@@ -2417,7 +2422,9 @@ def profile_thumb_html(filename, size_class="profile-img"):
 
 def worker_card(worker):
     profile_html = (
-        f'<img src="{url_for("uploaded_file", filename=worker["profile_pic"])}" class="profile-img" alt="profile">'
+        f'<img src="{url_for("uploaded_file", filename=worker["profile_pic"])}" '
+        f'class="profile-img" alt="" '
+        f'onerror="this.outerHTML=\'<div class=&quot;profile-placeholder&quot;>👤</div>\'">'
         if worker["profile_pic"]
         else '<div class="profile-placeholder">👤</div>'
     )
