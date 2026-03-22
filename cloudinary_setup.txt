@@ -1,0 +1,21 @@
+1) Replace your current app.py with app_cloudinary.py and rename it to app.py.
+
+2) In requirements.txt add this line:
+cloudinary>=1.41.0
+
+3) In Render -> Environment add ONE of these setups:
+
+Option A (easiest):
+CLOUDINARY_URL=cloudinary://API_KEY:API_SECRET@CLOUD_NAME
+
+Option B:
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=your_api_key
+CLOUDINARY_API_SECRET=your_api_secret
+CLOUDINARY_UPLOAD_FOLDER=musattar
+
+4) Push to GitHub and redeploy on Render.
+
+5) Important:
+- Old local images that were already lost on Render will not come back automatically.
+- New uploads after this change will go to Cloudinary and will stay after redeploy.
