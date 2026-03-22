@@ -642,37 +642,30 @@ def save_uploaded_file(file_obj):
     else:
         ext = "jpg"
 
-    if CLOUDINARY_ENABLED:
-        try:
-            try:
-                file_obj.stream.seek(0)
-            except Exception:
-                pass
-            upload_result = cloudinary.uploader.upload(
-                file_obj.stream,
-                resource_type="image",
-                folder=CLOUDINARY_UPLOAD_FOLDER,
-                public_id=f"{uuid.uuid4().hex}",
-                format=ext,
-                overwrite=True
-            )
-            secure_url = (upload_result.get("secure_url") or "").strip()
-            public_id = (upload_result.get("public_id") or "").strip()
-            if secure_url and public_id:
-                return make_cloudinary_ref(public_id, secure_url)
-        except Exception as e:
-            print("CLOUDINARY UPLOAD ERROR:", repr(e))
-
-    unique_name = f"{uuid.uuid4().hex}.{ext}" if ext else f"{uuid.uuid4().hex}"
-    save_path = os.path.join(app.config["UPLOAD_FOLDER"], unique_name)
+    if not CLOUDINARY_ENABLED:
+        raise RuntimeError("Cloudinary غير مفعل في إعدادات البيئة")
 
     try:
-        file_obj.stream.seek(0)
-    except Exception:
-        pass
-
-    file_obj.save(save_path)
-    return unique_name
+        try:
+            file_obj.stream.seek(0)
+        except Exception:
+            pass
+        upload_result = cloudinary.uploader.upload(
+            file_obj.stream,
+            resource_type="image",
+            folder=CLOUDINARY_UPLOAD_FOLDER,
+            public_id=f"{uuid.uuid4().hex}",
+            format=ext,
+            overwrite=True
+        )
+        secure_url = (upload_result.get("secure_url") or "").strip()
+        public_id = (upload_result.get("public_id") or "").strip()
+        if not secure_url or not public_id:
+            raise RuntimeError("فشل Cloudinary بإرجاع رابط الصورة")
+        return make_cloudinary_ref(public_id, secure_url)
+    except Exception as e:
+        print("CLOUDINARY UPLOAD ERROR:", repr(e))
+        raise RuntimeError("فشل رفع الصورة إلى Cloudinary")
 
 
 def delete_file_if_exists(filename):
@@ -2185,7 +2178,10 @@ def register():
         valid_img, msg = validate_uploaded_image(profile_file)
         if not valid_img:
             return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f'<div class="container"><div class="msg">{msg}</div><a href="/register"><button>رجوع</button></a></div></body></html>')
-        profile_pic = save_uploaded_file(profile_file)
+        try:
+            profile_pic = save_uploaded_file(profile_file)
+        except Exception as e:
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f'<div class="container"><div class="msg">فشل رفع الصورة الشخصية: {str(e)}</div><a href="/register"><button>رجوع</button></a></div></body></html>')
 
         work_images_list = []
         if "work_images" in request.files:
@@ -2200,7 +2196,11 @@ def register():
                     if not valid_img:
                         cleanup_saved_files({"profile_pic": profile_pic, "work_images": ",".join(work_images_list)})
                         return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f'<div class="container"><div class="msg">{msg}</div><a href="/register"><button>رجوع</button></a></div></body></html>')
-                    saved = save_uploaded_file(file_obj)
+                    try:
+                        saved = save_uploaded_file(file_obj)
+                    except Exception as e:
+                        cleanup_saved_files({"profile_pic": profile_pic, "work_images": ",".join(work_images_list)})
+                        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f'<div class="container"><div class="msg">فشل رفع إحدى صور الأعمال: {str(e)}</div><a href="/register"><button>رجوع</button></a></div></body></html>')
                     if saved:
                         work_images_list.append(saved)
 
@@ -4610,7 +4610,19 @@ def edit_profile():
                         """
                     )
 
-                saved_profile = save_uploaded_file(profile_file)
+                try:
+                    saved_profile = save_uploaded_file(profile_file)
+                except Exception as e:
+                    return render_template_string(
+                        STYLE + (settings_corner() if 'user' in session else '') + f"""
+                        <div class="container">
+                            <div class="msg">فشل رفع الصورة: {str(e)}</div>
+                            <a href="/edit-profile"><button>رجوع</button></a>
+                        </div>
+                        </body></html>
+                        """
+                    )
+
                 if saved_profile:
                     if user["profile_pic"]:
                         delete_file_if_exists(user["profile_pic"])
