@@ -566,12 +566,12 @@ def allowed_file(filename):
     return True
 
 
-def is_cloudinary_ref(value):
-    return bool(value and isinstance(value, str) and value.startswith("cld|"))
-
-
 def make_cloudinary_ref(public_id, secure_url):
     return f"cld|{public_id}|{secure_url}"
+
+
+def is_cloudinary_ref(value):
+    return bool(value and isinstance(value, str) and value.startswith("cld|"))
 
 
 def parse_cloudinary_ref(value):
@@ -584,23 +584,14 @@ def parse_cloudinary_ref(value):
     return {"public_id": parts[1], "secure_url": parts[2]}
 
 
-def local_upload_exists(value):
+def local_media_exists(value):
     value = (value or "").strip()
-    if not value:
+    if not value or is_cloudinary_ref(value):
         return False
-    return os.path.exists(os.path.join(app.config["UPLOAD_FOLDER"], value))
-
-
-def media_exists(value):
-    value = (value or "").strip()
-    if not value:
-        return False
-    ref = parse_cloudinary_ref(value)
-    if ref and ref.get("secure_url"):
-        return True
     if value.startswith("http://") or value.startswith("https://"):
         return True
-    return local_upload_exists(value)
+    path = os.path.join(app.config["UPLOAD_FOLDER"], value)
+    return os.path.exists(path)
 
 
 def media_url(value):
@@ -612,17 +603,19 @@ def media_url(value):
         return ref["secure_url"]
     if value.startswith("http://") or value.startswith("https://"):
         return value
-    if local_upload_exists(value):
+    if local_media_exists(value):
         return url_for("uploaded_file", filename=value)
     return ""
 
 
 def external_image_href(value, back="/workers"):
-    if not value or not media_exists(value):
+    if not value:
         return "#"
     if is_cloudinary_ref(value):
         return media_url(value)
-    return f'{url_for("view_image")}?image={quote(value, safe="")}&back={quote(back, safe="/")}'
+    if local_media_exists(value):
+        return f'{url_for("view_image")}?image={quote(value, safe="")}&back={back}'
+    return "#"
 
 
 def save_uploaded_file(file_obj):
@@ -2539,10 +2532,14 @@ def profile_thumb_html(filename, size_class="profile-img"):
 
 
 def worker_card(worker):
-    profile_html = profile_thumb_html(worker["profile_pic"], "profile-img")
+    profile_html = (
+        f'<img src="{media_url(worker["profile_pic"])}" class="profile-img" alt="" onerror="this.outerHTML=\'<div class=&quot;profile-placeholder&quot;>👤</div>\'">'
+        if worker["profile_pic"]
+        else '<div class="profile-placeholder">👤</div>'
+    )
 
     work_images_html = ""
-    imgs = [x.strip() for x in (worker["work_images"] or "").split(",") if x.strip() and media_exists(x.strip())]
+    imgs = [x.strip() for x in (worker["work_images"] or "").split(",") if x.strip()]
     if imgs:
         blocks = []
         for img in imgs[:6]:
@@ -2801,9 +2798,13 @@ def worker_profile(user_id):
 
     avg_rating, rating_count = get_worker_rating_summary(user_id)
     stars = render_stars(avg_rating)
-    profile_html = profile_thumb_html(worker["profile_pic"], "profile-img-large")
+    profile_html = (
+        f'<img src="{media_url(worker["profile_pic"])}" class="profile-img-large" alt="" onerror="this.outerHTML=\'<div class=&quot;profile-placeholder-large&quot;>👤</div>\'">'
+        if worker["profile_pic"]
+        else '<div class="profile-placeholder-large">👤</div>'
+    )
 
-    imgs = [x.strip() for x in (worker["work_images"] or "").split(",") if x.strip() and media_exists(x.strip())]
+    imgs = [x.strip() for x in (worker["work_images"] or "").split(",") if x.strip()]
     work_images_html = ""
     if imgs:
         work_images_html = '<div class="work-grid">' + "".join(
@@ -4382,7 +4383,11 @@ def profile():
     avg_rating, rating_count = get_worker_rating_summary(user["id"])
     stars = render_stars(avg_rating)
 
-    profile_html = profile_thumb_html(user["profile_pic"], "profile-img-large")
+    profile_html = (
+        f'<img src="{media_url(user["profile_pic"])}" class="profile-img-large" alt="" onerror="this.outerHTML=\'<div class=&quot;profile-placeholder-large&quot;>👤</div>\'">'
+        if user["profile_pic"]
+        else '<div class="profile-placeholder-large">👤</div>'
+    )
 
     imgs = [x.strip() for x in (user["work_images"] or "").split(",") if x.strip()]
     work_images_html = ""
@@ -4599,7 +4604,9 @@ def edit_profile():
 
                 try:
                     saved_profile = save_uploaded_file(profile_file)
+                    print("EDIT_PROFILE_UPLOAD_OK:", saved_profile)
                 except Exception as e:
+                    print("EDIT_PROFILE_UPLOAD_ERROR:", repr(e))
                     return render_template_string(
                         STYLE + (settings_corner() if 'user' in session else '') + f"""
                         <div class="container">
@@ -4620,6 +4627,11 @@ def edit_profile():
                 (name, phone, email, section, governorate, city, exp, bio, new_profile_pic, user["id"])
             )
             con.commit()
+            try:
+                stored_user = cur.execute("SELECT profile_pic FROM users WHERE id=?", (user["id"],)).fetchone()
+                print("EDIT_PROFILE_STORED_PROFILE_PIC:", (stored_user or {}).get("profile_pic", ""))
+            except Exception as e:
+                print("EDIT_PROFILE_VERIFY_ERROR:", repr(e))
 
         session["user"] = name
         return render_template_string(
@@ -4632,7 +4644,11 @@ def edit_profile():
             """
         )
 
-    profile_preview = profile_thumb_html(user["profile_pic"], "profile-img-large")
+    profile_preview = (
+        f'<img src="{media_url(user["profile_pic"])}" class="profile-img-large" alt="" onerror="this.outerHTML=\'<div class=&quot;profile-placeholder-large&quot;>👤</div>\'">'
+        if user["profile_pic"]
+        else '<div class="profile-placeholder-large">👤</div>'
+    )
 
     selected_group = get_main_group_by_specialty(user["section"] or "")
     group_options = build_main_groups_options(selected_group)
