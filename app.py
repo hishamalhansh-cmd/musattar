@@ -126,6 +126,9 @@ if CLOUDINARY_ENABLED:
             secure=True,
         )
 
+print("CLOUDINARY_ENABLED =", CLOUDINARY_ENABLED)
+print("CLOUDINARY_CLOUD_NAME =", CLOUDINARY_CLOUD_NAME)
+
 APP_ENV = os.environ.get("APP_ENV", os.environ.get("FLASK_ENV", "production")).strip().lower()
 USING_POSTGRES = bool(DATABASE_URL and PSYCOPG2_AVAILABLE)
 
@@ -593,6 +596,7 @@ def media_url(value):
 
 
 def save_uploaded_file(file_obj):
+    print("UPLOAD DEBUG - CLOUDINARY_ENABLED =", CLOUDINARY_ENABLED)
     if not file_obj or file_obj.filename == "":
         return ""
 
