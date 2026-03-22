@@ -570,12 +570,37 @@ def make_cloudinary_ref(public_id, secure_url):
     return f"cld|{public_id}|{secure_url}"
 
 
+def parse_cloudinary_ref(value):
+    value = (value or "").strip()
+    if not value.startswith("cld|"):
+        return None
+    parts = value.split("|", 2)
+    if len(parts) != 3:
+        return None
+    return {"public_id": parts[1], "url": parts[2]}
+
+
+def media_url(value):
+    value = (value or "").strip()
+    if not value:
+        return ""
+    cloud_ref = parse_cloudinary_ref(value)
+    if cloud_ref:
+        return cloud_ref["url"]
+    if value.startswith("http://") or value.startswith("https://"):
+        return value
+    return url_for("uploaded_file", filename=value)
+
+
 def is_cloudinary_ref(value):
     return bool(value and isinstance(value, str) and value.startswith("cld|"))
 
 
+def make_cloudinary_ref(public_id, secure_url):
+    return f"cld|{public_id}|{secure_url}"
+
+
 def parse_cloudinary_ref(value):
-    value = (value or "").strip()
     if not is_cloudinary_ref(value):
         return None
     parts = value.split("|", 2)
@@ -584,28 +609,13 @@ def parse_cloudinary_ref(value):
     return {"public_id": parts[1], "secure_url": parts[2]}
 
 
-def local_media_exists(value):
-    value = (value or "").strip()
-    if not value or is_cloudinary_ref(value):
-        return False
-    if value.startswith("http://") or value.startswith("https://"):
-        return True
-    path = os.path.join(app.config["UPLOAD_FOLDER"], value)
-    return os.path.exists(path)
-
-
 def media_url(value):
-    value = (value or "").strip()
     if not value:
         return ""
     ref = parse_cloudinary_ref(value)
     if ref and ref.get("secure_url"):
         return ref["secure_url"]
-    if value.startswith("http://") or value.startswith("https://"):
-        return value
-    if local_media_exists(value):
-        return url_for("uploaded_file", filename=value)
-    return ""
+    return url_for("uploaded_file", filename=value)
 
 
 def external_image_href(value, back="/workers"):
@@ -613,9 +623,7 @@ def external_image_href(value, back="/workers"):
         return "#"
     if is_cloudinary_ref(value):
         return media_url(value)
-    if local_media_exists(value):
-        return f'{url_for("view_image")}?image={quote(value, safe="")}&back={back}'
-    return "#"
+    return f'{url_for("view_image", filename=value)}?back={back}'
 
 
 def save_uploaded_file(file_obj):
@@ -740,7 +748,7 @@ def view_image():
             </div>
         </div>
         </body></html>
-        """
+        """, remembered_email=remembered_email
     )
 
 
@@ -1831,6 +1839,7 @@ def visitor_login():
         resp.set_cookie("remember_email", email, max_age=60*60*24*30)
         return resp
 
+    remembered_email = session.get("last_email") or request.cookies.get("remember_email", "")
     return render_template_string(
         STYLE + """
         <div class="container narrow-container" style="margin-top:70px;">
@@ -1838,14 +1847,14 @@ def visitor_login():
             <h2>دخول الزائر</h2>
             <div class="section-subtitle">إذا كان عندك حساب زائر، سجّل دخولك من هنا.</div>
             <form method="post">
-                <input type="email" name="email" placeholder="البريد الإلكتروني" required>
+                <input type="email" name="email" value="{{ remembered_email }}" placeholder="البريد الإلكتروني" required>
                 <input type="password" name="password" placeholder="كلمة السر" required>
                 <button>دخول الزائر</button>
             </form>
             <div class="notice">ما عندك حساب؟ <a href="/visitor/register" style="color:#93c5fd;font-weight:700;">أنشئ حساب جديد</a></div>
         </div>
         </body></html>
-        """
+        """, remembered_email=remembered_email
     )
 
 
@@ -2175,29 +2184,8 @@ def register():
         except Exception as e:
             return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f'<div class="container"><div class="msg">فشل رفع الصورة الشخصية: {str(e)}</div><a href="/register"><button>رجوع</button></a></div></body></html>')
 
-        work_images_list = []
-        if "work_images" in request.files:
-            files = request.files.getlist("work_images")
-            if len(files) > MAX_WORK_IMAGES:
-                cleanup_saved_files({"profile_pic": profile_pic, "work_images": ",".join(work_images_list)})
-                return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f'<div class="container"><div class="msg">الحد الأقصى لأعمالي هو {MAX_WORK_IMAGES}</div><a href="/register"><button>رجوع</button></a></div></body></html>')
-
-            for file_obj in files[:MAX_WORK_IMAGES]:
-                if file_obj and file_obj.filename:
-                    valid_img, msg = validate_uploaded_image(file_obj)
-                    if not valid_img:
-                        cleanup_saved_files({"profile_pic": profile_pic, "work_images": ",".join(work_images_list)})
-                        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f'<div class="container"><div class="msg">{msg}</div><a href="/register"><button>رجوع</button></a></div></body></html>')
-                    try:
-                        saved = save_uploaded_file(file_obj)
-                    except Exception as e:
-                        cleanup_saved_files({"profile_pic": profile_pic, "work_images": ",".join(work_images_list)})
-                        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f'<div class="container"><div class="msg">فشل رفع إحدى صور الأعمال: {str(e)}</div><a href="/register"><button>رجوع</button></a></div></body></html>')
-                    if saved:
-                        work_images_list.append(saved)
-
         d["profile_pic"] = profile_pic
-        d["work_images"] = ",".join(work_images_list)
+        d["work_images"] = ""
         d["password"] = generate_password_hash(d["password"])
 
         try:
@@ -2274,8 +2262,7 @@ def register():
                 <label>الصورة الشخصية</label>
                 <input type="file" name="profile_pic" accept=".png,.jpg,.jpeg,.gif,.webp">
 
-                <label>أعمالي</label>
-                <input type="file" name="work_images" accept=".png,.jpg,.jpeg,.gif,.webp" multiple>
+                <div class="section-subtitle" style="margin-top:8px;">تقدر تضيف صور أعمالك لاحقاً من داخل الحساب بعد التسجيل.</div>
 
                 <button>إنشاء الحساب</button>
             </form>
@@ -4604,9 +4591,7 @@ def edit_profile():
 
                 try:
                     saved_profile = save_uploaded_file(profile_file)
-                    print("EDIT_PROFILE_UPLOAD_OK:", saved_profile)
                 except Exception as e:
-                    print("EDIT_PROFILE_UPLOAD_ERROR:", repr(e))
                     return render_template_string(
                         STYLE + (settings_corner() if 'user' in session else '') + f"""
                         <div class="container">
@@ -4627,11 +4612,6 @@ def edit_profile():
                 (name, phone, email, section, governorate, city, exp, bio, new_profile_pic, user["id"])
             )
             con.commit()
-            try:
-                stored_user = cur.execute("SELECT profile_pic FROM users WHERE id=?", (user["id"],)).fetchone()
-                print("EDIT_PROFILE_STORED_PROFILE_PIC:", (stored_user or {}).get("profile_pic", ""))
-            except Exception as e:
-                print("EDIT_PROFILE_VERIFY_ERROR:", repr(e))
 
         session["user"] = name
         return render_template_string(
