@@ -1,7 +1,6 @@
 import os
 import re
 import sqlite3
-import imghdr
 
 try:
     import psycopg2
