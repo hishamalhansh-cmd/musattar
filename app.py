@@ -1672,14 +1672,14 @@ label input[type="checkbox"]{
 
 
 /* Tuned contrast + tighter specialty layout */
-:root{--text:#13233f;--muted:#54657f;--bg:#f3f6fb;--panel:#ffffff;--card:#ffffff;--border:rgba(37,99,235,.16);--shadow:0 16px 34px rgba(15,23,42,.10);--soft-shadow:0 8px 18px rgba(15,23,42,.08)}
-body{color:var(--text);background:radial-gradient(circle at top right, rgba(37,99,235,.10), transparent 22%),radial-gradient(circle at top left, rgba(212,160,23,.10), transparent 18%),linear-gradient(180deg,#f8fafc 0%, #eef3fa 58%, #edf2f9 100%)}
-.container{background:linear-gradient(180deg,#ffffff 0%, #fbfdff 100%);box-shadow:var(--shadow);padding:18px 18px 16px}
+:root{--text:#13233f;--muted:#54657f;--bg:#f4d35e;--panel:#fffdf7;--card:#fffdf7;--border:rgba(120,88,0,.14);--shadow:0 16px 34px rgba(120,88,0,.12);--soft-shadow:0 8px 18px rgba(120,88,0,.08)}
+body{color:var(--text);background:radial-gradient(circle at top right, rgba(255,255,255,.22), transparent 22%),radial-gradient(circle at top left, rgba(255,255,255,.18), transparent 18%),linear-gradient(180deg,#f7d774 0%, #f4d35e 54%, #efc95a 100%)}
+.container{background:linear-gradient(180deg,#fffdf7 0%, #fff9e8 100%);box-shadow:var(--shadow);padding:18px 18px 16px}
 h1,h2,h3,h4,.specialty-group-card h3,.specialty-name,label{color:var(--text)!important}
 .section-subtitle,.small,.notice,.footer-note,.rating-text{color:var(--muted)!important}
-input,select,textarea{color:var(--text)!important;background:#fff;border:1px solid rgba(37,99,235,.18)}
+input,select,textarea{color:var(--text)!important;background:#fffef9;border:1px solid rgba(120,88,0,.16)}
 input::placeholder, textarea::placeholder{color:#7a8aa3;opacity:1}
-.hero-panel,.card,.specialty-group-card,.search-panel,.settings-group,.settings-profile-wrap,.worker-hero,.comment-card,.admin-stat,.admin-search-box,.admin-user-card,.admin-log-card,.home-feature-card,.home-stat,.home-cta-box{border-color:rgba(37,99,235,.14)!important;box-shadow:var(--soft-shadow)!important}
+.hero-panel,.card,.specialty-group-card,.search-panel,.settings-group,.settings-profile-wrap,.worker-hero,.comment-card,.admin-stat,.admin-search-box,.admin-user-card,.admin-log-card,.home-feature-card,.home-stat,.home-cta-box{border-color:rgba(120,88,0,.12)!important;box-shadow:var(--soft-shadow)!important}
 button{box-shadow:0 10px 20px rgba(37,99,235,.18)!important}
 button.light-btn{background:#f8fbff!important;color:#2455c8!important;border:1px solid rgba(37,99,235,.22)!important}
 .hero-panel,.card,.search-panel,.settings-group,.settings-profile-wrap,.worker-hero,.admin-stat,.admin-search-box,.admin-user-card,.admin-log-card,.home-feature-card,.home-stat,.home-cta-box,.comment-card{padding:15px!important}
