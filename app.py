@@ -752,118 +752,108 @@ def view_image():
     if not back.startswith("/"):
         back = "/workers"
 
-    raw_images = (request.args.get("images") or "").strip()
-    image_list = [x.strip() for x in raw_images.split(",") if x.strip()]
-
     image_ref = (request.args.get("image") or "").strip()
-    if image_ref and image_ref not in image_list:
-        image_list.insert(0, image_ref)
+    images_raw = (request.args.get("images") or "").strip()
 
-    if not image_list:
-        return redirect(back)
+    image_refs = [x.strip() for x in images_raw.split("||") if x.strip()]
+    if not image_refs and image_ref:
+        image_refs = [image_ref]
+
+    image_urls = []
+    for ref in image_refs:
+        url = media_url(ref)
+        if url:
+            image_urls.append(url)
+
+    if not image_urls:
+        single_url = media_url(image_ref)
+        if single_url:
+            image_urls = [single_url]
+        else:
+            return redirect(back)
 
     try:
-        current_index = int(request.args.get("index", "0"))
+        current_index = int(request.args.get("idx", "0"))
     except Exception:
         current_index = 0
 
-    if current_index < 0 or current_index >= len(image_list):
+    if current_index < 0:
         current_index = 0
+    if current_index >= len(image_urls):
+        current_index = len(image_urls) - 1
 
-    urls = []
-    refs = []
-    for img in image_list:
-        url = media_url(img)
-        if url:
-            urls.append(url)
-            refs.append(img)
-
-    if not urls:
-        return redirect(back)
-
-    current_index = min(current_index, len(urls) - 1)
-    start_url = urls[current_index]
-
-    images_json = json.dumps(urls, ensure_ascii=False)
-    refs_json = json.dumps(refs, ensure_ascii=False)
-    back_json = json.dumps(back, ensure_ascii=False)
+    slides_html = "".join(
+        f'<div class="gallery-slide{" active" if i == current_index else ""}"><img src="{url}" alt="work"></div>'
+        for i, url in enumerate(image_urls)
+    )
+    dots_html = "".join(
+        f'<button type="button" class="gallery-dot{" active" if i == current_index else ""}" onclick="showGallerySlide({i})" aria-label="صورة {i + 1}"></button>'
+        for i in range(len(image_urls))
+    )
+    image_urls_json = json.dumps(image_urls, ensure_ascii=False)
 
     return render_template_string(
         STYLE + (settings_corner() if 'user' in session else '') + f"""
-        <div class="container narrow-container" style="text-align:center;">
-            <a href="{back}"><button class="light-btn">رجوع</button></a>
+        <div class="container narrow-container gallery-page-wrap">
+            <div class="gallery-topbar">
+                <a href="{back}"><button class="light-btn">رجوع</button></a>
+                <span class="badge">{len(image_urls)} صورة</span>
+            </div>
             <h2>عرض الصور</h2>
-            <div class="card" style="padding:12px;">
-                <div class="viewer-wrap" id="viewerWrap">
-                    <button type="button" class="viewer-arrow prev" id="prevBtn">‹</button>
-                    <div class="viewer-stage">
-                        <img src="{start_url}" alt="work" class="viewer-img" id="viewerImg">
-                    </div>
-                    <button type="button" class="viewer-arrow next" id="nextBtn">›</button>
+            <div class="section-subtitle">تقدر تسحب يمين ويسار أو تستخدم الأسهم حتى تنتقل بين الصور.</div>
+
+            <div class="card gallery-viewer-card">
+                <div class="gallery-viewer" id="galleryViewer">
+                    {slides_html}
+
+                    <button type="button" class="gallery-nav prev" onclick="moveGallery(-1)">‹</button>
+                    <button type="button" class="gallery-nav next" onclick="moveGallery(1)">›</button>
                 </div>
-                <div class="viewer-counter" id="viewerCounter"></div>
-                <div class="viewer-hint">اسحب الصورة يمين أو يسار للتبديل بين الصور</div>
+                <div class="gallery-counter" id="galleryCounter">{current_index + 1} / {len(image_urls)}</div>
+                <div class="gallery-dots">{dots_html}</div>
             </div>
         </div>
 
         <script>
-        (function() {{
-            const images = {images_json};
-            const refs = {refs_json};
-            let index = {current_index};
-            const img = document.getElementById('viewerImg');
-            const counter = document.getElementById('viewerCounter');
-            const wrap = document.getElementById('viewerWrap');
-            const back = {back_json};
+        const galleryImages = {image_urls_json};
+        let galleryIndex = {current_index};
+        let touchStartX = 0;
+        let touchEndX = 0;
 
-            function updateViewer() {{
-                img.src = images[index];
-                counter.textContent = (index + 1) + ' / ' + images.length;
-                const url = new URL(window.location.href);
-                url.searchParams.set('index', String(index));
-                url.searchParams.set('image', refs[index] || '');
-                url.searchParams.set('images', refs.join(','));
-                url.searchParams.set('back', back);
-                window.history.replaceState(null, '', url.toString());
-            }}
+        function showGallerySlide(index) {{
+            if (!galleryImages.length) return;
+            if (index < 0) index = galleryImages.length - 1;
+            if (index >= galleryImages.length) index = 0;
+            galleryIndex = index;
 
-            function nextImage() {{
-                index = (index + 1) % images.length;
-                updateViewer();
-            }}
+            const slides = document.querySelectorAll('.gallery-slide');
+            const dots = document.querySelectorAll('.gallery-dot');
+            slides.forEach((slide, i) => slide.classList.toggle('active', i === galleryIndex));
+            dots.forEach((dot, i) => dot.classList.toggle('active', i === galleryIndex));
 
-            function prevImage() {{
-                index = (index - 1 + images.length) % images.length;
-                updateViewer();
-            }}
+            const counter = document.getElementById('galleryCounter');
+            if (counter) counter.textContent = `${{galleryIndex + 1}} / ${{galleryImages.length}}`;
+        }}
 
-            document.getElementById('nextBtn').addEventListener('click', nextImage);
-            document.getElementById('prevBtn').addEventListener('click', prevImage);
+        function moveGallery(step) {{
+            showGallerySlide(galleryIndex + step);
+        }}
 
-            let startX = 0;
-            let deltaX = 0;
-
-            wrap.addEventListener('touchstart', function(e) {{
-                startX = e.changedTouches[0].clientX;
-                deltaX = 0;
+        const galleryViewer = document.getElementById('galleryViewer');
+        if (galleryViewer) {{
+            galleryViewer.addEventListener('touchstart', function(e) {{
+                touchStartX = e.changedTouches[0].screenX;
             }}, {{passive:true}});
 
-            wrap.addEventListener('touchmove', function(e) {{
-                deltaX = e.changedTouches[0].clientX - startX;
-            }}, {{passive:true}});
-
-            wrap.addEventListener('touchend', function() {{
-                if (Math.abs(deltaX) > 50) {{
-                    if (deltaX < 0) {{
-                        nextImage();
-                    }} else {{
-                        prevImage();
-                    }}
+            galleryViewer.addEventListener('touchend', function(e) {{
+                touchEndX = e.changedTouches[0].screenX;
+                const diff = touchEndX - touchStartX;
+                if (Math.abs(diff) > 40) {{
+                    if (diff < 0) moveGallery(1);
+                    else moveGallery(-1);
                 }}
-            }});
-
-            updateViewer();
-        }})();
+            }}, {{passive:true}});
+        }}
         </script>
         </body></html>
         """
@@ -1529,8 +1519,8 @@ hr{border:none;border-top:1px solid rgba(47,111,237,.10);margin:18px 0}
 .worker-card{display:grid;grid-template-columns:96px 1fr;gap:16px;align-items:start}
 .worker-info-grid,.detail-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:12px}
 .info-chip,.detail-box{background:#fbfdff;border:1px solid rgba(47,111,237,.12);border-radius:16px;padding:10px 12px;font-size:14px}
-.work-grid{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:12px}
-.work-grid img{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:18px;border:2px solid rgba(47,111,237,.20);background:#f8fbff;max-height:220px}
+.work-grid{grid-template-columns:repeat(3,1fr);margin-top:12px}
+.work-grid img{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:18px;border:2px solid rgba(47,111,237,.20);background:#f8fbff}
 .specialties-grid{grid-template-columns:repeat(3,minmax(0,1fr));margin-top:14px}
 .specialty-group-card{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;min-height:148px;padding:16px 12px}.specialty-group-card h3{margin:8px 0 6px;color:var(--text);font-size:18px;line-height:1.35}.section-subtitle{font-size:13px;line-height:1.5;color:var(--muted);margin-top:2px}.specialty-items{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
 .specialty-item{display:block;background:#ffffff;border:1px solid rgba(47,111,237,.14);border-radius:16px;padding:14px 8px;text-align:center;transition:.2s;color:var(--text)}
@@ -1555,7 +1545,7 @@ input::placeholder, textarea::placeholder{color:#9aa7bb;opacity:1}
 .footer-note{text-align:center;color:var(--muted);font-size:13px;margin-top:16px}
 @media (max-width:960px){.home-grid,.home-features-grid,.home-stats-grid,.admin-stats-grid,.admin-users-grid{grid-template-columns:1fr}.specialties-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.search-inline-grid{grid-template-columns:1fr}}
 @media (max-width:720px){h1{font-size:28px}h2{font-size:24px}.container{padding:16px;border-radius:24px}.worker-card,.worker-hero-grid,.settings-profile-wrap{grid-template-columns:1fr;display:grid}.worker-info-grid,.detail-grid,.work-grid,.specialty-items{grid-template-columns:1fr 1fr}.specialties-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.specialty-group-card{min-height:132px;padding:14px 10px}.specialty-group-card h3{font-size:16px}.section-subtitle{font-size:12px}}
-@media (max-width:520px){.work-grid,.specialty-items{grid-template-columns:1fr 1fr}.worker-info-grid,.detail-grid{grid-template-columns:1fr}.bottom-corner-link{font-size:13px;min-width:74px;padding:0 12px}}
+@media (max-width:520px){.work-grid,.worker-info-grid,.detail-grid,.specialty-items{grid-template-columns:1fr}.bottom-corner-link{font-size:13px;min-width:74px;padding:0 12px}}
 
 .worker-rating-line{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
 .rating-stars{font-size:16px;color:#fbbf24;letter-spacing:2px}
@@ -1758,15 +1748,6 @@ label input[type="checkbox"]{
 .profile-bio-box{margin-top:12px;padding:14px 16px;background:rgba(255,255,255,.04);border:1px solid rgba(96,165,250,.14);border-radius:18px;line-height:1.9}
 .gallery-head,.reviews-head{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap}
 .work-grid img{cursor:zoom-in}
-.viewer-wrap{position:relative;overflow:hidden;border-radius:22px;background:rgba(15,23,42,.92);touch-action:pan-y}
-.viewer-stage{position:relative;width:100%;min-height:68vh;display:flex;align-items:center;justify-content:center}
-.viewer-img{max-width:100%;max-height:78vh;object-fit:contain;border-radius:18px;transition:transform .25s ease}
-.viewer-arrow{position:absolute;top:50%;transform:translateY(-50%);z-index:3;border:none;border-radius:999px;width:48px;height:48px;font-size:26px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.16);color:#fff;backdrop-filter:blur(6px)}
-.viewer-arrow.prev{left:10px}
-.viewer-arrow.next{right:10px}
-.viewer-counter{margin-top:10px;font-size:14px;color:#475569}
-.viewer-hint{margin-top:8px;font-size:13px;color:#64748b}
-.upload-note{margin-top:8px;font-size:13px;color:#64748b}
 .review-card-pro{padding:14px 16px;border-radius:20px;background:rgba(255,255,255,.045);border:1px solid rgba(96,165,250,.14);margin-top:10px}
 .review-top{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:6px}
 .review-name{font-weight:800;color:#fff}
@@ -1780,6 +1761,38 @@ label input[type="checkbox"]{
 .review-form-pro textarea{min-height:120px}
 @media (max-width:720px){.profile-actions-bar{display:grid;grid-template-columns:1fr 1fr}.action-pill{padding:10px 12px;font-size:14px}.stat-mini-grid{grid-template-columns:1fr 1fr}}
 
+
+
+
+/* Gallery layout + swipe viewer fix */
+.work-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:12px}
+.work-grid a.work-tile{display:block;width:100%}
+.work-thumb,.work-grid img{width:100%;height:145px;aspect-ratio:auto;object-fit:cover;border-radius:14px;border:2px solid rgba(47,111,237,.20);background:#f8fbff;display:block}
+.work-grid label img{margin-bottom:8px}
+.gallery-page-wrap{max-width:760px}
+.gallery-topbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.gallery-viewer-card{padding:14px}
+.gallery-viewer{position:relative;overflow:hidden;border-radius:20px;background:rgba(15,23,42,.04);min-height:280px}
+.gallery-slide{display:none;align-items:center;justify-content:center;min-height:280px}
+.gallery-slide.active{display:flex}
+.gallery-slide img{width:100%;max-height:76vh;object-fit:contain;background:#f8fbff;border-radius:18px}
+.gallery-nav{position:absolute;top:50%;transform:translateY(-50%);width:46px;height:46px;border-radius:999px;border:none;background:rgba(15,23,42,.55);color:#fff;font-size:28px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:2}
+.gallery-nav.prev{right:12px}
+.gallery-nav.next{left:12px}
+.gallery-counter{text-align:center;font-weight:700;margin-top:12px}
+.gallery-dots{display:flex;justify-content:center;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px}
+.gallery-dot{width:10px;height:10px;border-radius:999px;border:none;background:rgba(148,163,184,.55);padding:0;cursor:pointer}
+.gallery-dot.active{background:#2563eb;transform:scale(1.15)}
+@media (max-width:720px){
+  .work-grid{grid-template-columns:repeat(2,minmax(0,1fr)) !important;gap:10px}
+  .work-thumb,.work-grid img{height:128px}
+}
+@media (max-width:520px){
+  .work-grid{grid-template-columns:repeat(2,minmax(0,1fr)) !important;gap:8px}
+  .work-thumb,.work-grid img{height:118px;border-radius:12px}
+  .gallery-nav{width:40px;height:40px;font-size:24px}
+  .gallery-slide,.gallery-viewer{min-height:220px}
+}
 
 /* Tuned contrast + tighter specialty layout */
 :root{--text:#13233f;--muted:#54657f;--bg:#f4d35e;--panel:#fffdf7;--card:#fffdf7;--border:rgba(120,88,0,.14);--shadow:0 16px 34px rgba(120,88,0,.12);--soft-shadow:0 8px 18px rgba(120,88,0,.08)}
@@ -1990,7 +2003,7 @@ HOME_HTML = STYLE + """
     </form>
 
     <div class="inline" style="justify-content:space-between;margin-top:12px;">
-        <a href="/register" style="color:#60a5fa;font-weight:700;">إنشاء حساب</a>
+        <a href="/register" style="color:#60a5fa;font-weight:700;">إنشاء حساب اختصاصي</a>
         <a href="/forgot" style="color:#cbd5e1;">نسيت كلمة السر</a>
     </div>
 </div>
@@ -2356,7 +2369,6 @@ def manage_work_images(user_id):
                 {previews}
                 <label>إضافة صور جديدة</label>
                 <input type="file" name="work_images" accept=".png,.jpg,.jpeg,.gif,.webp" multiple>
-                <div class="upload-note">تقدر تختار أكثر من صورة دفعة وحدة.</div>
                 <button>حفظ التعديلات</button>
             </form>
         </div>
@@ -2761,9 +2773,10 @@ def worker_card(worker):
     work_images_html = ""
     imgs = [x.strip() for x in (worker["work_images"] or "").split(",") if x.strip()]
     if imgs:
+        gallery_refs = quote("||".join(imgs), safe="")
         blocks = []
-        for img in imgs[:6]:
-            blocks.append(f'<img src="{media_url(img)}" alt="work" class="work-thumb">')
+        for idx, img in enumerate(imgs[:6]):
+            blocks.append(f'<a class="work-tile" href="{url_for("view_image")}?image={quote(img, safe="")}&images={gallery_refs}&idx={idx}&back=/worker/{worker["id"]}"><img src="{media_url(img)}" alt="work" class="work-thumb"></a>')
         work_images_html = f'<div class="work-grid">{"".join(blocks)}</div>'
 
     phone_html = f'<div class="info-chip"><strong>الهاتف</strong><div>{worker["phone"]}</div></div>' if worker["show_phone"] else ""
@@ -3026,9 +3039,9 @@ def worker_profile(user_id):
     imgs = [x.strip() for x in (worker["work_images"] or "").split(",") if x.strip()]
     work_images_html = ""
     if imgs:
-        images_query = quote(",".join(imgs), safe="")
+        gallery_refs = quote("||".join(imgs), safe="")
         work_images_html = '<div class="work-grid">' + "".join(
-            f'<a href="{url_for("view_image")}?image={quote(img, safe="")}&images={images_query}&index={i}&back=/worker/{worker["id"]}"><img src="{media_url(img)}" alt="work" class="work-thumb"></a>' for i, img in enumerate(imgs)
+            f'<a class="work-tile" href="{url_for("view_image")}?image={quote(img, safe="")}&images={gallery_refs}&idx={idx}&back=/worker/{worker["id"]}"><img src="{media_url(img)}" alt="work" class="work-thumb"></a>' for idx, img in enumerate(imgs)
         ) + '</div>'
 
     phone_html = f'<div class="detail-box"><strong>الهاتف</strong>{worker["phone"]}</div>' if worker["show_phone"] else ""
@@ -4613,8 +4626,9 @@ def profile():
     imgs = [x.strip() for x in (user["work_images"] or "").split(",") if x.strip()]
     work_images_html = ""
     if imgs:
+        gallery_refs = quote("||".join(imgs), safe="")
         work_images_html = '<div class="work-grid">' + "".join(
-            f'<img src="{media_url(img)}" alt="work">' for img in imgs
+            f'<a class="work-tile" href="{url_for("view_image")}?image={quote(img, safe="")}&images={gallery_refs}&idx={idx}&back=/profile"><img src="{media_url(img)}" alt="work" class="work-thumb"></a>' for idx, img in enumerate(imgs)
         ) + '</div>'
 
     return render_template_string(
@@ -4906,7 +4920,7 @@ def edit_profile():
             </form>
 
             <a href="/change-password"><button>تغيير كلمة المرور</button></a>
-            <a href="/manage-work-images/{user['id']}"><button>إدارة أعمالي ورفع عدة صور</button></a>
+            <a href="/manage-work-images/{user['id']}"><button>إدارة أعمالي</button></a>
             <a href="/delete-account"><button style="background:red;color:white;">حذف الحساب</button></a>
         </div>
         {specialty_script(user['section'] or '')}
