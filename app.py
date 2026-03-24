@@ -1880,7 +1880,7 @@ HOME_HTML = STYLE + """
     </form>
 
     <div class="inline" style="justify-content:space-between;margin-top:12px;">
-        <a href="/register" style="color:#60a5fa;font-weight:700;">إنشاء حساب اختصاصي</a>
+        <a href="/register" style="color:#60a5fa;font-weight:700;">إنشاء حساب</a>
         <a href="/forgot" style="color:#cbd5e1;">نسيت كلمة السر</a>
     </div>
 </div>
