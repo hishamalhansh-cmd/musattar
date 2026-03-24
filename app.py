@@ -751,21 +751,122 @@ def view_image():
     back = request.args.get("back", "/workers")
     if not back.startswith("/"):
         back = "/workers"
+
+    raw_images = (request.args.get("images") or "").strip()
+    image_list = [x.strip() for x in raw_images.split(",") if x.strip()]
+
     image_ref = (request.args.get("image") or "").strip()
-    image_url = media_url(image_ref)
-    if not image_url:
+    if image_ref and image_ref not in image_list:
+        image_list.insert(0, image_ref)
+
+    if not image_list:
         return redirect(back)
+
+    try:
+        current_index = int(request.args.get("index", "0"))
+    except Exception:
+        current_index = 0
+
+    if current_index < 0 or current_index >= len(image_list):
+        current_index = 0
+
+    urls = []
+    refs = []
+    for img in image_list:
+        url = media_url(img)
+        if url:
+            urls.append(url)
+            refs.append(img)
+
+    if not urls:
+        return redirect(back)
+
+    current_index = min(current_index, len(urls) - 1)
+    start_url = urls[current_index]
+
+    images_json = json.dumps(urls, ensure_ascii=False)
+    refs_json = json.dumps(refs, ensure_ascii=False)
+    back_json = json.dumps(back, ensure_ascii=False)
+
     return render_template_string(
         STYLE + (settings_corner() if 'user' in session else '') + f"""
         <div class="container narrow-container" style="text-align:center;">
             <a href="{back}"><button class="light-btn">رجوع</button></a>
-            <h2>عرض الصورة</h2>
+            <h2>عرض الصور</h2>
             <div class="card" style="padding:12px;">
-                <img src="{image_url}" alt="work" style="max-width:100%;max-height:78vh;border-radius:18px;border:1px solid rgba(96,165,250,.22);box-shadow:0 18px 40px rgba(2,8,23,.28);object-fit:contain;background:rgba(255,255,255,.04);">
+                <div class="viewer-wrap" id="viewerWrap">
+                    <button type="button" class="viewer-arrow prev" id="prevBtn">‹</button>
+                    <div class="viewer-stage">
+                        <img src="{start_url}" alt="work" class="viewer-img" id="viewerImg">
+                    </div>
+                    <button type="button" class="viewer-arrow next" id="nextBtn">›</button>
+                </div>
+                <div class="viewer-counter" id="viewerCounter"></div>
+                <div class="viewer-hint">اسحب الصورة يمين أو يسار للتبديل بين الصور</div>
             </div>
         </div>
+
+        <script>
+        (function() {{
+            const images = {images_json};
+            const refs = {refs_json};
+            let index = {current_index};
+            const img = document.getElementById('viewerImg');
+            const counter = document.getElementById('viewerCounter');
+            const wrap = document.getElementById('viewerWrap');
+            const back = {back_json};
+
+            function updateViewer() {{
+                img.src = images[index];
+                counter.textContent = (index + 1) + ' / ' + images.length;
+                const url = new URL(window.location.href);
+                url.searchParams.set('index', String(index));
+                url.searchParams.set('image', refs[index] || '');
+                url.searchParams.set('images', refs.join(','));
+                url.searchParams.set('back', back);
+                window.history.replaceState(null, '', url.toString());
+            }}
+
+            function nextImage() {{
+                index = (index + 1) % images.length;
+                updateViewer();
+            }}
+
+            function prevImage() {{
+                index = (index - 1 + images.length) % images.length;
+                updateViewer();
+            }}
+
+            document.getElementById('nextBtn').addEventListener('click', nextImage);
+            document.getElementById('prevBtn').addEventListener('click', prevImage);
+
+            let startX = 0;
+            let deltaX = 0;
+
+            wrap.addEventListener('touchstart', function(e) {{
+                startX = e.changedTouches[0].clientX;
+                deltaX = 0;
+            }}, {{passive:true}});
+
+            wrap.addEventListener('touchmove', function(e) {{
+                deltaX = e.changedTouches[0].clientX - startX;
+            }}, {{passive:true}});
+
+            wrap.addEventListener('touchend', function() {{
+                if (Math.abs(deltaX) > 50) {{
+                    if (deltaX < 0) {{
+                        nextImage();
+                    }} else {{
+                        prevImage();
+                    }}
+                }}
+            }});
+
+            updateViewer();
+        }})();
+        </script>
         </body></html>
-        """, remembered_email=remembered_email
+        """
     )
 
 
@@ -1428,8 +1529,8 @@ hr{border:none;border-top:1px solid rgba(47,111,237,.10);margin:18px 0}
 .worker-card{display:grid;grid-template-columns:96px 1fr;gap:16px;align-items:start}
 .worker-info-grid,.detail-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:12px}
 .info-chip,.detail-box{background:#fbfdff;border:1px solid rgba(47,111,237,.12);border-radius:16px;padding:10px 12px;font-size:14px}
-.work-grid{grid-template-columns:repeat(3,1fr);margin-top:12px}
-.work-grid img{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:18px;border:2px solid rgba(47,111,237,.20);background:#f8fbff}
+.work-grid{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:12px}
+.work-grid img{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:18px;border:2px solid rgba(47,111,237,.20);background:#f8fbff;max-height:220px}
 .specialties-grid{grid-template-columns:repeat(3,minmax(0,1fr));margin-top:14px}
 .specialty-group-card{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;min-height:148px;padding:16px 12px}.specialty-group-card h3{margin:8px 0 6px;color:var(--text);font-size:18px;line-height:1.35}.section-subtitle{font-size:13px;line-height:1.5;color:var(--muted);margin-top:2px}.specialty-items{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
 .specialty-item{display:block;background:#ffffff;border:1px solid rgba(47,111,237,.14);border-radius:16px;padding:14px 8px;text-align:center;transition:.2s;color:var(--text)}
@@ -1454,7 +1555,7 @@ input::placeholder, textarea::placeholder{color:#9aa7bb;opacity:1}
 .footer-note{text-align:center;color:var(--muted);font-size:13px;margin-top:16px}
 @media (max-width:960px){.home-grid,.home-features-grid,.home-stats-grid,.admin-stats-grid,.admin-users-grid{grid-template-columns:1fr}.specialties-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.search-inline-grid{grid-template-columns:1fr}}
 @media (max-width:720px){h1{font-size:28px}h2{font-size:24px}.container{padding:16px;border-radius:24px}.worker-card,.worker-hero-grid,.settings-profile-wrap{grid-template-columns:1fr;display:grid}.worker-info-grid,.detail-grid,.work-grid,.specialty-items{grid-template-columns:1fr 1fr}.specialties-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.specialty-group-card{min-height:132px;padding:14px 10px}.specialty-group-card h3{font-size:16px}.section-subtitle{font-size:12px}}
-@media (max-width:520px){.work-grid,.worker-info-grid,.detail-grid,.specialty-items{grid-template-columns:1fr}.bottom-corner-link{font-size:13px;min-width:74px;padding:0 12px}}
+@media (max-width:520px){.work-grid,.specialty-items{grid-template-columns:1fr 1fr}.worker-info-grid,.detail-grid{grid-template-columns:1fr}.bottom-corner-link{font-size:13px;min-width:74px;padding:0 12px}}
 
 .worker-rating-line{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
 .rating-stars{font-size:16px;color:#fbbf24;letter-spacing:2px}
@@ -1657,6 +1758,15 @@ label input[type="checkbox"]{
 .profile-bio-box{margin-top:12px;padding:14px 16px;background:rgba(255,255,255,.04);border:1px solid rgba(96,165,250,.14);border-radius:18px;line-height:1.9}
 .gallery-head,.reviews-head{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap}
 .work-grid img{cursor:zoom-in}
+.viewer-wrap{position:relative;overflow:hidden;border-radius:22px;background:rgba(15,23,42,.92);touch-action:pan-y}
+.viewer-stage{position:relative;width:100%;min-height:68vh;display:flex;align-items:center;justify-content:center}
+.viewer-img{max-width:100%;max-height:78vh;object-fit:contain;border-radius:18px;transition:transform .25s ease}
+.viewer-arrow{position:absolute;top:50%;transform:translateY(-50%);z-index:3;border:none;border-radius:999px;width:48px;height:48px;font-size:26px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.16);color:#fff;backdrop-filter:blur(6px)}
+.viewer-arrow.prev{left:10px}
+.viewer-arrow.next{right:10px}
+.viewer-counter{margin-top:10px;font-size:14px;color:#475569}
+.viewer-hint{margin-top:8px;font-size:13px;color:#64748b}
+.upload-note{margin-top:8px;font-size:13px;color:#64748b}
 .review-card-pro{padding:14px 16px;border-radius:20px;background:rgba(255,255,255,.045);border:1px solid rgba(96,165,250,.14);margin-top:10px}
 .review-top{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:6px}
 .review-name{font-weight:800;color:#fff}
@@ -2246,6 +2356,7 @@ def manage_work_images(user_id):
                 {previews}
                 <label>إضافة صور جديدة</label>
                 <input type="file" name="work_images" accept=".png,.jpg,.jpeg,.gif,.webp" multiple>
+                <div class="upload-note">تقدر تختار أكثر من صورة دفعة وحدة.</div>
                 <button>حفظ التعديلات</button>
             </form>
         </div>
@@ -2915,8 +3026,9 @@ def worker_profile(user_id):
     imgs = [x.strip() for x in (worker["work_images"] or "").split(",") if x.strip()]
     work_images_html = ""
     if imgs:
+        images_query = quote(",".join(imgs), safe="")
         work_images_html = '<div class="work-grid">' + "".join(
-            f'<a href="{url_for("view_image")}?image={quote(img, safe="")}&back=/worker/{worker["id"]}"><img src="{media_url(img)}" alt="work" class="work-thumb"></a>' for img in imgs
+            f'<a href="{url_for("view_image")}?image={quote(img, safe="")}&images={images_query}&index={i}&back=/worker/{worker["id"]}"><img src="{media_url(img)}" alt="work" class="work-thumb"></a>' for i, img in enumerate(imgs)
         ) + '</div>'
 
     phone_html = f'<div class="detail-box"><strong>الهاتف</strong>{worker["phone"]}</div>' if worker["show_phone"] else ""
@@ -4794,7 +4906,7 @@ def edit_profile():
             </form>
 
             <a href="/change-password"><button>تغيير كلمة المرور</button></a>
-            <a href="/manage-work-images/{user['id']}"><button>إدارة أعمالي</button></a>
+            <a href="/manage-work-images/{user['id']}"><button>إدارة أعمالي ورفع عدة صور</button></a>
             <a href="/delete-account"><button style="background:red;color:white;">حذف الحساب</button></a>
         </div>
         {specialty_script(user['section'] or '')}
