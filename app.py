@@ -3303,218 +3303,220 @@ def workers_specialty(specialty_name):
 
 @app.route("/worker/<int:user_id>", methods=["GET", "POST"])
 def worker_profile(user_id):
-    with get_db() as con:
-        worker = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
-        comments = con.execute(
-            "SELECT * FROM comments WHERE user_id=? ORDER BY id DESC",
-            (user_id,)
-        ).fetchall()
+    try:
+        with get_db() as con:
+            worker = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+            comments = con.execute(
+                "SELECT * FROM comments WHERE user_id=? ORDER BY id DESC",
+                (user_id,)
+            ).fetchall()
 
-    if not worker or worker["is_blocked"] or worker["hidden_by_admin"]:
-        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">هذا الملف غير متاح حالياً</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
+        if not worker:
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">هذا الملف غير موجود</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
 
-    with get_db() as con:
-        con.execute("UPDATE users SET views = COALESCE(views, 0) + 1 WHERE id=?", (user_id,))
-        con.commit()
-        worker = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
-
-    current_session_user = get_current_session_user() if "user" in session else None
-    current_session_user_id = int(current_session_user["id"]) if current_session_user else None
-    current_session_user_role = (current_session_user["role"] if current_session_user and current_session_user["role"] else session.get("role") or "")
-
-    is_self_worker_profile = (
-        current_session_user_id is not None
-        and int(current_session_user_id) == int(user_id)
-    )
-
-    if request.method == "POST":
-        if is_self_worker_profile:
-            return render_template_string(
-                STYLE + (settings_corner() if 'user' in session else '') +
-                '<div class="container"><div class="msg">لا يمكن لك تقييم أو التعليق على ملفك الشخصي</div><a href="/worker/%d"><button>رجوع</button></a></div></body></html>' % user_id
-            )
-
-        ip = get_client_ip()
-        if too_many_attempts(COMMENT_RATE_LIMIT, f"{ip}:{user_id}", COMMENT_WINDOW_SECONDS, COMMENT_MAX_COUNT):
-            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">تم تجاوز عدد التعليقات المسموح مؤقتاً</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
-
-        commenter_name = session["user"] if "user" in session else "زائر"
-        rating_raw = request.form.get("rating", "5").strip()
-        comment = sanitize_input(request.form.get("comment", ""), 400)
-
-        try:
-            rating = int(rating_raw)
-        except Exception:
-            rating = 5
-
-        if rating < 1 or rating > 5:
-            rating = 5
-
-        if not comment:
-            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">اكتب تعليقاً أولاً</div><a href="/worker/%d"><button>رجوع</button></a></div></body></html>' % user_id)
+        is_blocked = int((worker["is_blocked"] if worker["is_blocked"] is not None else 0) or 0)
+        is_hidden = int((worker["hidden_by_admin"] if worker["hidden_by_admin"] is not None else 0) or 0)
+        if is_blocked or is_hidden:
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">هذا الملف غير متاح حالياً</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
 
         with get_db() as con:
-            con.execute(
-                "INSERT INTO comments (user_id, commenter_name, rating, comment) VALUES (?, ?, ?, ?)",
-                (user_id, commenter_name, rating, comment)
-            )
+            con.execute("UPDATE users SET views = COALESCE(views, 0) + 1 WHERE id=?", (user_id,))
             con.commit()
+            worker = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
 
-        return redirect(url_for("worker_profile", user_id=user_id))
+        current_session_user = get_current_session_user() if "user" in session else None
+        current_session_user_id = int(current_session_user["id"]) if current_session_user else None
+        is_self_worker_profile = current_session_user_id is not None and int(current_session_user_id) == int(user_id)
 
-    avg_rating, rating_count = get_worker_rating_summary(user_id)
-    stars = render_stars(avg_rating)
-    profile_html = (
-        f'<img src="{media_url(worker["profile_pic"])}" class="profile-img-large" alt="" onerror="this.outerHTML=\'<div class=&quot;profile-placeholder-large&quot;>👤</div>\'">'
-        if worker["profile_pic"]
-        else '<div class="profile-placeholder-large">👤</div>'
-    )
+        if request.method == "POST":
+            if is_self_worker_profile:
+                return render_template_string(
+                    STYLE + (settings_corner() if 'user' in session else '') +
+                    '<div class="container"><div class="msg">لا يمكن لك تقييم أو التعليق على ملفك الشخصي</div><a href="/worker/%d"><button>رجوع</button></a></div></body></html>' % user_id
+                )
 
-    imgs = [x.strip() for x in (worker["work_images"] or "").split(",") if x.strip()]
-    work_images_html = ""
-    if imgs:
-        gallery_refs = quote("||".join(imgs), safe="")
-        work_images_html = '<div class="work-grid">' + "".join(
-            f'<a class="work-tile" href="{url_for("view_image")}?image={quote(img, safe="")}&images={gallery_refs}&idx={idx}&back=/worker/{worker["id"]}"><img src="{media_url(img)}" alt="work" class="work-thumb"></a>' for idx, img in enumerate(imgs)
-        ) + '</div>'
+            ip = get_client_ip()
+            if too_many_attempts(COMMENT_RATE_LIMIT, f"{ip}:{user_id}", COMMENT_WINDOW_SECONDS, COMMENT_MAX_COUNT):
+                return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">تم تجاوز عدد التعليقات المسموح مؤقتاً</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
 
-    phone_html = f'<div class="detail-box"><strong>الهاتف</strong>{worker["phone"]}</div>' if worker["show_phone"] else ""
-    wa_html = ""
-    map_html = ""
-    call_html = f'<a class="action-pill secondary" href="tel:{worker["phone"]}">📞 اتصال</a>' if worker["show_phone"] and worker["phone"] else ""
+            commenter_name = session["user"] if "user" in session else "زائر"
+            rating_raw = request.form.get("rating", "5").strip()
+            comment = sanitize_input(request.form.get("comment", ""), 400)
 
-    comments_html = ""
-    if comments:
-        blocks = []
-        for c in comments:
-            cstars = "★" * int(c["rating"] or 0) + "☆" * (5 - int(c["rating"] or 0))
-            blocks.append(f"""
-            <div class="review-card-pro">
-                <div class="review-top">
-                    <div>
-                        <div class="review-name">{c["commenter_name"]}</div>
-                        <div class="review-date">{format_chat_datetime(c["created_at"] or "")}</div>
+            try:
+                rating = int(rating_raw)
+            except Exception:
+                rating = 5
+
+            if rating < 1 or rating > 5:
+                rating = 5
+
+            if not comment:
+                return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">اكتب تعليقاً أولاً</div><a href="/worker/%d"><button>رجوع</button></a></div></body></html>' % user_id)
+
+            with get_db() as con:
+                con.execute(
+                    "INSERT INTO comments (user_id, commenter_name, rating, comment) VALUES (?, ?, ?, ?)",
+                    (user_id, commenter_name, rating, comment)
+                )
+                con.commit()
+
+            return redirect(url_for("worker_profile", user_id=user_id))
+
+        avg_rating, rating_count = get_worker_rating_summary(user_id)
+        stars = render_stars(avg_rating)
+        profile_pic = worker["profile_pic"] or ""
+        profile_html = profile_thumb_html(profile_pic, "profile-img-large")
+
+        work_images_raw = worker["work_images"] or ""
+        imgs = [x.strip() for x in work_images_raw.split(",") if x.strip()]
+        work_images_html = ""
+        if imgs:
+            gallery_refs = quote("||".join(imgs), safe="")
+            work_images_html = '<div class="work-grid">' + "".join(
+                f'<a class="work-tile" href="{url_for("view_image")}?image={quote(img, safe="")}&images={gallery_refs}&idx={idx}&back=/worker/{worker["id"]}"><img src="{media_url(img)}" alt="work" class="work-thumb"></a>' for idx, img in enumerate(imgs)
+            ) + '</div>'
+
+        phone_html = f'<div class="detail-box"><strong>الهاتف</strong>{worker["phone"]}</div>' if int((worker["show_phone"] if worker["show_phone"] is not None else 0) or 0) and worker["phone"] else ""
+        wa_html = ""
+        map_html = ""
+        call_html = f'<a class="action-pill secondary" href="tel:{worker["phone"]}">📞 اتصال</a>' if int((worker["show_phone"] if worker["show_phone"] is not None else 0) or 0) and worker["phone"] else ""
+
+        comments_html = ""
+        if comments:
+            blocks = []
+            for c in comments:
+                cstars = "★" * int(c["rating"] or 0) + "☆" * (5 - int(c["rating"] or 0))
+                blocks.append(f"""
+                <div class="review-card-pro">
+                    <div class="review-top">
+                        <div>
+                            <div class="review-name">{c["commenter_name"]}</div>
+                            <div class="review-date">{format_chat_datetime(c["created_at"] or "")}</div>
+                        </div>
+                        <div class="rating-pill">{cstars}</div>
                     </div>
-                    <div class="rating-pill">{cstars}</div>
+                    <div class="review-text">{c["comment"]}</div>
                 </div>
-                <div class="review-text">{c["comment"]}</div>
+                """)
+            comments_html = "".join(blocks)
+        else:
+            comments_html = '<div class="empty-state">لا توجد تقييمات بعد</div>'
+
+        message_button = ""
+        if "user" in session and int((worker["allow_messages"] if worker["allow_messages"] is not None else 0) or 0):
+            message_button = f'<a class="action-pill" href="/message/{worker["id"]}">✉️ مراسلة</a>'
+
+        favorite_button = ""
+        if "user" in session and session.get("role") == "visitor":
+            fav_on = is_favorite(session.get("user_id"), worker["id"])
+            fav_text = "💔 إزالة من المفضلة" if fav_on else "❤️ إضافة للمفضلة"
+            favorite_button = f'<a class="action-pill secondary" href="/toggle-favorite/{worker["id"]}?next=/worker/{worker["id"]}">{fav_text}</a>'
+
+        works_count = len(imgs)
+        city_value = worker["city"] or "-"
+        exp_value = worker["exp"] or "-"
+        message_status_value = 'مفعل' if int((worker["allow_messages"] if worker["allow_messages"] is not None else 0) or 0) else 'معطل'
+        stats_html = f"""
+            <div class="stat-mini-grid">
+                <div class="stat-mini-card"><div class="stat-mini-label">التقييم</div><div class="stat-mini-value">{avg_rating}</div></div>
+                <div class="stat-mini-card"><div class="stat-mini-label">التقييمات</div><div class="stat-mini-value">{rating_count}</div></div>
+                <div class="stat-mini-card"><div class="stat-mini-label">الأعمال</div><div class="stat-mini-value">{works_count}</div></div>
+                <div class="stat-mini-card"><div class="stat-mini-label">المشاهدات</div><div class="stat-mini-value">{worker["views"] or 0}</div></div>
             </div>
-            """)
-        comments_html = "".join(blocks)
-    else:
-        comments_html = '<div class="empty-state">لا توجد تقييمات بعد</div>'
-
-    message_button = ""
-    if "user" in session and worker["allow_messages"]:
-        message_button = f'<a class="action-pill" href="/message/{worker["id"]}">✉️ مراسلة</a>'
-
-    favorite_button = ""
-    if "user" in session and session.get("role") == "visitor":
-        fav_on = is_favorite(session.get("user_id"), worker["id"])
-        fav_text = "💔 إزالة من المفضلة" if fav_on else "❤️ إضافة للمفضلة"
-        favorite_button = f'<a class="action-pill secondary" href="/toggle-favorite/{worker["id"]}?next=/worker/{worker["id"]}">{fav_text}</a>'
-
-    works_count = len(imgs)
-    city_value = worker["city"] or "-"
-    exp_value = worker["exp"] or "-"
-    message_status_value = 'مفعل' if worker['allow_messages'] else 'معطل'
-    stats_html = f"""
-        <div class="stat-mini-grid">
-            <div class="stat-mini-card"><div class="stat-mini-label">التقييم</div><div class="stat-mini-value">{avg_rating}</div></div>
-            <div class="stat-mini-card"><div class="stat-mini-label">التقييمات</div><div class="stat-mini-value">{rating_count}</div></div>
-            <div class="stat-mini-card"><div class="stat-mini-label">الأعمال</div><div class="stat-mini-value">{works_count}</div></div>
-            <div class="stat-mini-card"><div class="stat-mini-label">المشاهدات</div><div class="stat-mini-value">{worker['views'] or 0}</div></div>
-        </div>
-    """
-
-    verified_badge = trusted_badge_html(worker)
-    pinned_badge = pinned_badge_html(worker)
-
-    comment_form = ""
-    if not is_self_worker_profile:
-        comment_form = f"""
-        <div class="card review-form-pro">
-            <h3>إضافة تقييم</h3>
-            <div class="section-subtitle">اختر التقييم ثم اكتب رأيك بشكل مختصر وواضح.</div>
-            <form method="post">
-                <div class="rating-row">
-                    <label><input type="radio" name="rating" value="5" checked><span class="rate-pill">⭐⭐⭐⭐⭐</span></label>
-                    <label><input type="radio" name="rating" value="4"><span class="rate-pill">⭐⭐⭐⭐</span></label>
-                    <label><input type="radio" name="rating" value="3"><span class="rate-pill">⭐⭐⭐</span></label>
-                    <label><input type="radio" name="rating" value="2"><span class="rate-pill">⭐⭐</span></label>
-                    <label><input type="radio" name="rating" value="1"><span class="rate-pill">⭐</span></label>
-                </div>
-                <textarea name="comment" placeholder="اكتب تقييمك وتعليقك" required></textarea>
-                <button>نشر التقييم</button>
-            </form>
-        </div>
         """
 
-    return render_template_string(
-        STYLE + (settings_corner() if 'user' in session else '') + f"""
-        <div class="container">
-            <a href="/workers"><button class="light-btn">رجوع</button></a>
+        verified_badge = trusted_badge_html(worker)
+        pinned_badge = pinned_badge_html(worker)
 
-            <div class="worker-hero worker-hero-pro">
-                <div class="worker-hero-grid">
-                    <div class="center">{profile_html}</div>
-                    <div>
-                        <div class="inline" style="margin-bottom:10px;">
-                            <span class="worker-specialty-badge">{get_specialty_icon(worker["section"])} {worker["section"] or "-"}</span>
-                            <span class="badge">{worker["governorate"] or "-"}</span>
-                            {verified_badge}
-                            {pinned_badge}
-                        </div>
-                        <h2>{worker["name"]}</h2>
-                        <div class="worker-rating-line">
-                            <span class="rating-stars">{stars}</span>
-                            <span class="badge">⭐ {avg_rating} / 5</span>
-                            <span class="badge">{rating_count} تقييم</span>
-                        </div>
-                        <div class="section-subtitle">ملف مرتب يعرض نبذة المختص وأعماله وطرق التواصل بشكل أوضح وأسهل.</div>
-                        <div class="profile-bio-box">{worker["bio"] or "لا توجد نبذة حالياً"}</div>
-                        {stats_html}
+        comment_form = ""
+        if not is_self_worker_profile:
+            comment_form = """
+            <div class="card review-form-pro">
+                <h3>إضافة تقييم</h3>
+                <div class="section-subtitle">اختر التقييم ثم اكتب رأيك بشكل مختصر وواضح.</div>
+                <form method="post">
+                    <div class="rating-row">
+                        <label><input type="radio" name="rating" value="5" checked><span class="rate-pill">⭐⭐⭐⭐⭐</span></label>
+                        <label><input type="radio" name="rating" value="4"><span class="rate-pill">⭐⭐⭐⭐</span></label>
+                        <label><input type="radio" name="rating" value="3"><span class="rate-pill">⭐⭐⭐</span></label>
+                        <label><input type="radio" name="rating" value="2"><span class="rate-pill">⭐⭐</span></label>
+                        <label><input type="radio" name="rating" value="1"><span class="rate-pill">⭐</span></label>
+                    </div>
+                    <textarea name="comment" placeholder="اكتب تقييمك وتعليقك" required></textarea>
+                    <button>نشر التقييم</button>
+                </form>
+            </div>
+            """
 
-                        <div class="detail-grid">
-                            <div class="detail-box"><strong>المدينة</strong>{city_value}</div>
-                            <div class="detail-box"><strong>الخبرة</strong>{exp_value}</div>
-                            {phone_html}
-                            <div class="detail-box"><strong>استقبال الرسائل</strong>{message_status_value}</div>
-                        </div>
+        return render_template_string(
+            STYLE + (settings_corner() if 'user' in session else '') + f"""
+            <div class="container">
+                <a href="/workers"><button class="light-btn">رجوع</button></a>
 
-                        <div class="profile-actions-bar">
-                            {message_button}
-                            {favorite_button}
-                            {wa_html}
-                            {call_html}
-                            {map_html}
+                <div class="worker-hero worker-hero-pro">
+                    <div class="worker-hero-grid">
+                        <div class="center">{profile_html}</div>
+                        <div>
+                            <div class="inline" style="margin-bottom:10px;">
+                                <span class="worker-specialty-badge">{get_specialty_icon(worker["section"])} {worker["section"] or "-"}</span>
+                                <span class="badge">{worker["governorate"] or "-"}</span>
+                                {verified_badge}
+                                {pinned_badge}
+                            </div>
+                            <h2>{worker["name"]}</h2>
+                            <div class="worker-rating-line">
+                                <span class="rating-stars">{stars}</span>
+                                <span class="badge">⭐ {avg_rating} / 5</span>
+                                <span class="badge">{rating_count} تقييم</span>
+                            </div>
+                            <div class="section-subtitle">ملف مرتب يعرض نبذة المختص وأعماله وطرق التواصل بشكل أوضح وأسهل.</div>
+                            <div class="profile-bio-box">{worker["bio"] or "لا توجد نبذة حالياً"}</div>
+                            {stats_html}
+
+                            <div class="detail-grid">
+                                <div class="detail-box"><strong>المدينة</strong>{city_value}</div>
+                                <div class="detail-box"><strong>الخبرة</strong>{exp_value}</div>
+                                {phone_html}
+                                <div class="detail-box"><strong>استقبال الرسائل</strong>{message_status_value}</div>
+                            </div>
+
+                            <div class="profile-actions-bar">
+                                {message_button}
+                                {favorite_button}
+                                {wa_html}
+                                {call_html}
+                                {map_html}
+                            </div>
                         </div>
                     </div>
                 </div>
-            </div>
 
-            <div class="card">
-                <div class="gallery-head">
-                    <h3>معرض الأعمال</h3>
-                    <span class="badge">{works_count} صورة</span>
+                <div class="card">
+                    <div class="gallery-head">
+                        <h3>معرض الأعمال</h3>
+                        <span class="badge">{works_count} صورة</span>
+                    </div>
+                    <div class="section-subtitle">صور الأعمال المعروضة داخل الملف الشخصي.</div>
+                    {work_images_html if work_images_html else '<div class="empty-state">لا توجد أعمال حتى الآن</div>'}
                 </div>
-                <div class="section-subtitle">صور الأعمال المعروضة داخل الملف الشخصي.</div>
-                {work_images_html if work_images_html else '<div class="empty-state">لا توجد أعمال حتى الآن</div>'}
 
-            </div>
-
-            <div class="card">
-                <div class="reviews-head">
-                    <h3>التقييمات</h3>
-                    <span class="badge">{rating_count} تقييم</span>
+                <div class="card">
+                    <div class="reviews-head">
+                        <h3>التقييمات</h3>
+                        <span class="badge">{rating_count} تقييم</span>
+                    </div>
+                    {comments_html}
                 </div>
-                {comments_html}
+                {comment_form}
             </div>
-            {comment_form}
-        </div>
-        </body></html>
-        """
-    )
+            </body></html>
+            """
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return render_template_string(STYLE + '<div class="container"><div class="msg">صار خطأ أثناء فتح الملف الشخصي</div><div class="notice">' + sanitize_input(str(e), 300) + '</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
 
 
 @app.route("/favorites")
