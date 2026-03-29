@@ -3044,13 +3044,18 @@ def get_other_party_from_conversation(conversation, current_user_id):
 
 
 def format_chat_datetime(value):
-    value = (value or "").strip()
-    if not value:
+    if value is None:
         return ""
-    try:
-        dt = datetime.datetime.fromisoformat(value)
-    except Exception:
-        return value
+    if isinstance(value, datetime.datetime):
+        dt = value
+    else:
+        value = str(value).strip()
+        if not value:
+            return ""
+        try:
+            dt = datetime.datetime.fromisoformat(value)
+        except Exception:
+            return value
     return dt.strftime("%Y-%m-%d %H:%M")
 
 
