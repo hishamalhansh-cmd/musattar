@@ -15,6 +15,7 @@ import uuid
 import json
 import base64
 import datetime
+import secrets
 import time
 import urllib.request
 import urllib.error
@@ -68,6 +69,7 @@ except Exception:
 app = Flask(__name__)
 from datetime import timedelta
 app.permanent_session_lifetime = timedelta(days=30)
+PERSISTENT_LOGIN_DAYS = 180
 
 
 def env_flag(name, default=False):
@@ -245,9 +247,57 @@ COMMENT_MAX_COUNT = 3
 def auto_login_from_cookie():
     if "user" in session:
         return
+
+    remember_token = (request.cookies.get("remember_token") or "").strip()
     email_cookie = (request.cookies.get("remember_email") or "").strip().lower()
     if email_cookie:
         session["last_email"] = email_cookie
+
+    if not remember_token:
+        return
+
+    try:
+        with get_db() as con:
+            user = con.execute("SELECT * FROM users WHERE remember_token=?", (remember_token,)).fetchone()
+        if not user:
+            return
+        if int(user.get("is_blocked") or 0) == 1:
+            return
+        session.permanent = True
+        session["user"] = user["name"]
+        session["user_id"] = user["id"]
+        session["role"] = user["role"] or "worker"
+        session["last_email"] = user["email"] or email_cookie
+    except Exception:
+        return
+
+
+def create_remember_token():
+    return secrets.token_urlsafe(48)
+
+
+def store_remember_token(user_id):
+    token = create_remember_token()
+    with get_db() as con:
+        con.execute("UPDATE users SET remember_token=? WHERE id=?", (token, user_id))
+        con.commit()
+    return token
+
+
+def clear_remember_token(user_id):
+    if not user_id:
+        return
+    try:
+        with get_db() as con:
+            con.execute("UPDATE users SET remember_token='' WHERE id=?", (user_id,))
+            con.commit()
+    except Exception:
+        pass
+
+
+@app.before_request
+def keep_user_logged_in():
+    auto_login_from_cookie()
 
 
 def get_current_session_user():
@@ -1082,7 +1132,8 @@ def init_db_sqlite(cur):
         section TEXT,
         city TEXT,
         exp TEXT,
-        bio TEXT
+        bio TEXT,
+        remember_token TEXT DEFAULT ''
     )
     """)
 
@@ -1124,6 +1175,9 @@ def init_db_sqlite(cur):
 
     if not column_exists(cur, "users", "hidden_by_admin"):
         cur.execute("ALTER TABLE users ADD COLUMN hidden_by_admin INTEGER DEFAULT 0")
+
+    if not column_exists(cur, "users", "remember_token"):
+        cur.execute("ALTER TABLE users ADD COLUMN remember_token TEXT DEFAULT ''")
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS user_passkeys(
@@ -1281,7 +1335,8 @@ def init_db_postgres(cur):
         verified_worker INTEGER DEFAULT 0,
         is_pinned INTEGER DEFAULT 0,
         is_blocked INTEGER DEFAULT 0,
-        hidden_by_admin INTEGER DEFAULT 0
+        hidden_by_admin INTEGER DEFAULT 0,
+        remember_token TEXT DEFAULT ''
     )
     """)
 
@@ -1298,7 +1353,8 @@ def init_db_postgres(cur):
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS verified_worker INTEGER DEFAULT 0",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_pinned INTEGER DEFAULT 0",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_blocked INTEGER DEFAULT 0",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS hidden_by_admin INTEGER DEFAULT 0"
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS hidden_by_admin INTEGER DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS remember_token TEXT DEFAULT ''"
     ]:
         cur.execute(alter_sql)
 
@@ -2266,9 +2322,11 @@ def login():
         session["user_id"] = user["id"]
         session["role"] = user["role"] or "worker"
         session["last_email"] = user["email"] or email
+        remember_token = store_remember_token(user["id"])
         LOGIN_ATTEMPTS.pop(ip, None)
         resp = redirect(url_for("workers"))
-        resp.set_cookie("remember_email", email, max_age=60*60*24*30)
+        resp.set_cookie("remember_email", email, max_age=60*60*24*PERSISTENT_LOGIN_DAYS, httponly=True, samesite="Lax", secure=APP_ENV == "production")
+        resp.set_cookie("remember_token", remember_token, max_age=60*60*24*PERSISTENT_LOGIN_DAYS, httponly=True, samesite="Lax", secure=APP_ENV == "production")
         return resp
 
     return redirect(url_for("home"))
@@ -2298,13 +2356,16 @@ def visitor_login():
             return render_template_string(STYLE + '<div class="container"><div class="msg">هذا الحساب محظور من قبل الإدارة</div><a href="/visitor/login"><button>رجوع</button></a></div></body></html>')
 
         session.permanent = True
+        session.clear()
         session["user"] = user["name"]
         session["user_id"] = user["id"]
         session["role"] = "visitor"
         session["last_email"] = user["email"] or email
+        remember_token = store_remember_token(user["id"])
         LOGIN_ATTEMPTS.pop(f"visitor:{ip}", None)
         resp = redirect(url_for("workers"))
-        resp.set_cookie("remember_email", email, max_age=60*60*24*30)
+        resp.set_cookie("remember_email", email, max_age=60*60*24*PERSISTENT_LOGIN_DAYS, httponly=True, samesite="Lax", secure=APP_ENV == "production")
+        resp.set_cookie("remember_token", remember_token, max_age=60*60*24*PERSISTENT_LOGIN_DAYS, httponly=True, samesite="Lax", secure=APP_ENV == "production")
         return resp
 
     remembered_email = session.get("last_email") or request.cookies.get("remember_email", "")
@@ -4283,12 +4344,15 @@ def admin_support():
 @app.route("/logout")
 def logout():
     remembered_email = session.get("last_email") or request.cookies.get("remember_email", "")
+    remembered_user_id = session.get("user_id")
+    clear_remember_token(remembered_user_id)
     session.clear()
     if remembered_email:
         session["last_email"] = remembered_email
     resp = redirect(url_for("home"))
     if remembered_email:
-        resp.set_cookie("remember_email", remembered_email, max_age=60*60*24*30)
+        resp.set_cookie("remember_email", remembered_email, max_age=60*60*24*PERSISTENT_LOGIN_DAYS, httponly=True, samesite="Lax", secure=APP_ENV == "production")
+    resp.set_cookie("remember_token", "", expires=0, httponly=True, samesite="Lax", secure=APP_ENV == "production")
     return resp
 
 
@@ -5589,7 +5653,8 @@ def passkey_auth_finish():
         session["user"] = user["name"]
         session["user_id"] = user["id"]
         resp = jsonify({"ok": True, "redirect": url_for("workers")})
-        resp.set_cookie("remember_email", user["email"], max_age=60*60*24*30)
+        resp.set_cookie("remember_email", user["email"], max_age=60*60*24*PERSISTENT_LOGIN_DAYS, httponly=True, samesite="Lax", secure=APP_ENV == "production")
+        resp.set_cookie("remember_token", store_remember_token(user["id"]), max_age=60*60*24*PERSISTENT_LOGIN_DAYS, httponly=True, samesite="Lax", secure=APP_ENV == "production")
         session.pop("passkey_auth_challenge", None)
         session.pop("passkey_auth_email", None)
         return resp
