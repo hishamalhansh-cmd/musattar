@@ -2222,7 +2222,7 @@ HOME_HTML = STYLE + """
     <form action="/login" method="post">
         <input type="email" name="email" value="{{ last_email }}" placeholder="البريد الإلكتروني" required>
         <input type="password" name="password" placeholder="كلمة السر" required>
-        <button type="submit">تسجيل دخول الاختصاصي</button>
+        <button type="submit">تسجيل دخول</button>
     </form>
 
     <div class="inline" style="justify-content:space-between;margin-top:12px;">
