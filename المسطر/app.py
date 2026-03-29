@@ -18,6 +18,7 @@ import datetime
 import time
 import urllib.request
 import urllib.error
+from io import BytesIO
 from urllib.parse import quote
 
 from flask import Flask, render_template_string, request, redirect, session, url_for, send_from_directory, jsonify
@@ -25,6 +26,14 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
+
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except Exception:
+    Image = None
+    PIL_AVAILABLE = False
+
 
 try:
     import cloudinary
@@ -132,7 +141,7 @@ USING_POSTGRES = bool(DATABASE_URL and PSYCOPG2_AVAILABLE)
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = APP_ENV == "production"
-app.config["MAX_CONTENT_LENGTH"] = None  # unlimited upload size
+app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024  # 8MB request cap
 app.config["PERMANENT_SESSION_LIFETIME"] = 60 * 30
 
 DEFAULT_SECRET_KEY = "adam_secret_key_2026"
@@ -142,14 +151,26 @@ if APP_ENV == "production" and app.secret_key == DEFAULT_SECRET_KEY:
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+
+@app.after_request
+def apply_security_headers(response):
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if APP_ENV == "production":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    csp = "default-src 'self' https: data: blob: 'unsafe-inline' 'unsafe-eval'; img-src 'self' https: data: blob:; media-src 'self' https: data: blob:;"
+    response.headers.setdefault("Content-Security-Policy", csp)
+    return response
+
 DB_INTEGRITY_ERRORS = (sqlite3.IntegrityError,)
 DB_OPERATIONAL_ERRORS = (sqlite3.OperationalError,)
 if PSYCOPG2_AVAILABLE:
     DB_INTEGRITY_ERRORS = DB_INTEGRITY_ERRORS + (psycopg2.IntegrityError,)
     DB_OPERATIONAL_ERRORS = DB_OPERATIONAL_ERRORS + (psycopg2.OperationalError,)
 
-ALLOWED_EXTENSIONS = None
-MAX_SINGLE_FILE_SIZE = 3 * 1024 * 1024
+ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
+MAX_SINGLE_FILE_SIZE = 5 * 1024 * 1024
 MAX_WORK_IMAGES = 10
 
 IRAQ_GOVERNORATES = [
@@ -219,15 +240,11 @@ COMMENT_MAX_COUNT = 3
 
 
 def auto_login_from_cookie():
-    if "user" not in session:
-        email_cookie = request.cookies.get("remember_email")
-        if email_cookie:
-            with get_db() as con:
-                u = con.execute("SELECT * FROM users WHERE email=?", (email_cookie,)).fetchone()
-            if u:
-                session["user"] = u["name"]
-                session["user_id"] = u["id"]
-                session["role"] = u["role"] or "worker"
+    if "user" in session:
+        return
+    email_cookie = (request.cookies.get("remember_email") or "").strip().lower()
+    if email_cookie:
+        session["last_email"] = email_cookie
 
 
 def get_current_session_user():
@@ -734,21 +751,112 @@ def view_image():
     back = request.args.get("back", "/workers")
     if not back.startswith("/"):
         back = "/workers"
+
     image_ref = (request.args.get("image") or "").strip()
-    image_url = media_url(image_ref)
-    if not image_url:
-        return redirect(back)
+    images_raw = (request.args.get("images") or "").strip()
+
+    image_refs = [x.strip() for x in images_raw.split("||") if x.strip()]
+    if not image_refs and image_ref:
+        image_refs = [image_ref]
+
+    image_urls = []
+    for ref in image_refs:
+        url = media_url(ref)
+        if url:
+            image_urls.append(url)
+
+    if not image_urls:
+        single_url = media_url(image_ref)
+        if single_url:
+            image_urls = [single_url]
+        else:
+            return redirect(back)
+
+    try:
+        current_index = int(request.args.get("idx", "0"))
+    except Exception:
+        current_index = 0
+
+    if current_index < 0:
+        current_index = 0
+    if current_index >= len(image_urls):
+        current_index = len(image_urls) - 1
+
+    slides_html = "".join(
+        f'<div class="gallery-slide{" active" if i == current_index else ""}"><img src="{url}" alt="work"></div>'
+        for i, url in enumerate(image_urls)
+    )
+    dots_html = "".join(
+        f'<button type="button" class="gallery-dot{" active" if i == current_index else ""}" onclick="showGallerySlide({i})" aria-label="صورة {i + 1}"></button>'
+        for i in range(len(image_urls))
+    )
+    image_urls_json = json.dumps(image_urls, ensure_ascii=False)
+
     return render_template_string(
         STYLE + (settings_corner() if 'user' in session else '') + f"""
-        <div class="container narrow-container" style="text-align:center;">
-            <a href="{back}"><button class="light-btn">رجوع</button></a>
-            <h2>عرض الصورة</h2>
-            <div class="card" style="padding:12px;">
-                <img src="{image_url}" alt="work" style="max-width:100%;max-height:78vh;border-radius:18px;border:1px solid rgba(96,165,250,.22);box-shadow:0 18px 40px rgba(2,8,23,.28);object-fit:contain;background:rgba(255,255,255,.04);">
+        <div class="container narrow-container gallery-page-wrap">
+            <div class="gallery-topbar">
+                <a href="{back}"><button class="light-btn">رجوع</button></a>
+                <span class="badge">{len(image_urls)} صورة</span>
+            </div>
+            <h2>عرض الصور</h2>
+            <div class="section-subtitle">تقدر تسحب يمين ويسار أو تستخدم الأسهم حتى تنتقل بين الصور.</div>
+
+            <div class="card gallery-viewer-card">
+                <div class="gallery-viewer" id="galleryViewer">
+                    {slides_html}
+
+                    <button type="button" class="gallery-nav prev" onclick="moveGallery(-1)">‹</button>
+                    <button type="button" class="gallery-nav next" onclick="moveGallery(1)">›</button>
+                </div>
+                <div class="gallery-counter" id="galleryCounter">{current_index + 1} / {len(image_urls)}</div>
+                <div class="gallery-dots">{dots_html}</div>
             </div>
         </div>
+
+        <script>
+        const galleryImages = {image_urls_json};
+        let galleryIndex = {current_index};
+        let touchStartX = 0;
+        let touchEndX = 0;
+
+        function showGallerySlide(index) {{
+            if (!galleryImages.length) return;
+            if (index < 0) index = galleryImages.length - 1;
+            if (index >= galleryImages.length) index = 0;
+            galleryIndex = index;
+
+            const slides = document.querySelectorAll('.gallery-slide');
+            const dots = document.querySelectorAll('.gallery-dot');
+            slides.forEach((slide, i) => slide.classList.toggle('active', i === galleryIndex));
+            dots.forEach((dot, i) => dot.classList.toggle('active', i === galleryIndex));
+
+            const counter = document.getElementById('galleryCounter');
+            if (counter) counter.textContent = `${{galleryIndex + 1}} / ${{galleryImages.length}}`;
+        }}
+
+        function moveGallery(step) {{
+            showGallerySlide(galleryIndex + step);
+        }}
+
+        const galleryViewer = document.getElementById('galleryViewer');
+        if (galleryViewer) {{
+            galleryViewer.addEventListener('touchstart', function(e) {{
+                touchStartX = e.changedTouches[0].screenX;
+            }}, {{passive:true}});
+
+            galleryViewer.addEventListener('touchend', function(e) {{
+                touchEndX = e.changedTouches[0].screenX;
+                const diff = touchEndX - touchStartX;
+                if (Math.abs(diff) > 40) {{
+                    if (diff < 0) moveGallery(1);
+                    else moveGallery(-1);
+                }}
+            }}, {{passive:true}});
+        }}
+        </script>
         </body></html>
-        """, remembered_email=remembered_email
+        """
     )
 
 
@@ -1210,25 +1318,25 @@ def build_pretty_email_html(title, code, intro_text, note_text):
     return f"""
     <div dir="rtl" style="margin:0;padding:0;background:#eef4fb;font-family:Arial,Tahoma,sans-serif;">
         <div style="max-width:680px;margin:0 auto;padding:34px 16px;">
-            <div style="background:linear-gradient(180deg,#0a1f3b 0%,#0f2d55 55%,#113766 100%);border-radius:28px;overflow:hidden;border:1px solid rgba(37,99,235,.16);box-shadow:0 22px 60px rgba(15,39,71,.20);">
+            <div style="background:linear-gradient(180deg,#f7faff 0%,#eef4ff 55%,#edf3fb 100%);border-radius:28px;overflow:hidden;border:1px solid rgba(37,99,235,.16);box-shadow:0 22px 60px rgba(15,39,71,.20);">
 
-                <div style="padding:30px 24px 14px 24px;text-align:center;color:#ffffff;">
+                <div style="padding:30px 24px 14px 24px;text-align:center;color:#1f2f4a;">
                     <div style="display:inline-block;background:rgba(255,255,255,.10);padding:10px 18px;border-radius:999px;font-size:14px;margin-bottom:18px;border:1px solid rgba(255,255,255,.12);">
                         منصة المسطر
                     </div>
 
                     <h1 style="margin:0;font-size:31px;font-weight:800;letter-spacing:.2px;">{title}</h1>
 
-                    <p style="margin:14px 0 0 0;font-size:17px;line-height:2;color:#dbeafe;">
+                    <p style="margin:14px 0 0 0;font-size:17px;line-height:2;color:#2455c8;">
                         {intro_text}
                     </p>
                 </div>
 
                 <div style="padding:24px;">
-                    <div style="background:#ffffff;border-radius:24px;padding:30px 22px;text-align:center;border:1px solid #dbeafe;">
+                    <div style="background:#ffffff;border-radius:24px;padding:30px 22px;text-align:center;border:1px solid rgba(47,111,237,.12);">
                         <div style="font-size:14px;color:#64748b;margin-bottom:10px;">رمز التحقق الخاص بك</div>
 
-                        <div style="display:inline-block;background:linear-gradient(180deg,#2563eb 0%,#1d4ed8 100%);color:#ffffff;font-size:42px;font-weight:800;letter-spacing:8px;padding:18px 28px;border-radius:20px;box-shadow:0 14px 28px rgba(37,99,235,.24);">
+                        <div style="display:inline-block;background:linear-gradient(180deg,#2563eb 0%,#1d4ed8 100%);color:#1f2f4a;font-size:42px;font-weight:800;letter-spacing:8px;padding:18px 28px;border-radius:20px;box-shadow:0 14px 28px rgba(37,99,235,.24);">
                             {code}
                         </div>
 
@@ -1237,12 +1345,12 @@ def build_pretty_email_html(title, code, intro_text, note_text):
                         </p>
                     </div>
 
-                    <div style="margin-top:16px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.08);padding:16px 18px;border-radius:18px;color:#dbeafe;font-size:14px;line-height:1.95;">
+                    <div style="margin-top:16px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.08);padding:16px 18px;border-radius:18px;color:#2455c8;font-size:14px;line-height:1.95;">
                         تم إرسال هذه الرسالة من <strong>المسطر</strong>. إذا لم تطلب هذا الإجراء، تجاهل الرسالة ولا تشارك الرمز مع أي شخص.
                     </div>
                 </div>
 
-                <div style="padding:0 24px 28px 24px;text-align:center;color:#bfdbfe;font-size:14px;line-height:1.9;">
+                <div style="padding:0 24px 28px 24px;text-align:center;color:#6b7a90;font-size:14px;line-height:1.9;">
                     مع التحية<br>
                     <strong>فريق المسطر</strong>
                 </div>
@@ -1378,82 +1486,85 @@ STYLE = """
 }
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
-body{margin:0;padding:0;font-family:Tahoma,Arial,sans-serif;background:radial-gradient(circle at top right, rgba(96,165,250,.18), transparent 22%),radial-gradient(circle at top left, rgba(14,165,233,.14), transparent 20%),linear-gradient(180deg,#06101d 0%, #0a1d35 48%, #0d2744 100%);color:var(--text)}
+body{margin:0;padding:0;font-family:Tahoma,Arial,sans-serif;background:radial-gradient(circle at top right, rgba(47,111,237,.11), transparent 24%),radial-gradient(circle at top left, rgba(212,160,23,.08), transparent 18%),linear-gradient(180deg,#f7f9fd 0%, #eef4fb 52%, #edf3fa 100%);color:var(--text)}
 a{text-decoration:none;color:inherit}
-.container{width:min(94%,1120px);margin:24px auto;background:linear-gradient(180deg, rgba(10,25,47,.96), rgba(7,18,35,.96));backdrop-filter:blur(12px);border:1px solid rgba(96,165,250,.18);border-radius:30px;padding:22px;box-shadow:var(--shadow)}
+.container{width:min(94%,1120px);margin:24px auto;background:linear-gradient(180deg,#ffffff 0%, #fbfdff 100%);backdrop-filter:blur(10px);border:1px solid rgba(47,111,237,.12);border-radius:30px;padding:22px;box-shadow:var(--shadow)}
 .narrow-container{width:min(94%,620px)}
 h1,h2,h3,h4{margin:0 0 14px} h1{font-size:36px} h2{font-size:28px} h3{font-size:20px}
 .small{font-size:13px;color:var(--muted)} .center{text-align:center}
 .section-subtitle{font-size:14px;color:var(--muted);margin-bottom:14px}
-input,select,textarea,button{width:100%;margin:8px 0;padding:13px 14px;border-radius:16px;border:1px solid var(--border);font-size:16px;background:rgba(255,255,255,.06);color:var(--text)}
-input:focus,select:focus,textarea:focus{outline:none;border-color:rgba(96,165,250,.55);box-shadow:0 0 0 4px rgba(37,99,235,.16)}
+input,select,textarea,button{width:100%;margin:8px 0;padding:13px 14px;border-radius:16px;border:1px solid rgba(47,111,237,.14);font-size:16px;background:#ffffff;color:var(--text)}
+input:focus,select:focus,textarea:focus{outline:none;border-color:rgba(47,111,237,.48);box-shadow:0 0 0 4px rgba(47,111,237,.12)}
 textarea{min-height:120px;resize:vertical}
-button{background:linear-gradient(180deg,#3b82f6 0%, #1d4ed8 100%);color:#f8fbff;border:none;cursor:pointer;font-weight:700;box-shadow:0 10px 18px rgba(37,99,235,.25)} button:hover{transform:translateY(-1px);opacity:.97}
-button.light-btn{background:rgba(37,99,235,.18);color:var(--text);border:1px solid rgba(96,165,250,.32)}
-label{display:block;font-weight:bold;margin-top:10px}
-.msg,.notice-box{background:rgba(37,99,235,.14);border:1px solid rgba(96,165,250,.28);padding:14px;border-radius:18px;text-align:center;margin:12px 0;color:#dbeafe}
+button{background:linear-gradient(180deg,#3f7ff4 0%, #255fda 100%);color:#f8fbff;border:none;cursor:pointer;font-weight:700;box-shadow:0 10px 18px rgba(47,111,237,.20)} button:hover{transform:translateY(-1px);opacity:.98}
+button.light-btn{background:#f3f7ff;color:#2455c8;border:1px solid rgba(47,111,237,.22)}
+label{display:block;font-weight:bold;margin-top:10px;color:#31415d}
+.msg,.notice-box{background:#eef4ff;border:1px solid rgba(47,111,237,.18);padding:14px;border-radius:18px;text-align:center;margin:12px 0;color:#2455c8}
 .notice{font-size:13px;text-align:center;color:var(--muted);margin-top:8px}
-hr{border:none;border-top:1px solid var(--border);margin:18px 0}
+hr{border:none;border-top:1px solid rgba(47,111,237,.10);margin:18px 0}
 .row,.inline,.topbar,.worker-hero-top,.admin-panel-top{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
 .row>*{flex:1;min-width:220px}
-.hero-panel,.card,.specialty-group-card,.search-panel,.settings-group,.settings-profile-wrap,.worker-hero,.comment-card,.admin-stat,.admin-search-box,.admin-user-card,.admin-log-card,.home-feature-card,.home-stat,.home-cta-box{background:rgba(255,255,255,.05);border:1px solid rgba(96,165,250,.18);border-radius:24px;box-shadow:var(--soft-shadow)}
+.hero-panel,.card,.specialty-group-card,.search-panel,.settings-group,.settings-profile-wrap,.worker-hero,.comment-card,.admin-stat,.admin-search-box,.admin-user-card,.admin-log-card,.home-feature-card,.home-stat,.home-cta-box{background:#ffffff;border:1px solid rgba(47,111,237,.12);border-radius:24px;box-shadow:var(--soft-shadow)}
 .hero-panel,.card,.search-panel,.settings-group,.settings-profile-wrap,.worker-hero,.admin-stat,.admin-search-box,.admin-user-card,.admin-log-card,.home-feature-card,.home-stat,.home-cta-box,.comment-card{padding:18px}
 .hero-badge,.badge,.worker-specialty-badge{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:34px;padding:7px 12px;border-radius:999px;font-size:12px;font-weight:700}
-.hero-badge,.badge{background:rgba(59,130,246,.16);color:#dbeafe;border:1px solid rgba(96,165,250,.28)}
-.worker-specialty-badge{background:linear-gradient(180deg,#1e40af 0%, #1d4ed8 100%);color:#eff6ff}
+.hero-badge,.badge{background:#eef4ff;color:#2455c8;border:1px solid rgba(47,111,237,.18)}
+.worker-specialty-badge{background:linear-gradient(180deg,#3f7ff4 0%, #255fda 100%);color:#eff6ff}
 .home-grid,.home-features-grid,.home-stats-grid,.specialties-grid,.work-grid,.admin-stats-grid,.admin-users-grid{display:grid;gap:14px}
 .home-grid{grid-template-columns:1.4fr .9fr}.home-features-grid,.home-stats-grid{grid-template-columns:repeat(3,1fr)}
-.home-feature-icon{width:54px;height:54px;border-radius:18px;background:rgba(59,130,246,.16);display:flex;align-items:center;justify-content:center;font-size:26px;margin-bottom:10px}
-.profile-img,.profile-img-large{object-fit:cover;border-radius:50%;border:4px solid rgba(96,165,250,.7);background:rgba(255,255,255,.08)}
+.home-feature-icon{width:54px;height:54px;border-radius:18px;background:linear-gradient(180deg,#eef4ff 0%, #f9fbff 100%);border:1px solid rgba(47,111,237,.16);display:flex;align-items:center;justify-content:center;font-size:26px;margin-bottom:10px;color:#2455c8}
+.profile-img,.profile-img-large{object-fit:cover;border-radius:50%;border:4px solid rgba(47,111,237,.34);background:#f8fbff}
 .profile-img{width:88px;height:88px}.profile-img-large{width:128px;height:128px;display:block}
-.profile-placeholder,.profile-placeholder-large{display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.08);border-radius:50%;color:#bfd4ee;border:3px solid rgba(96,165,250,.32)}
+.profile-placeholder,.profile-placeholder-large{display:flex;align-items:center;justify-content:center;background:#f6f9ff;border-radius:50%;color:#7a8aa5;border:3px solid rgba(47,111,237,.18)}
 .profile-placeholder{width:88px;height:88px;font-size:32px}.profile-placeholder-large{width:128px;height:128px;font-size:42px;margin:0 auto}
 .worker-card{display:grid;grid-template-columns:96px 1fr;gap:16px;align-items:start}
 .worker-info-grid,.detail-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:12px}
-.info-chip,.detail-box{background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:16px;padding:10px 12px;font-size:14px}
+.info-chip,.detail-box{background:#fbfdff;border:1px solid rgba(47,111,237,.12);border-radius:16px;padding:10px 12px;font-size:14px}
 .work-grid{grid-template-columns:repeat(3,1fr);margin-top:12px}
-.work-grid img{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:18px;border:2px solid rgba(96,165,250,.5);background:rgba(255,255,255,.08)}
-.specialties-grid{grid-template-columns:repeat(2,1fr);margin-top:18px}
-.specialty-group-card h3{margin:0 0 12px;color:var(--text);font-size:18px}.specialty-items{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
-.specialty-item{display:block;background:rgba(255,255,255,.05);border:1px solid rgba(96,165,250,.18);border-radius:16px;padding:14px 8px;text-align:center;transition:.2s;color:var(--text)}
-.specialty-item:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,.08)}
-.active-specialty-item{background:var(--text);color:#eff6ff;border-color:var(--text)}.active-specialty-item .specialty-name,.active-specialty-item .specialty-icon{color:#eff6ff}
+.work-grid img{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:18px;border:2px solid rgba(47,111,237,.20);background:#f8fbff}
+.specialties-grid{grid-template-columns:repeat(3,minmax(0,1fr));margin-top:14px}
+.specialty-group-card{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;min-height:148px;padding:16px 12px}.specialty-group-card h3{margin:8px 0 6px;color:var(--text);font-size:18px;line-height:1.35}.section-subtitle{font-size:13px;line-height:1.5;color:var(--muted);margin-top:2px}.specialty-items{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.specialty-item{display:block;background:#ffffff;border:1px solid rgba(47,111,237,.14);border-radius:16px;padding:14px 8px;text-align:center;transition:.2s;color:var(--text)}
+.specialty-item:hover{transform:translateY(-2px);box-shadow:0 8px 18px rgba(47,111,237,.10);border-color:rgba(47,111,237,.26)}
+input::placeholder, textarea::placeholder{color:#9aa7bb;opacity:1}
+.specialty-group-card,.card,.worker-hero,.settings-group,.settings-profile-wrap,.hero-panel,.search-panel{position:relative;overflow:hidden}
+.specialty-group-card::before,.card::before,.worker-hero::before,.settings-group::before,.settings-profile-wrap::before,.hero-panel::before,.search-panel::before{content:"";position:absolute;right:18px;left:18px;top:0;height:3px;border-radius:999px;background:linear-gradient(90deg,rgba(47,111,237,.95),rgba(212,160,23,.70));opacity:.9}
+.active-specialty-item{background:linear-gradient(180deg,#3f7ff4 0%, #255fda 100%);color:#eff6ff;border-color:#255fda}.active-specialty-item .specialty-name,.active-specialty-item .specialty-icon{color:#eff6ff}
 .specialty-icon{font-size:28px;margin-bottom:6px}.specialty-name{font-size:14px;font-weight:700;color:var(--text);line-height:1.6}
 .link-btn,.bottom-corner-link,.settings-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px}
-.link-btn{background:linear-gradient(180deg,#2563eb 0%, #1d4ed8 100%);color:#eff6ff;padding:10px 14px;border-radius:14px;margin:4px 0;font-size:14px;font-weight:700;border:1px solid rgba(147,197,253,.28);box-shadow:0 6px 18px rgba(0,0,0,.22)}.link-red{background:linear-gradient(180deg,#dc2626 0%, #b91c1c 100%);color:#fff}
+.link-btn{background:linear-gradient(180deg,#3f7ff4 0%, #255fda 100%);color:#eff6ff;padding:10px 14px;border-radius:14px;margin:4px 0;font-size:14px;font-weight:700;border:1px solid rgba(47,111,237,.18);box-shadow:0 6px 16px rgba(47,111,237,.16)}.link-red{background:linear-gradient(180deg,#ef4444 0%, #dc2626 100%);color:#fff}
 .search-panel{display:none;margin-bottom:16px}.search-panel.show{display:block}.search-inline-grid{display:grid;grid-template-columns:1.3fr 1fr 1fr auto;gap:10px;align-items:end}
-.settings-floating{position:fixed;top:14px;left:66px;z-index:9999}.settings-btn{position:relative;display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;background:rgba(255,255,255,.88);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);color:#0f172a;border-radius:999px;font-size:21px;text-decoration:none;box-shadow:0 8px 22px rgba(15,23,42,.14);border:1px solid rgba(148,163,184,.22);transition:transform .18s ease, box-shadow .18s ease, background .18s ease}.settings-btn:hover{transform:translateY(-1px);box-shadow:0 10px 26px rgba(15,23,42,.18);background:rgba(255,255,255,.96)}
-.bottom-corner-link{position:fixed;bottom:18px;z-index:9999;min-width:86px;height:46px;padding:0 16px;background:linear-gradient(180deg,#1d4ed8 0%, #1e40af 100%);color:#eff6ff;border-radius:999px;box-shadow:0 6px 18px rgba(0,0,0,.22);font-size:14px;font-weight:700;border:1px solid rgba(147,197,253,.28)}.bottom-left-link{left:16px}.bottom-right-link{right:16px}
-.global-back-wrap{position:fixed;top:14px;right:14px;z-index:9999}.global-back-btn{display:inline-flex;align-items:center;justify-content:center;min-width:112px;height:46px;padding:0 16px;background:linear-gradient(180deg,#2563eb 0%, #1d4ed8 100%);color:#eff6ff;border-radius:999px;box-shadow:0 6px 18px rgba(0,0,0,.22);font-size:14px;font-weight:800;border:1px solid rgba(147,197,253,.28)}
+.settings-floating{position:fixed;top:14px;left:66px;z-index:9999}.settings-btn{position:relative;display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;background:#ffffff;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);color:#2455c8;border-radius:999px;font-size:21px;text-decoration:none;box-shadow:0 8px 18px rgba(31,47,74,.10);border:1px solid rgba(47,111,237,.12);transition:transform .18s ease, box-shadow .18s ease, background .18s ease}.settings-btn:hover{transform:translateY(-1px);box-shadow:0 10px 22px rgba(31,47,74,.12);background:#f8fbff}
+.bottom-corner-link{position:fixed;bottom:18px;z-index:9999;min-width:86px;height:46px;padding:0 16px;background:linear-gradient(180deg,#3f7ff4 0%, #255fda 100%);color:#eff6ff;border-radius:999px;box-shadow:0 6px 16px rgba(47,111,237,.16);font-size:14px;font-weight:700;border:1px solid rgba(47,111,237,.18)}.bottom-left-link{left:16px}.bottom-right-link{right:16px}
+.global-back-wrap{position:fixed;top:14px;right:14px;z-index:9999}.global-back-btn{display:inline-flex;align-items:center;justify-content:center;min-width:112px;height:46px;padding:0 16px;background:linear-gradient(180deg,#3f7ff4 0%, #255fda 100%);color:#eff6ff;border-radius:999px;box-shadow:0 6px 16px rgba(47,111,237,.16);font-size:14px;font-weight:800;border:1px solid rgba(47,111,237,.18)}
 .settings-profile-wrap{display:flex;align-items:center;gap:14px}.settings-profile-info{flex:1}.settings-section-title{font-size:18px;font-weight:700;margin:0 0 10px;text-align:right}
 .worker-hero-grid{display:grid;grid-template-columns:140px 1fr;gap:18px;align-items:start}
-.star{font-size:20px;color:#60a5fa;margin:6px 0}.comment-card{margin:10px 0}
+.star{font-size:20px;color:#d4a017;margin:6px 0}.comment-card{margin:10px 0}
 .admin-stats-grid{grid-template-columns:repeat(4,1fr);margin-bottom:16px}.admin-stat .label{font-size:13px;color:var(--muted);margin-bottom:8px}.admin-stat .value{font-size:28px;font-weight:700}
 .admin-users-grid{grid-template-columns:repeat(2,1fr)}
-.empty-state{padding:24px;text-align:center;border-radius:22px;background:rgba(255,255,255,.06);border:1px dashed rgba(96,165,250,.18);color:#615200}
+.empty-state{padding:24px;text-align:center;border-radius:22px;background:#f8fbff;border:1px dashed rgba(47,111,237,.18);color:#6b7a90}
 .footer-note{text-align:center;color:var(--muted);font-size:13px;margin-top:16px}
-@media (max-width:960px){.home-grid,.home-features-grid,.home-stats-grid,.admin-stats-grid,.admin-users-grid,.specialties-grid{grid-template-columns:1fr}.search-inline-grid{grid-template-columns:1fr}}
-@media (max-width:720px){h1{font-size:28px}h2{font-size:24px}.container{padding:16px;border-radius:24px}.worker-card,.worker-hero-grid,.settings-profile-wrap{grid-template-columns:1fr;display:grid}.worker-info-grid,.detail-grid,.work-grid,.specialty-items{grid-template-columns:1fr 1fr}}
+@media (max-width:960px){.home-grid,.home-features-grid,.home-stats-grid,.admin-stats-grid,.admin-users-grid{grid-template-columns:1fr}.specialties-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.search-inline-grid{grid-template-columns:1fr}}
+@media (max-width:720px){h1{font-size:28px}h2{font-size:24px}.container{padding:16px;border-radius:24px}.worker-card,.worker-hero-grid,.settings-profile-wrap{grid-template-columns:1fr;display:grid}.worker-info-grid,.detail-grid,.work-grid,.specialty-items{grid-template-columns:1fr 1fr}.specialties-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.specialty-group-card{min-height:132px;padding:14px 10px}.specialty-group-card h3{font-size:16px}.section-subtitle{font-size:12px}}
 @media (max-width:520px){.work-grid,.worker-info-grid,.detail-grid,.specialty-items{grid-template-columns:1fr}.bottom-corner-link{font-size:13px;min-width:74px;padding:0 12px}}
 
 .worker-rating-line{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
 .rating-stars{font-size:16px;color:#fbbf24;letter-spacing:2px}
-.rating-text{font-size:13px;color:#dbeafe}
-.verified-badge{background:rgba(16,185,129,.18);border-color:rgba(16,185,129,.45);color:#d1fae5}
-.pinned-badge{background:rgba(245,158,11,.16);border-color:rgba(245,158,11,.45);color:#fde68a}
+.rating-text{font-size:13px;color:#6b7a90}
+.verified-badge{background:#ecfdf5;border-color:rgba(22,163,74,.28);color:#15803d}
+.pinned-badge{background:#fff8e7;border-color:rgba(212,160,23,.28);color:#b7791f}
 .filter-grid-pro{display:grid;grid-template-columns:1.2fr 1fr 1fr 1fr 1fr auto;gap:10px;align-items:end}
-.map-link-btn{background:rgba(255,255,255,.08);border:1px solid rgba(96,165,250,.28);color:var(--text)}
-.mini-stat{background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:16px;padding:10px 12px}
+.map-link-btn{background:#f8fbff;border:1px solid rgba(47,111,237,.18);color:var(--text)}
+.mini-stat{background:#fbfdff;border:1px solid rgba(47,111,237,.12);border-radius:16px;padding:10px 12px}
 .map-page-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:14px}
-#workersMap{width:100%;height:620px;border-radius:22px;border:1px solid rgba(96,165,250,.22);overflow:hidden}
+#workersMap{width:100%;height:620px;border-radius:22px;border:1px solid rgba(47,111,237,.14);overflow:hidden}
 .map-list-card{max-height:620px;overflow:auto}
 @media (max-width:960px){.filter-grid-pro,.map-page-grid{grid-template-columns:1fr}}
 
 
 /* Soft elegant typography tuning */
 :root{
-    --text:#eaf2ff;
-    --muted:#b7c7dd;
+    --text:#1f2f4a;
+    --muted:#6b7a90;
 }
 body{
     font-family:"Tahoma","Arial",sans-serif;
@@ -1645,12 +1756,144 @@ label input[type="checkbox"]{
 .rating-pill{display:inline-flex;align-items:center;gap:6px;background:rgba(245,158,11,.14);color:#fde68a;border:1px solid rgba(245,158,11,.24);padding:6px 10px;border-radius:999px;font-size:13px;font-weight:700}
 .review-form-pro .rating-row{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
 .review-form-pro input[type=radio]{display:none}
-.review-form-pro .rate-pill{display:inline-flex;align-items:center;justify-content:center;padding:10px 14px;border-radius:999px;border:1px solid rgba(96,165,250,.2);background:rgba(255,255,255,.04);color:#dbeafe;font-weight:800;cursor:pointer;min-width:78px}
+.review-form-pro .rate-pill{display:inline-flex;align-items:center;justify-content:center;padding:10px 14px;border-radius:999px;border:1px solid rgba(96,165,250,.2);background:rgba(255,255,255,.04);color:#2455c8;font-weight:800;cursor:pointer;min-width:78px}
 .review-form-pro input[type=radio]:checked + .rate-pill{background:linear-gradient(135deg,rgba(37,99,235,.95),rgba(59,130,246,.82));color:#fff;border-color:rgba(147,197,253,.35)}
 .review-form-pro textarea{min-height:120px}
 @media (max-width:720px){.profile-actions-bar{display:grid;grid-template-columns:1fr 1fr}.action-pill{padding:10px 12px;font-size:14px}.stat-mini-grid{grid-template-columns:1fr 1fr}}
 
+
+
+
+/* Gallery layout + swipe viewer fix */
+.work-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:12px}
+.work-grid a.work-tile{display:block;width:100%}
+.work-thumb,.work-grid img{width:100%;height:145px;aspect-ratio:auto;object-fit:cover;border-radius:14px;border:2px solid rgba(47,111,237,.20);background:#f8fbff;display:block}
+.work-grid label img{margin-bottom:8px}
+.gallery-page-wrap{max-width:760px}
+.gallery-topbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.gallery-viewer-card{padding:14px}
+.gallery-viewer{position:relative;overflow:hidden;border-radius:20px;background:rgba(15,23,42,.04);min-height:280px}
+.gallery-slide{display:none;align-items:center;justify-content:center;min-height:280px}
+.gallery-slide.active{display:flex}
+.gallery-slide img{width:100%;max-height:76vh;object-fit:contain;background:#f8fbff;border-radius:18px}
+.gallery-nav{position:absolute;top:50%;transform:translateY(-50%);width:46px;height:46px;border-radius:999px;border:none;background:rgba(15,23,42,.55);color:#fff;font-size:28px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:2}
+.gallery-nav.prev{right:12px}
+.gallery-nav.next{left:12px}
+.gallery-counter{text-align:center;font-weight:700;margin-top:12px}
+.gallery-dots{display:flex;justify-content:center;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px}
+.gallery-dot{width:10px;height:10px;border-radius:999px;border:none;background:rgba(148,163,184,.55);padding:0;cursor:pointer}
+.gallery-dot.active{background:#2563eb;transform:scale(1.15)}
+@media (max-width:720px){
+  .work-grid{grid-template-columns:repeat(2,minmax(0,1fr)) !important;gap:10px}
+  .work-thumb,.work-grid img{height:128px}
+}
+@media (max-width:520px){
+  .work-grid{grid-template-columns:repeat(2,minmax(0,1fr)) !important;gap:8px}
+  .work-thumb,.work-grid img{height:118px;border-radius:12px}
+  .gallery-nav{width:40px;height:40px;font-size:24px}
+  .gallery-slide,.gallery-viewer{min-height:220px}
+}
+
+/* Tuned contrast + tighter specialty layout */
+:root{--text:#13233f;--muted:#54657f;--bg:#f4d35e;--panel:#fffdf7;--card:#fffdf7;--border:rgba(120,88,0,.14);--shadow:0 16px 34px rgba(120,88,0,.12);--soft-shadow:0 8px 18px rgba(120,88,0,.08)}
+body{color:var(--text);background:radial-gradient(circle at top right, rgba(255,255,255,.22), transparent 22%),radial-gradient(circle at top left, rgba(255,255,255,.18), transparent 18%),linear-gradient(180deg,#f7d774 0%, #f4d35e 54%, #efc95a 100%)}
+.container{background:linear-gradient(180deg,#fffdf7 0%, #fff9e8 100%);box-shadow:var(--shadow);padding:18px 18px 16px}
+h1,h2,h3,h4,.specialty-group-card h3,.specialty-name,label{color:var(--text)!important}
+.section-subtitle,.small,.notice,.footer-note,.rating-text{color:var(--muted)!important}
+input,select,textarea{color:var(--text)!important;background:#fffef9;border:1px solid rgba(120,88,0,.16)}
+input::placeholder, textarea::placeholder{color:#7a8aa3;opacity:1}
+.hero-panel,.card,.specialty-group-card,.search-panel,.settings-group,.settings-profile-wrap,.worker-hero,.comment-card,.admin-stat,.admin-search-box,.admin-user-card,.admin-log-card,.home-feature-card,.home-stat,.home-cta-box{border-color:rgba(120,88,0,.12)!important;box-shadow:var(--soft-shadow)!important}
+button{box-shadow:0 10px 20px rgba(37,99,235,.18)!important}
+button.light-btn{background:#f8fbff!important;color:#2455c8!important;border:1px solid rgba(37,99,235,.22)!important}
+.hero-panel,.card,.search-panel,.settings-group,.settings-profile-wrap,.worker-hero,.admin-stat,.admin-search-box,.admin-user-card,.admin-log-card,.home-feature-card,.home-stat,.home-cta-box,.comment-card{padding:15px!important}
+.topbar,.inline,.row,.worker-hero-top,.admin-panel-top{gap:10px!important}
+.specialties-grid{grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:12px!important;margin-top:14px!important}
+.specialty-group-card{padding:14px 12px!important;border-radius:22px!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;text-align:center!important;min-height:146px!important}
+.specialty-group-card::before{right:14px!important;left:14px!important;height:4px!important;background:linear-gradient(90deg,rgba(37,99,235,.92),rgba(212,160,23,.78))!important}
+.specialty-group-card h3{margin:8px 0 6px!important;font-size:18px!important;line-height:1.35!important}
+.specialty-items{gap:8px!important;margin-top:4px}
+.specialty-item{padding:12px 10px!important;border-radius:14px!important}
+.specialty-icon{margin-bottom:4px!important}
+.worker-card{gap:12px!important}
+.worker-info-grid,.detail-grid{gap:8px!important}
+.info-chip,.detail-box,.mini-stat{background:#f8fbff!important}
+@media (max-width:900px){.specialties-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+@media (max-width:720px){.container{padding:14px}.specialty-group-card{padding:12px 10px!important;min-height:128px!important}.specialty-group-card h3{font-size:16px!important}.section-subtitle{font-size:12px!important;line-height:1.45!important}}
 </style>
+
+<script>
+function attachImageCompressionForms() {
+  const forms = document.querySelectorAll('form[enctype="multipart/form-data"]');
+  forms.forEach((form) => {
+    if (form.dataset.compressBound === '1') return;
+    const fileInputs = form.querySelectorAll('input[type="file"]');
+    if (!fileInputs.length) return;
+    form.dataset.compressBound = '1';
+    form.addEventListener('submit', async function(e) {
+      if (form.dataset.compressing === '1') return;
+      const selectedInputs = Array.from(fileInputs).filter(inp => inp.files && inp.files.length);
+      if (!selectedInputs.length) return;
+      e.preventDefault();
+      form.dataset.compressing = '1';
+      const submitBtn = form.querySelector('button[type="submit"], button:not([type]), input[type="submit"]');
+      const oldText = submitBtn ? (submitBtn.innerText || submitBtn.value || '') : '';
+      if (submitBtn) {
+        if ('disabled' in submitBtn) submitBtn.disabled = true;
+        if ('innerText' in submitBtn) submitBtn.innerText = 'جاري تجهيز الصور...';
+        else submitBtn.value = 'جاري تجهيز الصور...';
+      }
+      try {
+        for (const input of selectedInputs) {
+          const dt = new DataTransfer();
+          for (const file of Array.from(input.files)) {
+            if (!file.type.startsWith('image/')) { dt.items.add(file); continue; }
+            const compressed = await compressImageFile(file);
+            dt.items.add(compressed || file);
+          }
+          input.files = dt.files;
+        }
+      } catch (err) {
+        console.log('compress fallback', err);
+      }
+      if (submitBtn) {
+        if ('innerText' in submitBtn) submitBtn.innerText = 'جاري الرفع...';
+        else submitBtn.value = 'جاري الرفع...';
+      }
+      form.submit();
+      setTimeout(() => {
+        if (submitBtn) {
+          if ('disabled' in submitBtn) submitBtn.disabled = false;
+          if ('innerText' in submitBtn) submitBtn.innerText = oldText || 'حفظ';
+          else submitBtn.value = oldText || 'حفظ';
+        }
+        form.dataset.compressing = '0';
+      }, 1500);
+    });
+  });
+}
+async function compressImageFile(file) {
+  if (!(file instanceof File)) return file;
+  if (file.size <= 900 * 1024) return file;
+  const bitmap = await createImageBitmap(file);
+  const maxSide = 1600;
+  let { width, height } = bitmap;
+  if (Math.max(width, height) > maxSide) {
+    const ratio = maxSide / Math.max(width, height);
+    width = Math.max(1, Math.round(width * ratio));
+    height = Math.max(1, Math.round(height * ratio));
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d', { alpha: false });
+  ctx.drawImage(bitmap, 0, 0, width, height);
+  const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.82));
+  if (!blob || blob.size >= file.size) return file;
+  const name = (file.name || 'image').replace(/\.[^.]+$/, '') + '.jpg';
+  return new File([blob], name, { type: 'image/jpeg', lastModified: Date.now() });
+}
+document.addEventListener('DOMContentLoaded', attachImageCompressionForms);
+</script>
 </head>
 <body>
 """
@@ -1794,6 +2037,8 @@ def login():
             return render_template_string(STYLE + '<div class="container"><div class="msg">هذا الحساب محظور من قبل الإدارة</div><a href="/login"><button>رجوع</button></a></div></body></html>')
 
         session.permanent = True
+        session.clear()
+        session["last_email"] = email
         session["user"] = user["name"]
         session["user_id"] = user["id"]
         session["role"] = user["role"] or "worker"
@@ -1851,7 +2096,10 @@ def visitor_login():
                 <input type="password" name="password" placeholder="كلمة السر" required>
                 <button>دخول الزائر</button>
             </form>
-            <div class="notice">ما عندك حساب؟ <a href="/visitor/register" style="color:#93c5fd;font-weight:700;">أنشئ حساب جديد</a></div>
+            <div class="inline" style="justify-content:space-between;margin-top:12px;">
+                <div class="notice" style="margin:0;">ما عندك حساب؟ <a href="/visitor/register" style="color:#93c5fd;font-weight:700;">أنشئ حساب جديد</a></div>
+                <a href="/forgot" style="color:#cbd5e1;font-weight:700;">نسيت كلمة السر</a>
+            </div>
         </div>
         </body></html>
         """, remembered_email=remembered_email
@@ -2528,9 +2776,10 @@ def worker_card(worker):
     work_images_html = ""
     imgs = [x.strip() for x in (worker["work_images"] or "").split(",") if x.strip()]
     if imgs:
+        gallery_refs = quote("||".join(imgs), safe="")
         blocks = []
-        for img in imgs[:6]:
-            blocks.append(f'<img src="{media_url(img)}" alt="work" class="work-thumb">')
+        for idx, img in enumerate(imgs[:6]):
+            blocks.append(f'<a class="work-tile" href="{url_for("view_image")}?image={quote(img, safe="")}&images={gallery_refs}&idx={idx}&back=/worker/{worker["id"]}"><img src="{media_url(img)}" alt="work" class="work-thumb"></a>')
         work_images_html = f'<div class="work-grid">{"".join(blocks)}</div>'
 
     phone_html = f'<div class="info-chip"><strong>الهاتف</strong><div>{worker["phone"]}</div></div>' if worker["show_phone"] else ""
@@ -2605,7 +2854,6 @@ def workers():
 
             {user_buttons}
 
-            <h3 style="margin-top:22px;">الاختصاصات الرئيسية</h3>
             {groups_cards}
         </div>
         </body></html>
@@ -2794,8 +3042,9 @@ def worker_profile(user_id):
     imgs = [x.strip() for x in (worker["work_images"] or "").split(",") if x.strip()]
     work_images_html = ""
     if imgs:
+        gallery_refs = quote("||".join(imgs), safe="")
         work_images_html = '<div class="work-grid">' + "".join(
-            f'<a href="{url_for("view_image")}?image={quote(img, safe="")}&back=/worker/{worker["id"]}"><img src="{media_url(img)}" alt="work" class="work-thumb"></a>' for img in imgs
+            f'<a class="work-tile" href="{url_for("view_image")}?image={quote(img, safe="")}&images={gallery_refs}&idx={idx}&back=/worker/{worker["id"]}"><img src="{media_url(img)}" alt="work" class="work-thumb"></a>' for idx, img in enumerate(imgs)
         ) + '</div>'
 
     phone_html = f'<div class="detail-box"><strong>الهاتف</strong>{worker["phone"]}</div>' if worker["show_phone"] else ""
@@ -3476,7 +3725,7 @@ def inbox():
             if (!document.hidden) {{
                 window.location.reload();
             }}
-        }}, 10000);
+        }}, 25000);
         </script>
         </body></html>
         """
@@ -3745,6 +3994,7 @@ def admin_login():
         if not admin or admin["username"] != username or not check_password_hash(admin["password"], password):
             return render_template_string(STYLE + '<div class="container"><div class="msg">بيانات الأدمن غير صحيحة</div><a href="/admin"><button>رجوع</button></a></div></body></html>')
 
+        session.clear()
         session["admin"] = username
         return redirect(url_for("admin_panel"))
 
@@ -4379,8 +4629,9 @@ def profile():
     imgs = [x.strip() for x in (user["work_images"] or "").split(",") if x.strip()]
     work_images_html = ""
     if imgs:
+        gallery_refs = quote("||".join(imgs), safe="")
         work_images_html = '<div class="work-grid">' + "".join(
-            f'<img src="{media_url(img)}" alt="work">' for img in imgs
+            f'<a class="work-tile" href="{url_for("view_image")}?image={quote(img, safe="")}&images={gallery_refs}&idx={idx}&back=/profile"><img src="{media_url(img)}" alt="work" class="work-thumb"></a>' for idx, img in enumerate(imgs)
         ) + '</div>'
 
     return render_template_string(
@@ -4447,6 +4698,8 @@ def settings():
             <a href="/favorites"><button class="light-btn">المفضلة ❤️</button></a>
             <a href="/support"><button class="light-btn">الدعم الفني</button></a>
             <a href="/workers"><button class="light-btn">تصفح الاختصاصات</button></a>
+            <a href="/privacy-policy"><button class="light-btn">سياسة الخصوصية</button></a>
+            <a href="/terms-of-use"><button class="light-btn">شروط الاستخدام</button></a>
             <a href="/change-password"><button class="light-btn">تغيير كلمة المرور</button></a>
             <a href="/logout"><button>تسجيل الخروج</button></a>
         """
@@ -4457,6 +4710,8 @@ def settings():
             <a href="/inbox"><button class="light-btn">الرسائل</button></a>
             <a href="/support"><button class="light-btn">الدعم الفني</button></a>
             <a href="/workers"><button class="light-btn">الاختصاصات</button></a>
+            <a href="/privacy-policy"><button class="light-btn">سياسة الخصوصية</button></a>
+            <a href="/terms-of-use"><button class="light-btn">شروط الاستخدام</button></a>
             <a href="/change-password"><button class="light-btn">تغيير كلمة المرور</button></a>
             <a href="/logout"><button>تسجيل الخروج</button></a>
         """
@@ -4470,6 +4725,76 @@ def settings():
             <div class="card">
                 {buttons_html}
             </div>
+        </div>
+        </body></html>
+        """
+    )
+
+
+@app.route("/privacy-policy")
+def privacy_policy():
+    if "user" not in session:
+        return redirect(url_for("login"))
+
+    return render_template_string(
+        STYLE + (settings_corner() if 'user' in session else '') + """
+        <div class="container narrow-container">
+            <h2>سياسة الخصوصية</h2>
+            <div class="card" style="text-align:right; line-height:1.9;">
+                <p>نحن في تطبيق المسطر نحترم خصوصية المستخدمين ونلتزم بحماية البيانات التي يتم إدخالها داخل التطبيق.</p>
+                <p><strong>1. البيانات التي قد نجمعها:</strong><br>
+                الاسم، رقم الهاتف، البريد الإلكتروني، الصور المرفوعة، الرسائل داخل التطبيق، وبيانات الملف الشخصي الخاصة بالمستخدم أو صاحب العمل.</p>
+                <p><strong>2. استخدام البيانات:</strong><br>
+                تُستخدم البيانات لتشغيل خدمات التطبيق، إنشاء الحسابات، عرض الملفات الشخصية والأعمال، تسهيل التواصل بين المستخدمين، وتحسين تجربة الاستخدام.</p>
+                <p><strong>3. الصور والملفات:</strong><br>
+                الصور التي يرفعها المستخدم أو المختص قد تُعرض داخل ملفه الشخصي أو أعماله بحسب استخدامه داخل التطبيق.</p>
+                <p><strong>4. مشاركة البيانات:</strong><br>
+                لا نقوم ببيع البيانات الشخصية للمستخدمين. وقد يتم استخدام خدمات خارجية تقنية فقط لتشغيل التطبيق مثل الاستضافة أو تخزين الصور أو إرسال البريد الإلكتروني عند الحاجة.</p>
+                <p><strong>5. حماية البيانات:</strong><br>
+                نسعى لاتخاذ إجراءات مناسبة لحماية الحسابات والبيانات من الوصول غير المصرح به، لكن لا يمكن ضمان الأمان الكامل بنسبة 100% على الإنترنت.</p>
+                <p><strong>6. مسؤولية المستخدم:</strong><br>
+                المستخدم مسؤول عن صحة البيانات التي يرفعها، وعن عدم رفع محتوى غير قانوني أو مسيء أو منتهك لحقوق الآخرين.</p>
+                <p><strong>7. حذف البيانات:</strong><br>
+                يمكن للمستخدم طلب تعديل أو حذف بياناته أو التواصل مع الدعم عند الحاجة، وفق ما يتوفر داخل التطبيق.</p>
+                <p><strong>8. التحديثات:</strong><br>
+                قد يتم تحديث سياسة الخصوصية مستقبلًا، واستمرار استخدام التطبيق يعني الموافقة على النسخة الأحدث منها.</p>
+            </div>
+            <a href="/settings"><button class="light-btn">رجوع إلى الإعدادات</button></a>
+        </div>
+        </body></html>
+        """
+    )
+
+
+@app.route("/terms-of-use")
+def terms_of_use():
+    if "user" not in session:
+        return redirect(url_for("login"))
+
+    return render_template_string(
+        STYLE + (settings_corner() if 'user' in session else '') + """
+        <div class="container narrow-container">
+            <h2>شروط الاستخدام</h2>
+            <div class="card" style="text-align:right; line-height:1.9;">
+                <p>باستخدامك تطبيق المسطر، فإنك توافق على الالتزام بالشروط التالية:</p>
+                <p><strong>1. الاستخدام المسموح:</strong><br>
+                يُسمح باستخدام التطبيق لغرض عرض الأعمال، إنشاء الحسابات، والتواصل بين المستخدمين ضمن الغرض المخصص للتطبيق فقط.</p>
+                <p><strong>2. صحة المعلومات:</strong><br>
+                المستخدم مسؤول عن صحة المعلومات التي يضيفها في حسابه، وعن تحديثها عند الحاجة.</p>
+                <p><strong>3. المحتوى المرفوع:</strong><br>
+                يمنع رفع أي صور أو محتوى مسيء أو مخالف للقانون أو ينتهك حقوق الملكية أو الخصوصية الخاصة بالآخرين.</p>
+                <p><strong>4. الحسابات:</strong><br>
+                يحق لإدارة التطبيق تقييد أو حذف أي حساب يسيء الاستخدام أو ينتحل صفة غيره أو يستخدم التطبيق بشكل ضار.</p>
+                <p><strong>5. الرسائل والتواصل:</strong><br>
+                التطبيق يوفّر وسيلة للتواصل بين الأطراف، لكن المستخدم يتحمل مسؤولية التعاملات والمحتوى الذي يرسله داخل الرسائل.</p>
+                <p><strong>6. حدود المسؤولية:</strong><br>
+                التطبيق يعمل كمنصة عرض وتواصل، ولا يتحمل مسؤولية الاتفاقات أو النتائج التي تحصل بين المستخدمين خارج حدود الخدمة التقنية نفسها.</p>
+                <p><strong>7. التعديلات على الخدمة:</strong><br>
+                يحق لإدارة التطبيق تعديل أو تحسين أو إيقاف بعض الميزات في أي وقت بما يخدم تطوير المنصة.</p>
+                <p><strong>8. استمرار الاستخدام:</strong><br>
+                استمرارك في استخدام التطبيق بعد أي تحديث على الشروط يعني موافقتك على النسخة المحدثة منها.</p>
+            </div>
+            <a href="/settings"><button class="light-btn">رجوع إلى الإعدادات</button></a>
         </div>
         </body></html>
         """
@@ -4966,3 +5291,5 @@ if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
+
+# --- compact grid sections variant ---
