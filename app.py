@@ -141,7 +141,7 @@ USING_POSTGRES = bool(DATABASE_URL and PSYCOPG2_AVAILABLE)
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = APP_ENV == "production"
-app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024  # 8MB request cap
+app.config["MAX_CONTENT_LENGTH"] = 30 * 1024 * 1024  # 30MB request cap
 app.config["PERMANENT_SESSION_LIFETIME"] = 60 * 30
 
 DEFAULT_SECRET_KEY = "adam_secret_key_2026"
@@ -171,7 +171,10 @@ if PSYCOPG2_AVAILABLE:
 
 ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
 MAX_SINGLE_FILE_SIZE = 5 * 1024 * 1024
+MAX_SUPPORT_MEDIA_SIZE = 20 * 1024 * 1024
 MAX_WORK_IMAGES = 10
+ALLOWED_SUPPORT_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
+ALLOWED_SUPPORT_VIDEO_EXTENSIONS = {"mp4", "mov", "webm", "m4v", "avi"}
 
 IRAQ_GOVERNORATES = [
     "بغداد", "البصرة", "نينوى", "أربيل", "النجف", "كربلاء", "الأنبار",
@@ -704,6 +707,118 @@ def delete_file_if_exists(filename):
         except Exception:
             pass
 
+
+def support_media_kind(filename="", mimetype=""):
+    name = (filename or "").lower()
+    mime = (mimetype or "").lower()
+    ext = name.rsplit(".", 1)[1] if "." in name else ""
+
+    if ext in ALLOWED_SUPPORT_IMAGE_EXTENSIONS or mime.startswith("image/"):
+        return "image"
+    if ext in ALLOWED_SUPPORT_VIDEO_EXTENSIONS or mime.startswith("video/"):
+        return "video"
+    return ""
+
+
+def validate_support_media(file_obj):
+    if not file_obj or not file_obj.filename:
+        return False, "لا يوجد ملف مرفوع"
+
+    media_kind = support_media_kind(file_obj.filename, getattr(file_obj, "mimetype", ""))
+    if media_kind not in {"image", "video"}:
+        return False, "الملف يجب أن يكون صورة أو فيديو"
+
+    if not file_size_ok(file_obj):
+        return False, "حجم الملف أكبر من المسموح"
+
+    try:
+        file_obj.stream.seek(0)
+    except Exception:
+        pass
+    return True, ""
+
+
+def save_support_media(file_obj):
+    if not file_obj or not file_obj.filename:
+        return "", ""
+
+    is_valid, msg = validate_support_media(file_obj)
+    if not is_valid:
+        raise RuntimeError(msg)
+
+    media_kind = support_media_kind(file_obj.filename, getattr(file_obj, "mimetype", ""))
+    original = secure_filename(file_obj.filename)
+    ext = original.rsplit(".", 1)[1].lower() if "." in original else ("jpg" if media_kind == "image" else "mp4")
+    support_dir = os.path.join(app.config["UPLOAD_FOLDER"], "support")
+    os.makedirs(support_dir, exist_ok=True)
+
+    if CLOUDINARY_ENABLED:
+        try:
+            try:
+                file_obj.stream.seek(0)
+            except Exception:
+                pass
+
+            upload_result = cloudinary.uploader.upload(
+                file_obj.stream,
+                resource_type="video" if media_kind == "video" else "image",
+                folder=f"{CLOUDINARY_UPLOAD_FOLDER}/support",
+                public_id=f"{uuid.uuid4().hex}",
+                format=ext,
+                overwrite=True
+            )
+            secure_url = (upload_result.get("secure_url") or "").strip()
+            public_id = (upload_result.get("public_id") or "").strip()
+            if not secure_url or not public_id:
+                raise RuntimeError("فشل رفع الملف")
+            return make_cloudinary_ref(public_id, secure_url), media_kind
+        except Exception as e:
+            print("SUPPORT MEDIA CLOUDINARY ERROR:", repr(e))
+
+    filename = f"support_{uuid.uuid4().hex}.{ext}"
+    save_path = os.path.join(support_dir, filename)
+    try:
+        file_obj.save(save_path)
+    except Exception:
+        try:
+            file_obj.stream.seek(0)
+        except Exception:
+            pass
+        with open(save_path, "wb") as f:
+            f.write(file_obj.read())
+
+    return os.path.join("support", filename).replace("\\", "/"), media_kind
+
+
+def render_support_attachment(attachment, attachment_type):
+    attachment = (attachment or "").strip()
+    attachment_type = (attachment_type or "").strip().lower()
+    if not attachment:
+        return ""
+
+    url = media_url(attachment)
+    if not url:
+        return ""
+
+    if attachment_type == "video":
+        return f"""
+        <div class="support-media-wrap">
+            <video controls preload="metadata" style="width:100%;max-height:260px;border-radius:16px;background:#000;">
+                <source src="{url}">
+                المتصفح لا يدعم عرض الفيديو.
+            </video>
+            <div style="margin-top:8px;"><a class="link-btn secondary" href="{url}" target="_blank">فتح الفيديو</a></div>
+        </div>
+        """
+
+    return f"""
+    <div class="support-media-wrap">
+        <a href="{url}" target="_blank">
+            <img src="{url}" alt="attachment" style="width:100%;max-height:260px;object-fit:contain;border-radius:16px;background:#f8fbff;border:1px solid rgba(47,111,237,.14);">
+        </a>
+    </div>
+    """
+
 def insert_user_record(con, values_dict):
     payload = {
         "name": values_dict.get("name", ""),
@@ -1111,6 +1226,8 @@ def init_db_sqlite(cur):
         user_id INTEGER,
         sender_type TEXT,
         message TEXT,
+        attachment TEXT DEFAULT '',
+        attachment_type TEXT DEFAULT '',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         is_read_admin INTEGER DEFAULT 0,
         is_read_user INTEGER DEFAULT 0
@@ -1131,6 +1248,12 @@ def init_db_sqlite(cur):
 
     if not column_exists(cur, "support_messages", "is_read_user"):
         cur.execute("ALTER TABLE support_messages ADD COLUMN is_read_user INTEGER DEFAULT 0")
+
+    if not column_exists(cur, "support_messages", "attachment"):
+        cur.execute("ALTER TABLE support_messages ADD COLUMN attachment TEXT DEFAULT ''")
+
+    if not column_exists(cur, "support_messages", "attachment_type"):
+        cur.execute("ALTER TABLE support_messages ADD COLUMN attachment_type TEXT DEFAULT ''")
 
 
 def init_db_postgres(cur):
@@ -1273,6 +1396,8 @@ def init_db_postgres(cur):
         user_id BIGINT,
         sender_type TEXT DEFAULT 'user',
         message TEXT DEFAULT '',
+        attachment TEXT DEFAULT '',
+        attachment_type TEXT DEFAULT '',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         is_read_admin INTEGER DEFAULT 0,
         is_read_user INTEGER DEFAULT 0
@@ -1284,7 +1409,9 @@ def init_db_postgres(cur):
         "ALTER TABLE support_messages ADD COLUMN IF NOT EXISTS sender_type TEXT DEFAULT 'user'",
         "ALTER TABLE support_messages ADD COLUMN IF NOT EXISTS message TEXT DEFAULT ''",
         "ALTER TABLE support_messages ADD COLUMN IF NOT EXISTS is_read_admin INTEGER DEFAULT 0",
-        "ALTER TABLE support_messages ADD COLUMN IF NOT EXISTS is_read_user INTEGER DEFAULT 0"
+        "ALTER TABLE support_messages ADD COLUMN IF NOT EXISTS is_read_user INTEGER DEFAULT 0",
+        "ALTER TABLE support_messages ADD COLUMN IF NOT EXISTS attachment TEXT DEFAULT ''",
+        "ALTER TABLE support_messages ADD COLUMN IF NOT EXISTS attachment_type TEXT DEFAULT ''"
     ]:
         cur.execute(alter_sql)
 
@@ -2099,7 +2226,7 @@ HOME_HTML = STYLE + """
     </form>
 
     <div class="inline" style="justify-content:space-between;margin-top:12px;">
-        <a href="/register" style="color:#60a5fa;font-weight:700;">إنشاء حساب اختصاصي</a>
+        <a href="/register" style="color:#60a5fa;font-weight:700;">إنشاء حساب</a>
         <a href="/forgot" style="color:#cbd5e1;">نسيت كلمة السر</a>
     </div>
 </div>
@@ -3896,11 +4023,29 @@ def support():
 
     if request.method == "POST":
         msg = sanitize_input(request.form.get("msg", ""), 1500)
-        if not msg:
+        attachment_ref = ""
+        attachment_type = ""
+        media_file = request.files.get("attachment")
+
+        if media_file and media_file.filename:
+            try:
+                attachment_ref, attachment_type = save_support_media(media_file)
+            except Exception as e:
+                return render_template_string(
+                    STYLE + (settings_corner() if 'user' in session else '') + f"""
+                    <div class="container narrow-container">
+                        <div class="msg">تعذر رفع الملف: {str(e)}</div>
+                        <a href="/support"><button>رجوع</button></a>
+                    </div>
+                    </body></html>
+                    """
+                )
+
+        if not msg and not attachment_ref:
             return render_template_string(
                 STYLE + (settings_corner() if 'user' in session else '') + """
                 <div class="container narrow-container">
-                    <div class="msg">اكتب رسالتك أولاً</div>
+                    <div class="msg">اكتب رسالتك أو ارفع صورة/فيديو أولاً</div>
                     <a href="/support"><button>رجوع</button></a>
                 </div>
                 </body></html>
@@ -3909,8 +4054,8 @@ def support():
 
         with get_db() as con:
             con.execute(
-                "INSERT INTO support_messages (user_id, sender_type, message, is_read_admin, is_read_user) VALUES (?, 'user', ?, 0, 1)",
-                (current_user["id"], msg)
+                "INSERT INTO support_messages (user_id, sender_type, message, attachment, attachment_type, is_read_admin, is_read_user) VALUES (?, 'user', ?, ?, ?, 0, 1)",
+                (current_user["id"], msg, attachment_ref, attachment_type)
             )
             con.commit()
 
@@ -3935,11 +4080,14 @@ def support():
         color = "#ffffff" if mine else "var(--text)"
         label = "أنت" if mine else "الدعم الفني"
         small_color = "#dbeafe" if mine else "var(--muted)"
+        attachment_html = render_support_attachment((m["attachment"] if m["attachment"] else ""), (m["attachment_type"] if m["attachment_type"] else ""))
+        msg_html = f'<div style="white-space:pre-wrap;word-break:break-word;">{m["message"]}</div>' if (m["message"] or "").strip() else ""
         chat_html += f"""
         <div style="display:flex;{align}margin:10px 0;">
             <div style="max-width:78%;background:{bg};color:{color};padding:12px 14px;border-radius:18px;border:1px solid rgba(96,165,250,.18);">
                 <div style="font-size:12px;opacity:.85;margin-bottom:5px;">{label}</div>
-                <div style="white-space:pre-wrap;word-break:break-word;">{m["message"]}</div>
+                {msg_html}
+                {attachment_html}
                 <div class="small" style="margin-top:6px;color:{small_color};">{m["created_at"]}</div>
             </div>
         </div>
@@ -3953,14 +4101,17 @@ def support():
         <div class="container narrow-container">
             <a href="/settings"><button class="light-btn">رجوع</button></a>
             <h2>الدعم الفني</h2>
-            <div class="section-subtitle">اكتب مشكلتك هنا، وسيصلك الرد من الإدارة داخل نفس المحادثة.</div>
+            <div class="section-subtitle">هنا تقدر ترسل نص، أو صورة للمشكلة، أو فيديو قصير يوضحها.</div>
 
             <div class="card" style="padding:14px;max-height:420px;overflow:auto;">
                 {chat_html}
             </div>
 
-            <form method="post" style="margin-top:14px;">
-                <textarea name="msg" placeholder="اكتب رسالتك للدعم الفني" required></textarea>
+            <form method="post" enctype="multipart/form-data" style="margin-top:14px;">
+                <textarea name="msg" placeholder="اكتب رسالتك للدعم الفني"></textarea>
+                <label>إرفاق صورة أو فيديو للمشكلة</label>
+                <input type="file" name="attachment" accept="image/*,video/*">
+                <div class="notice">مسموح صورة أو فيديو واحد مع الرسالة، وبحد أقصى 20MB.</div>
                 <button>إرسال الرسالة</button>
             </form>
         </div>
@@ -3979,8 +4130,25 @@ def admin_support():
     if request.method == "POST":
         selected_user_id = request.form.get("user_id", "").strip()
         msg = sanitize_input(request.form.get("msg", ""), 1500)
+        attachment_ref = ""
+        attachment_type = ""
+        media_file = request.files.get("attachment")
 
-        if selected_user_id and msg:
+        if media_file and media_file.filename:
+            try:
+                attachment_ref, attachment_type = save_support_media(media_file)
+            except Exception as e:
+                return render_template_string(
+                    STYLE + f"""
+                    <div class="container narrow-container">
+                        <div class="msg">تعذر رفع الملف: {str(e)}</div>
+                        <a href="/admin/support?user_id={selected_user_id}"><button>رجوع</button></a>
+                    </div>
+                    </body></html>
+                    """
+                )
+
+        if selected_user_id and (msg or attachment_ref):
             try:
                 uid = int(selected_user_id)
             except Exception:
@@ -3991,8 +4159,8 @@ def admin_support():
                     user = con.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
                     if user:
                         con.execute(
-                            "INSERT INTO support_messages (user_id, sender_type, message, is_read_admin, is_read_user) VALUES (?, 'admin', ?, 1, 0)",
-                            (uid, msg)
+                            "INSERT INTO support_messages (user_id, sender_type, message, attachment, attachment_type, is_read_admin, is_read_user) VALUES (?, 'admin', ?, ?, ?, 1, 0)",
+                            (uid, msg, attachment_ref, attachment_type)
                         )
                         con.commit()
                         log_admin_action("رد دعم فني", user["name"], "تم إرسال رد من الأدمن داخل الدعم الفني")
@@ -4064,20 +4232,26 @@ def admin_support():
                     color = "#ffffff" if is_admin else "var(--text)"
                     sender = "الأدمن" if is_admin else target_user["name"]
                     small_color = "#dbeafe" if is_admin else "var(--muted)"
+                    attachment_html = render_support_attachment((m["attachment"] if m["attachment"] else ""), (m["attachment_type"] if m["attachment_type"] else ""))
+                    msg_html = f'<div style="white-space:pre-wrap;word-break:break-word;">{m["message"]}</div>' if (m["message"] or "").strip() else ""
                     blocks += f"""
                     <div style="display:flex;{align}margin:10px 0;">
                         <div style="max-width:78%;background:{bg};color:{color};padding:12px 14px;border-radius:18px;border:1px solid rgba(96,165,250,.18);">
                             <div style="font-size:12px;opacity:.85;margin-bottom:5px;">{sender}</div>
-                            <div style="white-space:pre-wrap;word-break:break-word;">{m["message"]}</div>
+                            {msg_html}
+                            {attachment_html}
                             <div class="small" style="margin-top:6px;color:{small_color};">{m["created_at"]}</div>
                         </div>
                     </div>
                     """
                 chat_html = blocks or '<div class="empty-state">لا توجد رسائل</div>'
                 reply_form = f"""
-                <form method="post" style="margin-top:14px;">
+                <form method="post" enctype="multipart/form-data" style="margin-top:14px;">
                     <input type="hidden" name="user_id" value="{uid}">
-                    <textarea name="msg" placeholder="اكتب ردك هنا" required></textarea>
+                    <textarea name="msg" placeholder="اكتب ردك هنا"></textarea>
+                    <label>إرفاق صورة أو فيديو</label>
+                    <input type="file" name="attachment" accept="image/*,video/*">
+                    <div class="notice">مسموح صورة أو فيديو واحد مع الرد.</div>
                     <button>إرسال الرد</button>
                 </form>
                 """
@@ -4087,7 +4261,7 @@ def admin_support():
         <div class="container">
             <a href="/admin/panel"><button class="light-btn">رجوع للوحة الأدمن</button></a>
             <h2>الدعم الفني</h2>
-            <div class="section-subtitle">اختر المستخدم من القائمة ثم رد عليه من داخل المحادثة.</div>
+            <div class="section-subtitle">اختر المستخدم من القائمة ثم رد عليه بنص أو صورة أو فيديو.</div>
 
             <div class="map-page-grid">
                 <div class="card map-list-card" style="padding:14px;">
