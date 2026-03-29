@@ -261,7 +261,7 @@ def auto_login_from_cookie():
             user = con.execute("SELECT * FROM users WHERE remember_token=?", (remember_token,)).fetchone()
         if not user:
             return
-        if int(user.get("is_blocked") or 0) == 1:
+        if int((user["is_blocked"] if user["is_blocked"] is not None else 0) or 0) == 1:
             return
         session.permanent = True
         session["user"] = user["name"]
@@ -307,11 +307,18 @@ def get_current_session_user():
         if user_id:
             user = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
             if user:
+                session["user"] = user["name"]
+                session["user_id"] = user["id"]
+                session["role"] = user["role"] or "worker"
+                session["last_email"] = user["email"] or session.get("last_email", "")
                 return user
         if user_name:
             user = con.execute("SELECT * FROM users WHERE name=?", (user_name,)).fetchone()
             if user:
+                session["user"] = user["name"]
                 session["user_id"] = user["id"]
+                session["role"] = user["role"] or "worker"
+                session["last_email"] = user["email"] or session.get("last_email", "")
                 return user
     return None
 
