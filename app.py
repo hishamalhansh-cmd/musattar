@@ -2096,7 +2096,10 @@ def visitor_login():
                 <input type="password" name="password" placeholder="كلمة السر" required>
                 <button>دخول الزائر</button>
             </form>
-            <div class="notice">ما عندك حساب؟ <a href="/visitor/register" style="color:#93c5fd;font-weight:700;">أنشئ حساب جديد</a></div>
+            <div class="inline" style="justify-content:space-between;margin-top:12px;">
+                <div class="notice" style="margin:0;">ما عندك حساب؟ <a href="/visitor/register" style="color:#93c5fd;font-weight:700;">أنشئ حساب جديد</a></div>
+                <a href="/forgot" style="color:#cbd5e1;font-weight:700;">نسيت كلمة السر</a>
+            </div>
         </div>
         </body></html>
         """, remembered_email=remembered_email
@@ -4695,6 +4698,8 @@ def settings():
             <a href="/favorites"><button class="light-btn">المفضلة ❤️</button></a>
             <a href="/support"><button class="light-btn">الدعم الفني</button></a>
             <a href="/workers"><button class="light-btn">تصفح الاختصاصات</button></a>
+            <a href="/privacy-policy"><button class="light-btn">سياسة الخصوصية</button></a>
+            <a href="/terms-of-use"><button class="light-btn">شروط الاستخدام</button></a>
             <a href="/change-password"><button class="light-btn">تغيير كلمة المرور</button></a>
             <a href="/logout"><button>تسجيل الخروج</button></a>
         """
@@ -4705,6 +4710,8 @@ def settings():
             <a href="/inbox"><button class="light-btn">الرسائل</button></a>
             <a href="/support"><button class="light-btn">الدعم الفني</button></a>
             <a href="/workers"><button class="light-btn">الاختصاصات</button></a>
+            <a href="/privacy-policy"><button class="light-btn">سياسة الخصوصية</button></a>
+            <a href="/terms-of-use"><button class="light-btn">شروط الاستخدام</button></a>
             <a href="/change-password"><button class="light-btn">تغيير كلمة المرور</button></a>
             <a href="/logout"><button>تسجيل الخروج</button></a>
         """
@@ -4718,6 +4725,76 @@ def settings():
             <div class="card">
                 {buttons_html}
             </div>
+        </div>
+        </body></html>
+        """
+    )
+
+
+@app.route("/privacy-policy")
+def privacy_policy():
+    if "user" not in session:
+        return redirect(url_for("login"))
+
+    return render_template_string(
+        STYLE + (settings_corner() if 'user' in session else '') + """
+        <div class="container narrow-container">
+            <h2>سياسة الخصوصية</h2>
+            <div class="card" style="text-align:right; line-height:1.9;">
+                <p>نحن في تطبيق المسطر نحترم خصوصية المستخدمين ونلتزم بحماية البيانات التي يتم إدخالها داخل التطبيق.</p>
+                <p><strong>1. البيانات التي قد نجمعها:</strong><br>
+                الاسم، رقم الهاتف، البريد الإلكتروني، الصور المرفوعة، الرسائل داخل التطبيق، وبيانات الملف الشخصي الخاصة بالمستخدم أو صاحب العمل.</p>
+                <p><strong>2. استخدام البيانات:</strong><br>
+                تُستخدم البيانات لتشغيل خدمات التطبيق، إنشاء الحسابات، عرض الملفات الشخصية والأعمال، تسهيل التواصل بين المستخدمين، وتحسين تجربة الاستخدام.</p>
+                <p><strong>3. الصور والملفات:</strong><br>
+                الصور التي يرفعها المستخدم أو المختص قد تُعرض داخل ملفه الشخصي أو أعماله بحسب استخدامه داخل التطبيق.</p>
+                <p><strong>4. مشاركة البيانات:</strong><br>
+                لا نقوم ببيع البيانات الشخصية للمستخدمين. وقد يتم استخدام خدمات خارجية تقنية فقط لتشغيل التطبيق مثل الاستضافة أو تخزين الصور أو إرسال البريد الإلكتروني عند الحاجة.</p>
+                <p><strong>5. حماية البيانات:</strong><br>
+                نسعى لاتخاذ إجراءات مناسبة لحماية الحسابات والبيانات من الوصول غير المصرح به، لكن لا يمكن ضمان الأمان الكامل بنسبة 100% على الإنترنت.</p>
+                <p><strong>6. مسؤولية المستخدم:</strong><br>
+                المستخدم مسؤول عن صحة البيانات التي يرفعها، وعن عدم رفع محتوى غير قانوني أو مسيء أو منتهك لحقوق الآخرين.</p>
+                <p><strong>7. حذف البيانات:</strong><br>
+                يمكن للمستخدم طلب تعديل أو حذف بياناته أو التواصل مع الدعم عند الحاجة، وفق ما يتوفر داخل التطبيق.</p>
+                <p><strong>8. التحديثات:</strong><br>
+                قد يتم تحديث سياسة الخصوصية مستقبلًا، واستمرار استخدام التطبيق يعني الموافقة على النسخة الأحدث منها.</p>
+            </div>
+            <a href="/settings"><button class="light-btn">رجوع إلى الإعدادات</button></a>
+        </div>
+        </body></html>
+        """
+    )
+
+
+@app.route("/terms-of-use")
+def terms_of_use():
+    if "user" not in session:
+        return redirect(url_for("login"))
+
+    return render_template_string(
+        STYLE + (settings_corner() if 'user' in session else '') + """
+        <div class="container narrow-container">
+            <h2>شروط الاستخدام</h2>
+            <div class="card" style="text-align:right; line-height:1.9;">
+                <p>باستخدامك تطبيق المسطر، فإنك توافق على الالتزام بالشروط التالية:</p>
+                <p><strong>1. الاستخدام المسموح:</strong><br>
+                يُسمح باستخدام التطبيق لغرض عرض الأعمال، إنشاء الحسابات، والتواصل بين المستخدمين ضمن الغرض المخصص للتطبيق فقط.</p>
+                <p><strong>2. صحة المعلومات:</strong><br>
+                المستخدم مسؤول عن صحة المعلومات التي يضيفها في حسابه، وعن تحديثها عند الحاجة.</p>
+                <p><strong>3. المحتوى المرفوع:</strong><br>
+                يمنع رفع أي صور أو محتوى مسيء أو مخالف للقانون أو ينتهك حقوق الملكية أو الخصوصية الخاصة بالآخرين.</p>
+                <p><strong>4. الحسابات:</strong><br>
+                يحق لإدارة التطبيق تقييد أو حذف أي حساب يسيء الاستخدام أو ينتحل صفة غيره أو يستخدم التطبيق بشكل ضار.</p>
+                <p><strong>5. الرسائل والتواصل:</strong><br>
+                التطبيق يوفّر وسيلة للتواصل بين الأطراف، لكن المستخدم يتحمل مسؤولية التعاملات والمحتوى الذي يرسله داخل الرسائل.</p>
+                <p><strong>6. حدود المسؤولية:</strong><br>
+                التطبيق يعمل كمنصة عرض وتواصل، ولا يتحمل مسؤولية الاتفاقات أو النتائج التي تحصل بين المستخدمين خارج حدود الخدمة التقنية نفسها.</p>
+                <p><strong>7. التعديلات على الخدمة:</strong><br>
+                يحق لإدارة التطبيق تعديل أو تحسين أو إيقاف بعض الميزات في أي وقت بما يخدم تطوير المنصة.</p>
+                <p><strong>8. استمرار الاستخدام:</strong><br>
+                استمرارك في استخدام التطبيق بعد أي تحديث على الشروط يعني موافقتك على النسخة المحدثة منها.</p>
+            </div>
+            <a href="/settings"><button class="light-btn">رجوع إلى الإعدادات</button></a>
         </div>
         </body></html>
         """
