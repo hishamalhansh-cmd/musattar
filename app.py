@@ -1981,7 +1981,7 @@ def message_notifier_html():
 
 
 def settings_corner():
-    hidden_paths = {"/login", "/register", "/forgot", "/reset"}
+    hidden_paths = {"/login", "/register", "/forgot", "/reset", "/login-verify", "/visitor/login"}
     if "user" in session and request.path not in hidden_paths:
         return '''
         <div class="settings-floating">
@@ -1990,6 +1990,154 @@ def settings_corner():
         ''' + message_notifier_html()
     return ""
 
+
+
+
+def clear_login_verification_session():
+    for key in [
+        "login_verify_user_id",
+        "login_verify_role",
+        "login_verify_email",
+        "login_verify_name",
+        "login_verify_otp",
+        "login_verify_otp_created_at",
+        "login_verify_remember_email",
+    ]:
+        session.pop(key, None)
+
+
+def finalize_user_login(user, email):
+    session.permanent = True
+    session["user"] = user["name"]
+    session["user_id"] = user["id"]
+    session["role"] = (user["role"] or "worker") if (user["role"] or "worker") != "visitor" else "visitor"
+    session["last_email"] = user["email"] or email
+    resp = redirect(url_for("workers"))
+    resp.set_cookie("remember_email", user["email"] or email, max_age=60 * 60 * 24 * 30)
+    return resp
+
+
+def start_login_email_verification(user, email, role_label="worker"):
+    otp = str(random.randint(100000, 999999))
+    clear_login_verification_session()
+    session["login_verify_user_id"] = user["id"]
+    session["login_verify_role"] = role_label
+    session["login_verify_email"] = user["email"] or email
+    session["login_verify_name"] = user["name"] or ""
+    session["login_verify_otp"] = otp
+    session["login_verify_otp_created_at"] = time.time()
+    session["login_verify_remember_email"] = user["email"] or email
+
+    login_html = build_pretty_email_html(
+        "تأكيد تسجيل الدخول",
+        otp,
+        "وصلنا محاولة تسجيل دخول إلى حسابك في المسطر. استخدم رمز التحقق التالي لإكمال الدخول بأمان.",
+        "أدخل هذا الرمز داخل صفحة تأكيد تسجيل الدخول. إذا لم تكن أنت، تجاهل الرسالة ولا تشارك الرمز مع أي شخص."
+    )
+    sent = send_mail(
+        user["email"] or email,
+        "رمز تأكيد تسجيل الدخول إلى المسطر",
+        f"رمز تأكيد تسجيل الدخول هو: {otp}",
+        html_body=login_html,
+    )
+    if not sent:
+        clear_login_verification_session()
+        return False
+    return True
+
+
+@app.route("/login-verify", methods=["GET", "POST"])
+def login_verify():
+    pending_user_id = session.get("login_verify_user_id")
+    pending_email = session.get("login_verify_email")
+    pending_role = session.get("login_verify_role") or "worker"
+    remembered_email = session.get("login_verify_remember_email") or session.get("last_email") or request.cookies.get("remember_email", "")
+
+    if not pending_user_id or not pending_email:
+        back_url = "/visitor/login" if pending_role == "visitor" else "/"
+        return render_template_string(
+            STYLE + f"""
+            <div class=\"container narrow-container\">
+                <div class=\"msg\">ماكو طلب تحقق نشط حالياً. سجّل الدخول مرة ثانية حتى نرسل لك كود جديد.</div>
+                <a href=\"{back_url}\"><button>رجوع</button></a>
+            </div>
+            </body></html>
+            """
+        )
+
+    if request.method == "POST":
+        otp = (request.form.get("otp") or "").strip()
+
+        if otp_is_expired("login_verify_otp_created_at"):
+            clear_login_verification_session()
+            back_url = "/visitor/login" if pending_role == "visitor" else "/"
+            return render_template_string(
+                STYLE + f"""
+                <div class=\"container narrow-container\">
+                    <div class=\"msg\">انتهت صلاحية كود تسجيل الدخول. سجّل الدخول مرة ثانية حتى نرسل لك كود جديد.</div>
+                    <a href=\"{back_url}\"><button>رجوع</button></a>
+                </div>
+                </body></html>
+                """
+            )
+
+        if otp != (session.get("login_verify_otp") or ""):
+            return render_template_string(
+                STYLE + """
+                <div class=\"container narrow-container\">
+                    <div class=\"msg\">كود التحقق غير صحيح</div>
+                    <a href=\"/login-verify\"><button>رجوع</button></a>
+                </div>
+                </body></html>
+                """
+            )
+
+        with get_db() as con:
+            user = con.execute("SELECT * FROM users WHERE id=?", (pending_user_id,)).fetchone()
+
+        if not user or user["is_blocked"]:
+            clear_login_verification_session()
+            back_url = "/visitor/login" if pending_role == "visitor" else "/"
+            return render_template_string(
+                STYLE + f"""
+                <div class=\"container narrow-container\">
+                    <div class=\"msg\">الحساب غير متاح حالياً</div>
+                    <a href=\"{back_url}\"><button>رجوع</button></a>
+                </div>
+                </body></html>
+                """
+            )
+
+        email_value = pending_email
+        clear_login_verification_session()
+        session["last_email"] = email_value
+        return finalize_user_login(user, email_value)
+
+    title = "تأكيد دخول الزائر" if pending_role == "visitor" else "تأكيد تسجيل الدخول"
+    subtitle = f"أرسلنا كود تحقق إلى البريد الإلكتروني: {pending_email}"
+    back_url = "/visitor/login" if pending_role == "visitor" else "/"
+    resend_url = "/visitor/login" if pending_role == "visitor" else "/login"
+    resend_text = "العودة لتسجيل الدخول وإرسال كود جديد"
+
+    return render_template_string(
+        STYLE + f"""
+        <div class=\"container narrow-container\" style=\"margin-top:70px;\">
+            <a href=\"{back_url}\"><button class=\"light-btn\">رجوع</button></a>
+            <h2>{title}</h2>
+            <div class=\"section-subtitle\">{subtitle}</div>
+            <form method=\"post\">
+                <input name=\"otp\" placeholder=\"اكتب كود التحقق\" required>
+                <button>تأكيد الدخول</button>
+            </form>
+            <div class=\"notice\">إذا ما وصلك الكود، ارجع وسجّل الدخول مرة ثانية حتى نرسل كود جديد.</div>
+            <div class=\"inline\" style=\"justify-content:space-between;margin-top:12px;\">
+                <a href=\"{resend_url}\" style=\"color:#2455c8;font-weight:700;\">{resend_text}</a>
+                <span class=\"small\">{remembered_email}</span>
+            </div>
+        </div>
+        </body></html>
+        """
+    )
 
 HOME_HTML = STYLE + """
 <div class="container narrow-container" style="margin-top:90px;text-align:center;">
