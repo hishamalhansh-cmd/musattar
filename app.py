@@ -1691,7 +1691,10 @@ def complete_pending_registration():
 
                 insert_user_record(con, {
                     "name": pending_data.get("name", ""),
-                    "phone": "",
+                    # Visitor accounts do not use phone numbers.
+                    # Store NULL instead of an empty string so the UNIQUE phone column
+                    # does not reject every new visitor after the first one.
+                    "phone": None,
                     "email": email,
                     "password": pending_data.get("password", ""),
                     "role": "visitor",
