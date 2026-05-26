@@ -544,9 +544,10 @@ def specialty_script(selected_value=""):
 
 
 def build_whatsapp_link(phone):
-    digits = "".join(ch for ch in (phone or "") if ch.isdigit())
-    if not digits:
-        return "#"
+    digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
+    if digits.startswith("0"):
+        digits = "964" + digits[1:]
+    return f"https://api.whatsapp.com/send?phone={digits}"
     if digits.startswith("00"):
         digits = digits[2:]
     return f"https://api.whatsapp.com/send?phone={digits}"
