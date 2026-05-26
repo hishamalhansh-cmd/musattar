@@ -3578,9 +3578,11 @@ def worker_profile(user_id):
 
         if int((worker["show_phone"] if worker["show_phone"] is not None else 0) or 0) and worker["phone"]:
             whatsapp_text = quote("السلام عليكم، شاهدت ملفك في تطبيق المسطر وأريد أسألك عن خدمة.")
-            phone = str(worker["phone"]).replace("+","").replace(" ","")
-            whatsapp_url = f"https://wa.me/{phone}?text={whatsapp_text}"
-            wa_html = f'<a class="action-pill whatsapp-pill" href="{whatsapp_url}" target="_blank" rel="noopener">🟢 واتساب</a>'
+            phone = "".join(ch for ch in str(worker["phone"]) if ch.isdigit())
+            if phone.startswith("0"):
+                phone = "964" + phone[1:]
+            whatsapp_url = f"https://api.whatsapp.com/send?phone={phone}&text={whatsapp_text}"
+            wa_html = f'<a class="action-pill whatsapp-pill" href="{whatsapp_url}" target="_blank" rel="noopener">🟢 واتساب فقط</a>'
 
         comments_html = ""
         if comments:
@@ -3604,8 +3606,6 @@ def worker_profile(user_id):
             comments_html = '<div class="empty-state">لا توجد تقييمات بعد</div>'
 
         message_button = ""
-        if "user" in session and int((worker["allow_messages"] if worker["allow_messages"] is not None else 0) or 0):
-            message_button = f'<a class="action-pill" href="/message/{worker["id"]}">✉️ مراسلة</a>'
 
         favorite_button = ""
         if "user" in session and session.get("role") == "visitor":
