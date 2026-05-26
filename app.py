@@ -2162,6 +2162,38 @@ button.light-btn,.action-pill.secondary,.link-btn.secondary,.settings-btn,.messa
     color:#f5e6a8 !important;
 }
 
+
+/* === FIX REGISTER DROPDOWN COLORS: WHITE OPTIONS + BIGGER TEXT === */
+select{
+    background:#0f0f0f !important;
+    color:#ffffff !important;
+    border:1px solid rgba(212,160,23,.40) !important;
+    font-size:16px !important;
+    font-weight:700 !important;
+    min-height:44px !important;
+}
+
+select:focus{
+    outline:none !important;
+    border-color:#ffd966 !important;
+    box-shadow:0 0 0 3px rgba(255,217,102,.18) !important;
+}
+
+select option{
+    background:#ffffff !important;
+    color:#111111 !important;
+    font-size:16px !important;
+    font-weight:700 !important;
+    padding:10px !important;
+}
+
+select option:checked,
+select option:hover,
+select option:focus{
+    background:#ffffff !important;
+    color:#111111 !important;
+}
+
 </style>
 
 <script>
