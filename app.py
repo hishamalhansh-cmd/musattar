@@ -68,7 +68,7 @@ except Exception:
 
 app = Flask(__name__)
 from datetime import timedelta
-app.permanent_session_lifetime = timedelta(days=30)
+app.permanent_session_lifetime = timedelta(days=180)
 PERSISTENT_LOGIN_DAYS = 180
 
 
@@ -144,7 +144,7 @@ app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = APP_ENV == "production"
 app.config["MAX_CONTENT_LENGTH"] = 30 * 1024 * 1024  # 30MB request cap
-app.config["PERMANENT_SESSION_LIFETIME"] = 60 * 30
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=180)
 
 DEFAULT_SECRET_KEY = "adam_secret_key_2026"
 app.secret_key = os.environ.get("SECRET_KEY", DEFAULT_SECRET_KEY)
@@ -2512,8 +2512,8 @@ def login():
         if user["is_blocked"]:
             return render_template_string(STYLE + '<div class="container"><div class="msg">هذا الحساب محظور من قبل الإدارة</div><a href="/login"><button>رجوع</button></a></div></body></html>')
 
-        session.permanent = True
         session.clear()
+        session.permanent = True
         session["last_email"] = email
         session["user"] = user["name"]
         session["user_id"] = user["id"]
@@ -2552,8 +2552,8 @@ def visitor_login():
         if user["is_blocked"]:
             return render_template_string(STYLE + '<div class="container"><div class="msg">هذا الحساب محظور من قبل الإدارة</div><a href="/visitor/login"><button>رجوع</button></a></div></body></html>')
 
-        session.permanent = True
         session.clear()
+        session.permanent = True
         session["user"] = user["name"]
         session["user_id"] = user["id"]
         session["role"] = "visitor"
