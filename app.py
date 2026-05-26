@@ -3578,7 +3578,8 @@ def worker_profile(user_id):
 
         if int((worker["show_phone"] if worker["show_phone"] is not None else 0) or 0) and worker["phone"]:
             whatsapp_text = quote("السلام عليكم، شاهدت ملفك في تطبيق المسطر وأريد أسألك عن خدمة.")
-            whatsapp_url = build_whatsapp_link(worker["phone"]) + f"&text={whatsapp_text}"
+            phone = str(worker["phone"]).replace("+","").replace(" ","")
+            whatsapp_url = f"https://wa.me/{phone}?text={whatsapp_text}"
             wa_html = f'<a class="action-pill whatsapp-pill" href="{whatsapp_url}" target="_blank" rel="noopener">🟢 واتساب</a>'
 
         comments_html = ""
