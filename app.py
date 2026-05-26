@@ -2194,6 +2194,15 @@ select option:focus{
     color:#111111 !important;
 }
 
+
+/* WhatsApp button beside call button */
+.whatsapp-pill{
+    background:linear-gradient(180deg,#25D366 0%,#128C7E 100%) !important;
+    color:#ffffff !important;
+    border:1px solid rgba(37,211,102,.35) !important;
+    box-shadow:0 10px 24px rgba(37,211,102,.20) !important;
+}
+
 </style>
 
 <script>
@@ -3525,6 +3534,11 @@ def worker_profile(user_id):
         wa_html = ""
         map_html = ""
         call_html = f'<a class="action-pill secondary" href="tel:{worker["phone"]}">📞 اتصال</a>' if int((worker["show_phone"] if worker["show_phone"] is not None else 0) or 0) and worker["phone"] else ""
+
+        if int((worker["show_phone"] if worker["show_phone"] is not None else 0) or 0) and worker["phone"]:
+            whatsapp_text = quote("السلام عليكم، شاهدت ملفك في تطبيق المسطر وأريد أسألك عن خدمة.")
+            whatsapp_url = build_whatsapp_link(worker["phone"]) + f"&text={whatsapp_text}"
+            wa_html = f'<a class="action-pill whatsapp-pill" href="{whatsapp_url}" target="_blank" rel="noopener">🟢 واتساب</a>'
 
         comments_html = ""
         if comments:
