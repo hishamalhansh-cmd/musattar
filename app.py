@@ -2491,7 +2491,18 @@ HOME_HTML = STYLE + """
 
 @app.route("/")
 def home():
-    return render_template_string(HOME_HTML, last_email=(session.get("last_email") or request.cookies.get("remember_email", "")))
+    auto_login_from_cookie()
+
+    if "user" in session:
+        return redirect(url_for("workers"))
+
+    return render_template_string(
+        HOME_HTML,
+        last_email=(
+            session.get("last_email")
+            or request.cookies.get("remember_email", "")
+        )
+    )
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
