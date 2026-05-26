@@ -2203,6 +2203,47 @@ select option:focus{
     box-shadow:0 10px 24px rgba(37,211,102,.20) !important;
 }
 
+
+/* clearer section titles */
+.section-card h3,
+.section-title,
+.specialty-title,
+.worker-card-title,
+.category-title,
+a h3{
+    color:#ffd966 !important;
+    font-size:28px !important;
+    font-weight:900 !important;
+}
+
+
+/* force category names visible */
+.section-card *,
+.worker-group-card *,
+.home-feature-card *,
+.specialty-group-card *{
+ color:#ffd966 !important;
+}
+.section-card a,
+.worker-group-card a,
+.home-feature-card a,
+.specialty-group-card a{
+ font-size:30px !important;
+ font-weight:900 !important;
+}
+
+
+/* force main section names */
+.specialty-group-card h3{
+    color:#ffffff !important;
+    font-size:32px !important;
+    font-weight:900 !important;
+}
+.specialty-group-card .section-subtitle{
+    color:#f5d77a !important;
+    font-size:18px !important;
+}
+
 </style>
 
 <script>
