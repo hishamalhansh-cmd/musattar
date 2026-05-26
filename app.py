@@ -2245,6 +2245,210 @@ a h3{
     font-size:18px !important;
 }
 
+
+/* === CLEAN WHITE BLUE YELLOW THEME === */
+:root{
+    --primary:#2563eb !important;
+    --primary-2:#60a5fa !important;
+    --accent:#facc15 !important;
+    --bg:#f8fbff !important;
+    --panel:#ffffff !important;
+    --card:#ffffff !important;
+    --text:#12325f !important;
+    --muted:#5f78a0 !important;
+    --border:rgba(37,99,235,.18) !important;
+    --shadow:0 16px 34px rgba(37,99,235,.10) !important;
+    --soft-shadow:0 8px 22px rgba(37,99,235,.08) !important;
+}
+
+html,body{
+    background:
+        radial-gradient(circle at top right, rgba(96,165,250,.18), transparent 30%),
+        radial-gradient(circle at bottom left, rgba(250,204,21,.16), transparent 32%),
+        linear-gradient(180deg,#ffffff 0%,#f8fbff 55%,#eef6ff 100%) !important;
+    color:#12325f !important;
+}
+
+.container,
+.card,
+.hero-panel,
+.search-panel,
+.settings-group,
+.settings-profile-wrap,
+.worker-hero,
+.comment-card,
+.admin-stat,
+.admin-search-box,
+.admin-user-card,
+.admin-log-card,
+.home-feature-card,
+.home-stat,
+.home-cta-box,
+.specialty-group-card,
+.chat-screen,
+.chat-list-shell,
+.review-card-pro,
+.stat-mini-card,
+.profile-bio-box,
+.empty-state,
+.msg,
+.notice-box{
+    background:#ffffff !important;
+    color:#12325f !important;
+    border:1px solid rgba(37,99,235,.18) !important;
+    box-shadow:0 12px 28px rgba(37,99,235,.08) !important;
+}
+
+.container{
+    border-radius:28px !important;
+}
+
+h1,h2,h3,h4,
+label,
+.specialty-name,
+.review-name,
+.worker-card-title,
+.category-title,
+a h3{
+    color:#12325f !important;
+}
+
+.small,
+.section-subtitle,
+.notice,
+.footer-note,
+.rating-text,
+.chat-time,
+.chat-user-sub,
+.stat-mini-label{
+    color:#5f78a0 !important;
+}
+
+input,
+select,
+textarea{
+    background:#ffffff !important;
+    color:#12325f !important;
+    border:1px solid rgba(37,99,235,.25) !important;
+    box-shadow:none !important;
+}
+
+input:focus,
+select:focus,
+textarea:focus{
+    border-color:#2563eb !important;
+    box-shadow:0 0 0 4px rgba(37,99,235,.12) !important;
+}
+
+input::placeholder,
+textarea::placeholder{
+    color:#7d94b5 !important;
+}
+
+button,
+.link-btn,
+.global-back-btn,
+.bottom-corner-link,
+.action-pill,
+.chat-send-btn{
+    background:linear-gradient(180deg,#60a5fa 0%,#2563eb 100%) !important;
+    color:#ffffff !important;
+    border:1px solid rgba(37,99,235,.28) !important;
+    box-shadow:0 10px 20px rgba(37,99,235,.18) !important;
+}
+
+button.light-btn,
+.link-btn.secondary,
+.action-pill.secondary,
+.settings-btn,
+.message-floating-btn{
+    background:#ffffff !important;
+    color:#2563eb !important;
+    border:1px solid rgba(37,99,235,.25) !important;
+}
+
+.visitor-big-entry,
+.badge,
+.hero-badge,
+.rating-pill,
+.chat-status-chip,
+.chat-list-chip,
+.worker-specialty-badge,
+.pinned-badge{
+    background:linear-gradient(180deg,#fde68a 0%,#facc15 100%) !important;
+    color:#12325f !important;
+    border:1px solid rgba(250,204,21,.55) !important;
+    box-shadow:0 10px 22px rgba(250,204,21,.18) !important;
+}
+
+.verified-badge{
+    background:#eaf4ff !important;
+    color:#2563eb !important;
+    border:1px solid rgba(37,99,235,.24) !important;
+}
+
+.info-chip,
+.detail-box,
+.mini-stat{
+    background:#f8fbff !important;
+    color:#12325f !important;
+    border:1px solid rgba(37,99,235,.14) !important;
+}
+
+.specialty-group-card::before,
+.card::before,
+.worker-hero::before,
+.settings-group::before,
+.settings-profile-wrap::before,
+.hero-panel::before,
+.search-panel::before{
+    background:linear-gradient(90deg,#2563eb,#facc15) !important;
+}
+
+.specialty-group-card h3{
+    color:#12325f !important;
+    font-size:28px !important;
+    font-weight:900 !important;
+}
+
+.specialty-group-card .section-subtitle{
+    color:#5f78a0 !important;
+    font-size:15px !important;
+}
+
+.specialty-group-card *,
+.home-feature-card *,
+.worker-group-card *,
+.section-card *{
+    color:#12325f !important;
+}
+
+.chat-bubble.mine,
+.support-media-wrap + div,
+.whatsapp-pill{
+    background:linear-gradient(180deg,#60a5fa 0%,#2563eb 100%) !important;
+    color:#ffffff !important;
+}
+
+.chat-bubble.theirs{
+    background:#f8fbff !important;
+    color:#12325f !important;
+}
+
+.link-red{
+    background:linear-gradient(180deg,#facc15 0%,#eab308 100%) !important;
+    color:#12325f !important;
+}
+
+select option{
+    background:#ffffff !important;
+    color:#12325f !important;
+}
+
+a{
+    color:#2563eb !important;
+}
+
 </style>
 
 <script>
