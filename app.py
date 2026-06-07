@@ -1568,6 +1568,34 @@ def init_db_sqlite(cur):
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS reports(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        worker_id INTEGER,
+        reporter_id INTEGER DEFAULT 0,
+        reporter_name TEXT DEFAULT 'زائر',
+        reason TEXT DEFAULT '',
+        details TEXT DEFAULT '',
+        status TEXT DEFAULT 'new',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    if not column_exists(cur, "reports", "worker_id"):
+        cur.execute("ALTER TABLE reports ADD COLUMN worker_id INTEGER DEFAULT 0")
+    if not column_exists(cur, "reports", "reporter_id"):
+        cur.execute("ALTER TABLE reports ADD COLUMN reporter_id INTEGER DEFAULT 0")
+    if not column_exists(cur, "reports", "reporter_name"):
+        cur.execute("ALTER TABLE reports ADD COLUMN reporter_name TEXT DEFAULT 'زائر'")
+    if not column_exists(cur, "reports", "reason"):
+        cur.execute("ALTER TABLE reports ADD COLUMN reason TEXT DEFAULT ''")
+    if not column_exists(cur, "reports", "details"):
+        cur.execute("ALTER TABLE reports ADD COLUMN details TEXT DEFAULT ''")
+    if not column_exists(cur, "reports", "status"):
+        cur.execute("ALTER TABLE reports ADD COLUMN status TEXT DEFAULT 'new'")
+    if not column_exists(cur, "reports", "created_at"):
+        cur.execute("ALTER TABLE reports ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS support_messages(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
@@ -1749,6 +1777,30 @@ def init_db_postgres(cur):
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS reports(
+        id BIGSERIAL PRIMARY KEY,
+        worker_id BIGINT,
+        reporter_id BIGINT DEFAULT 0,
+        reporter_name TEXT DEFAULT 'زائر',
+        reason TEXT DEFAULT '',
+        details TEXT DEFAULT '',
+        status TEXT DEFAULT 'new',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    for alter_sql in [
+        "ALTER TABLE reports ADD COLUMN IF NOT EXISTS worker_id BIGINT",
+        "ALTER TABLE reports ADD COLUMN IF NOT EXISTS reporter_id BIGINT DEFAULT 0",
+        "ALTER TABLE reports ADD COLUMN IF NOT EXISTS reporter_name TEXT DEFAULT 'زائر'",
+        "ALTER TABLE reports ADD COLUMN IF NOT EXISTS reason TEXT DEFAULT ''",
+        "ALTER TABLE reports ADD COLUMN IF NOT EXISTS details TEXT DEFAULT ''",
+        "ALTER TABLE reports ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'new'",
+        "ALTER TABLE reports ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+    ]:
+        cur.execute(alter_sql)
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS support_messages(
