@@ -1508,6 +1508,9 @@ def init_db_sqlite(cur):
     if not column_exists(cur, "users", "remember_token"):
         cur.execute("ALTER TABLE users ADD COLUMN remember_token TEXT DEFAULT ''")
 
+    if not column_exists(cur, "users", "availability_status"):
+        cur.execute("ALTER TABLE users ADD COLUMN availability_status TEXT DEFAULT 'متاح'")
+
     if not column_exists(cur, "users", "warning_count"):
         cur.execute("ALTER TABLE users ADD COLUMN warning_count INTEGER DEFAULT 0")
     if not column_exists(cur, "users", "accepted_reports"):
@@ -1719,6 +1722,7 @@ def init_db_postgres(cur):
         is_blocked INTEGER DEFAULT 0,
         hidden_by_admin INTEGER DEFAULT 0,
         remember_token TEXT DEFAULT '',
+        availability_status TEXT DEFAULT 'متاح',
         warning_count INTEGER DEFAULT 0,
         accepted_reports INTEGER DEFAULT 0,
         rejected_reports INTEGER DEFAULT 0,
@@ -2897,6 +2901,15 @@ a{
 .video-modal-close{position:absolute;top:10px;left:10px;z-index:2;width:44px!important;height:44px!important;border-radius:999px!important;padding:0!important;background:rgba(255,255,255,.92)!important;color:#111!important;font-size:30px!important;line-height:1!important}
 @media(max-width:520px){.unified-media-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.unified-media-thumb{height:128px}.unified-media-tile{min-height:128px}.video-play-circle{width:48px;height:48px;font-size:22px}.media-kind-badge,.video-duration-badge,.video-views-badge{font-size:10px;padding:4px 7px}}
 
+
+/* === NEW DEVELOPMENT FEATURES === */
+.status-pill{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:7px 12px;border-radius:999px;font-size:12px;font-weight:900;border:1px solid rgba(37,99,235,.18);background:#eef6ff;color:#12325f}
+.status-available{background:#dcfce7!important;color:#166534!important;border-color:rgba(22,101,52,.25)!important}.status-busy{background:#fef3c7!important;color:#92400e!important;border-color:rgba(146,64,14,.25)!important}.status-off{background:#fee2e2!important;color:#991b1b!important;border-color:rgba(153,27,27,.25)!important}
+.quick-search-box{display:grid;grid-template-columns:1.4fr 1fr 1fr auto;gap:10px;align-items:end;margin:14px 0}.worker-tools-row{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}
+.stats-big-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:14px}.stats-big-card{background:#fff;border:1px solid rgba(37,99,235,.16);border-radius:18px;padding:16px;text-align:center;box-shadow:0 8px 22px rgba(37,99,235,.08)}.stats-big-card .num{font-size:28px;font-weight:900;color:#2563eb}.stats-big-card .lbl{font-size:13px;color:#5f78a0}
+.reorder-list{display:grid;gap:10px}.reorder-item{display:flex;gap:10px;align-items:center;justify-content:space-between;background:#f8fbff;border:1px solid rgba(37,99,235,.14);border-radius:16px;padding:10px}.reorder-item img,.reorder-item video{width:72px;height:54px;object-fit:cover;border-radius:10px;background:#000}
+@media(max-width:720px){.quick-search-box{grid-template-columns:1fr}.worker-tools-row{display:grid;grid-template-columns:1fr 1fr}}
+
 </style>
 
 <script>
@@ -4040,6 +4053,39 @@ def profile_thumb_html(filename, size_class="profile-img"):
     return '<div class="profile-placeholder">👤</div>'
 
 
+def worker_status_html(worker):
+    status = 'متاح'
+    try:
+        status = (worker['availability_status'] if 'availability_status' in worker.keys() else 'متاح') or 'متاح'
+    except Exception:
+        status = 'متاح'
+    css = 'status-available' if status == 'متاح' else ('status-busy' if status == 'مشغول' else 'status-off')
+    icon = '🟢' if status == 'متاح' else ('🟡' if status == 'مشغول' else '🔴')
+    return f'<span class="status-pill {css}">{icon} {status}</span>'
+
+
+def worker_total_video_views(worker):
+    try:
+        videos = [x.strip() for x in ((worker['work_videos'] if 'work_videos' in worker.keys() else '') or '').split(',') if x.strip()]
+        return sum(get_work_video_views(v) for v in videos)
+    except Exception:
+        return 0
+
+
+def build_search_panel(q='', governorate='', specialty=''):
+    return f'''
+    <div class="card">
+        <h3>بحث سريع</h3>
+        <form class="quick-search-box" method="get" action="/search">
+            <input name="q" value="{q}" placeholder="ابحث باسم المختص أو المدينة">
+            <select name="governorate"><option value="">كل المحافظات</option>{build_governorates_options(governorate)}</select>
+            <select name="specialty"><option value="">كل الاختصاصات</option>{build_specialties_options(specialty, '')}</select>
+            <button>بحث</button>
+        </form>
+        <div class="worker-tools-row"><a class="link-btn secondary" href="/top-workers">⭐ أفضل المختصين</a><a class="link-btn secondary" href="/workers">📂 الأقسام</a></div>
+    </div>'''
+
+
 def worker_card(worker):
     profile_html = (
         f'<img src="{media_url(worker["profile_pic"])}" class="profile-img" alt="" onerror="this.outerHTML=\'<div class=&quot;profile-placeholder&quot;>👤</div>\'">'
@@ -4072,6 +4118,7 @@ def worker_card(worker):
                 <div class="inline" style="margin-bottom:8px;">
                     <span class="worker-specialty-badge">{get_specialty_icon(worker["section"])} {worker["section"] or "بدون اختصاص"}</span>
                     <span class="badge">{worker["governorate"] or "بدون محافظة"}</span>
+                    {worker_status_html(worker)}
                     {verified_badge}
                     {pinned_badge}
                 </div>
@@ -4126,6 +4173,7 @@ def workers():
                 
             </div>
 
+            {build_search_panel()}
             {user_buttons}
 
             {groups_cards}
@@ -4233,6 +4281,7 @@ def workers_specialty(specialty_name):
                 
             </div>
 
+            {build_search_panel(specialty=specialty_name)}
             {user_buttons}
 
             <div id="results" style="margin-top:18px;">
@@ -4422,6 +4471,7 @@ def worker_profile(user_id):
                             <div class="inline" style="margin-bottom:10px;">
                                 <span class="worker-specialty-badge">{get_specialty_icon(worker["section"])} {worker["section"] or "-"}</span>
                                 <span class="badge">{worker["governorate"] or "-"}</span>
+                                {worker_status_html(worker)}
                                 {verified_badge}
                                 {pinned_badge}
                             </div>
@@ -6262,6 +6312,8 @@ def settings():
     else:
         buttons_html = """
             <a href="/profile"><button>ملفي الشخصي</button></a>
+            <a href="/worker-stats"><button class="light-btn">إحصائياتي 📊</button></a>
+            <a href="/manage-work-gallery"><button class="light-btn">ترتيب المعرض 🖼️</button></a>
             <a href="/edit-profile"><button class="light-btn">تعديل الملف الشخصي</button></a>
             <a href="/inbox"><button class="light-btn">الرسائل</button></a>
             <a href="/support"><button class="light-btn">الدعم الفني</button></a>
@@ -6385,6 +6437,9 @@ def edit_profile():
         city = sanitize_input(request.form.get("city", ""), 80)
         exp = sanitize_input(request.form.get("exp", ""), 30)
         bio = sanitize_input(request.form.get("bio", ""), 500)
+        availability_status = sanitize_input(request.form.get("availability_status", "متاح"), 20)
+        if availability_status not in {"متاح", "مشغول", "خارج الخدمة"}:
+            availability_status = "متاح"
 
         if not name or not phone or not email:
             return render_template_string(
@@ -6494,8 +6549,8 @@ def edit_profile():
                     new_profile_pic = saved_profile
 
             cur.execute(
-                "UPDATE users SET name=?, phone=?, email=?, section=?, governorate=?, city=?, exp=?, bio=?, profile_pic=? WHERE id=?",
-                (name, phone, email, section, governorate, city, exp, bio, new_profile_pic, user["id"])
+                "UPDATE users SET name=?, phone=?, email=?, section=?, governorate=?, city=?, exp=?, bio=?, profile_pic=?, availability_status=? WHERE id=?",
+                (name, phone, email, section, governorate, city, exp, bio, new_profile_pic, availability_status, user["id"])
             )
             con.commit()
 
@@ -6550,6 +6605,8 @@ def edit_profile():
                 <input name="city" value="{user['city'] or ''}" placeholder="المدينة / المنطقة">
                 <input name="exp" value="{user['exp'] or ''}" placeholder="سنوات الخبرة">
                 <textarea name="bio" placeholder="نبذة عنك">{user['bio'] or ''}</textarea>
+                <label>حالة المختص</label>
+                <select name="availability_status"><option value="متاح" {'selected' if ((user['availability_status'] if 'availability_status' in user.keys() else 'متاح') or 'متاح') == 'متاح' else ''}>🟢 متاح</option><option value="مشغول" {'selected' if ((user['availability_status'] if 'availability_status' in user.keys() else '') or '') == 'مشغول' else ''}>🟡 مشغول</option><option value="خارج الخدمة" {'selected' if ((user['availability_status'] if 'availability_status' in user.keys() else '') or '') == 'خارج الخدمة' else ''}>🔴 خارج الخدمة</option></select>
 
                 <label>تغيير الصورة الشخصية</label>
                 <input type="file" name="profile_pic" accept=".png,.jpg,.jpeg,.gif,.webp">
@@ -6848,6 +6905,60 @@ def passkey_auth_finish():
         return resp
     except Exception as e:
         return jsonify({"ok": False, "error": "فشل التحقق من البصمة: " + str(e)}), 400
+
+
+
+@app.route('/search')
+def search_workers():
+    auto_login_from_cookie()
+    q=sanitize_input(request.args.get('q',''),80); governorate=sanitize_input(request.args.get('governorate',''),80); specialty=sanitize_input(request.args.get('specialty',''),80)
+    clauses=["users.is_verified=1","COALESCE(users.is_blocked,0)=0","COALESCE(users.hidden_by_admin,0)=0","(users.role='worker' OR users.role IS NULL)"]; params=[]
+    if q:
+        like=f"%{q}%"; clauses.append("(users.name LIKE ? OR users.city LIKE ? OR users.email LIKE ? OR users.phone LIKE ?)"); params += [like,like,like,like]
+    if governorate: clauses.append('users.governorate=?'); params.append(governorate)
+    if specialty: clauses.append('users.section=?'); params.append(specialty)
+    with get_db() as con: rows=con.execute('SELECT users.* FROM users WHERE '+' AND '.join(clauses)+' ORDER BY users.is_pinned DESC, users.views DESC, users.id DESC LIMIT 80', tuple(params)).fetchall()
+    cards=''.join(worker_card(row) for row in rows) if rows else '<div class="empty-state">ماكو نتائج مطابقة للبحث</div>'
+    return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f'''<div class="container"><a href="/workers"><button class="light-btn">رجوع</button></a><h2>البحث السريع</h2>{build_search_panel(q, governorate, specialty)}<div class="section-subtitle">عدد النتائج: {len(rows)}</div>{cards}</div></body></html>''')
+
+@app.route('/top-workers')
+def top_workers():
+    auto_login_from_cookie()
+    with get_db() as con:
+        rows=con.execute('''SELECT users.*, COALESCE((SELECT AVG(rating) FROM comments WHERE comments.user_id=users.id),0) AS avg_rating_calc, COALESCE((SELECT COUNT(*) FROM comments WHERE comments.user_id=users.id),0) AS rating_count_calc FROM users WHERE users.is_verified=1 AND COALESCE(users.is_blocked,0)=0 AND COALESCE(users.hidden_by_admin,0)=0 AND (users.role='worker' OR users.role IS NULL) ORDER BY users.is_pinned DESC, avg_rating_calc DESC, rating_count_calc DESC, users.views DESC LIMIT 50''').fetchall()
+    cards=''.join(worker_card(row) for row in rows) if rows else '<div class="empty-state">لا توجد بيانات كافية حالياً</div>'
+    return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f'''<div class="container"><a href="/workers"><button class="light-btn">رجوع</button></a><h2>⭐ أفضل المختصين</h2><div class="section-subtitle">الترتيب حسب التثبيت والتقييم والمشاهدات.</div>{build_search_panel()}{cards}</div></body></html>''')
+
+@app.route('/worker-stats')
+def worker_stats():
+    if 'user' not in session: return redirect(url_for('login'))
+    if session.get('role') != 'worker': return redirect(url_for('settings'))
+    user=get_current_session_user()
+    if not user: session.clear(); return redirect(url_for('login'))
+    avg_rating,rating_count=get_worker_rating_summary(user['id'])
+    imgs_count=len([x for x in ((user['work_images'] if 'work_images' in user.keys() else '') or '').split(',') if x.strip()])
+    videos=[x.strip() for x in ((user['work_videos'] if 'work_videos' in user.keys() else '') or '').split(',') if x.strip()]
+    video_views=sum(get_work_video_views(v) for v in videos); reports_count=0
+    try:
+        with get_db() as con:
+            row=con.execute('SELECT COUNT(*) AS c FROM worker_reports WHERE worker_id=?',(user['id'],)).fetchone(); reports_count=int((row['c'] if row else 0) or 0)
+    except Exception: pass
+    return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f'''<div class="container narrow-container"><a href="/settings"><button class="light-btn">رجوع</button></a><h2>إحصائياتي 📊</h2><div class="stats-big-grid"><div class="stats-big-card"><div class="num">{user['views'] or 0}</div><div class="lbl">مشاهدات الملف</div></div><div class="stats-big-card"><div class="num">{video_views}</div><div class="lbl">تشغيل الفيديوهات</div></div><div class="stats-big-card"><div class="num">{avg_rating}</div><div class="lbl">متوسط التقييم</div></div><div class="stats-big-card"><div class="num">{rating_count}</div><div class="lbl">عدد التقييمات</div></div><div class="stats-big-card"><div class="num">{imgs_count}</div><div class="lbl">عدد الصور</div></div><div class="stats-big-card"><div class="num">{len(videos)}</div><div class="lbl">عدد الفيديوهات</div></div><div class="stats-big-card"><div class="num">{reports_count}</div><div class="lbl">عدد البلاغات</div></div></div></div></body></html>''')
+
+@app.route('/manage-work-gallery', methods=['GET','POST'])
+def manage_work_gallery():
+    if 'user' not in session: return redirect(url_for('login'))
+    if session.get('role') != 'worker': return redirect(url_for('settings'))
+    user=get_current_session_user()
+    if not user: session.clear(); return redirect(url_for('login'))
+    imgs=[x.strip() for x in ((user['work_images'] if 'work_images' in user.keys() else '') or '').split(',') if x.strip()]
+    vids=[x.strip() for x in ((user['work_videos'] if 'work_videos' in user.keys() else '') or '').split(',') if x.strip()]
+    if request.method=='POST': return redirect(url_for('manage_work_gallery'))
+    rows=''
+    for idx,img in enumerate(imgs): rows += f'<div class="reorder-item"><div style="display:flex;gap:10px;align-items:center;"><img src="{media_url(img)}"><strong>صورة {idx+1}</strong></div><div class="small">الصورة محفوظة بهذا الترتيب</div></div>'
+    for idx,vid in enumerate(vids): rows += f'<div class="reorder-item"><div style="display:flex;gap:10px;align-items:center;"><video src="{media_url(vid)}" muted preload="metadata"></video><strong>فيديو {idx+1}</strong></div><div class="small">الفيديو محفوظ بهذا الترتيب</div></div>'
+    if not rows: rows='<div class="empty-state">لا توجد صور أو فيديوهات لترتيبها</div>'
+    return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f'''<div class="container"><a href="/settings"><button class="light-btn">رجوع</button></a><h2>ترتيب المعرض</h2><div class="section-subtitle">تعرض هذه الصفحة ترتيب المعرض الحالي. استخدم إدارة الصور والفيديوهات للتغيير.</div><div class="reorder-list">{rows}</div><a href="/manage-work-images/{user['id']}"><button class="light-btn">إدارة الصور</button></a><a href="/manage-work-videos/{user['id']}"><button class="light-btn">إدارة الفيديوهات</button></a></div></body></html>''')
 
 
 if __name__ == "__main__":
