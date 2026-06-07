@@ -143,7 +143,7 @@ USING_POSTGRES = bool(DATABASE_URL and PSYCOPG2_AVAILABLE)
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = APP_ENV == "production"
-app.config["MAX_CONTENT_LENGTH"] = 30 * 1024 * 1024  # 30MB request cap
+app.config["MAX_CONTENT_LENGTH"] = 60 * 1024 * 1024  # 60MB request cap for short work videos
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=180)
 
 DEFAULT_SECRET_KEY = "adam_secret_key_2026"
@@ -175,6 +175,10 @@ ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
 MAX_SINGLE_FILE_SIZE = 5 * 1024 * 1024
 MAX_SUPPORT_MEDIA_SIZE = 20 * 1024 * 1024
 MAX_WORK_IMAGES = 10
+MAX_WORK_VIDEOS = 10
+MAX_WORK_VIDEO_SECONDS = 50
+MAX_WORK_VIDEO_SIZE = 50 * 1024 * 1024
+ALLOWED_WORK_VIDEO_EXTENSIONS = {"mp4", "mov", "webm", "m4v"}
 ALLOWED_SUPPORT_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
 ALLOWED_SUPPORT_VIDEO_EXTENSIONS = {"mp4", "mov", "webm", "m4v", "avi"}
 
@@ -766,6 +770,120 @@ def delete_file_if_exists(filename):
             pass
 
 
+
+def video_file_size_ok(file_obj):
+    try:
+        current_pos = file_obj.stream.tell()
+        file_obj.stream.seek(0, os.SEEK_END)
+        size = file_obj.stream.tell()
+        file_obj.stream.seek(current_pos)
+        return size <= MAX_WORK_VIDEO_SIZE
+    except Exception:
+        return True
+
+
+def work_video_kind(filename="", mimetype=""):
+    name = (filename or "").lower()
+    mime = (mimetype or "").lower()
+    ext = name.rsplit(".", 1)[1] if "." in name else ""
+    if ext in ALLOWED_WORK_VIDEO_EXTENSIONS or mime.startswith("video/"):
+        return "video"
+    return ""
+
+
+def validate_work_video(file_obj):
+    if not file_obj or not file_obj.filename:
+        return False, "لا يوجد فيديو مرفوع"
+    if work_video_kind(file_obj.filename, getattr(file_obj, "mimetype", "")) != "video":
+        return False, "صيغة الفيديو غير مدعومة. استخدم MP4 أو MOV أو WEBM"
+    if not video_file_size_ok(file_obj):
+        return False, "حجم الفيديو أكبر من المسموح"
+    try:
+        file_obj.stream.seek(0)
+    except Exception:
+        pass
+    return True, ""
+
+
+def save_work_video(file_obj):
+    if not CLOUDINARY_ENABLED:
+        raise RuntimeError("Cloudinary غير مفعل في إعدادات البيئة")
+    ok, msg = validate_work_video(file_obj)
+    if not ok:
+        raise RuntimeError(msg)
+    original = secure_filename(file_obj.filename)
+    ext = original.rsplit(".", 1)[1].lower() if "." in original else "mp4"
+    try:
+        try:
+            file_obj.stream.seek(0)
+        except Exception:
+            pass
+        upload_result = cloudinary.uploader.upload(
+            file_obj.stream,
+            resource_type="video",
+            folder=f"{CLOUDINARY_UPLOAD_FOLDER}/work_videos",
+            public_id=f"{uuid.uuid4().hex}",
+            format=ext,
+            overwrite=True,
+        )
+        secure_url = (upload_result.get("secure_url") or "").strip()
+        public_id = (upload_result.get("public_id") or "").strip()
+        duration = float(upload_result.get("duration") or 0)
+        if not secure_url or not public_id:
+            raise RuntimeError("فشل Cloudinary بإرجاع رابط الفيديو")
+        if duration and duration > MAX_WORK_VIDEO_SECONDS:
+            try:
+                cloudinary.uploader.destroy(public_id, resource_type="video", invalidate=True)
+            except Exception:
+                pass
+            raise RuntimeError(f"مدة الفيديو يجب أن لا تتجاوز {MAX_WORK_VIDEO_SECONDS} ثانية")
+        return make_cloudinary_ref(public_id, secure_url)
+    except RuntimeError:
+        raise
+    except Exception as e:
+        print("WORK VIDEO CLOUDINARY ERROR:", repr(e))
+        raise RuntimeError("فشل رفع الفيديو إلى Cloudinary")
+
+
+def delete_video_file_if_exists(filename):
+    if not filename:
+        return
+    cloud_ref = parse_cloudinary_ref(filename)
+    if cloud_ref and CLOUDINARY_ENABLED:
+        try:
+            cloudinary.uploader.destroy(cloud_ref["public_id"], resource_type="video", invalidate=True)
+        except Exception:
+            pass
+        return
+    path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+    if os.path.exists(path):
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+
+
+def render_work_videos_grid(videos):
+    if not videos:
+        return ""
+    blocks = []
+    for vid in videos:
+        url = media_url(vid)
+        if not url:
+            continue
+        blocks.append(f"""
+        <div class='work-video-tile'>
+            <video controls preload='metadata' playsinline>
+                <source src='{url}'>
+                المتصفح لا يدعم عرض الفيديو.
+            </video>
+            <a class='link-btn secondary' href='{url}' target='_blank' rel='noopener'>فتح الفيديو</a>
+        </div>
+        """)
+    if not blocks:
+        return ""
+    return '<div class="work-video-grid">' + "".join(blocks) + '</div>'
+
 def support_media_kind(filename="", mimetype=""):
     name = (filename or "").lower()
     mime = (mimetype or "").lower()
@@ -892,25 +1010,26 @@ def insert_user_record(con, values_dict):
         "bio": values_dict.get("bio", ""),
         "profile_pic": values_dict.get("profile_pic", ""),
         "work_images": values_dict.get("work_images", ""),
+        "work_videos": values_dict.get("work_videos", ""),
     }
 
     try:
         con.execute("""
         INSERT INTO users
-        (name, phone, email, password, role, birthdate, section, governorate, city, exp, bio, profile_pic, work_images, is_verified)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)
+        (name, phone, email, password, role, birthdate, section, governorate, city, exp, bio, profile_pic, work_images, work_videos, is_verified)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
         """, (
             payload["name"], payload["phone"], payload["email"], payload["password"], payload["role"], payload["birthdate"],
-            payload["section"], payload["governorate"], payload["city"], payload["exp"], payload["bio"], payload["profile_pic"], payload["work_images"]
+            payload["section"], payload["governorate"], payload["city"], payload["exp"], payload["bio"], payload["profile_pic"], payload["work_images"], payload["work_videos"]
         ))
     except DB_OPERATIONAL_ERRORS:
         con.execute("""
         INSERT INTO users
-        (name, phone, email, password, role, birthdate, section, governorate, city, exp, bio, profile_pic, work_images)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+        (name, phone, email, password, role, birthdate, section, governorate, city, exp, bio, profile_pic, work_images, work_videos)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             payload["name"], payload["phone"], payload["email"], payload["password"], payload["role"], payload["birthdate"],
-            payload["section"], payload["governorate"], payload["city"], payload["exp"], payload["bio"], payload["profile_pic"], payload["work_images"]
+            payload["section"], payload["governorate"], payload["city"], payload["exp"], payload["bio"], payload["profile_pic"], payload["work_images"], payload["work_videos"]
         ))
 
 
@@ -1157,6 +1276,9 @@ def init_db_sqlite(cur):
     if not column_exists(cur, "users", "work_images"):
         cur.execute("ALTER TABLE users ADD COLUMN work_images TEXT DEFAULT ''")
 
+    if not column_exists(cur, "users", "work_videos"):
+        cur.execute("ALTER TABLE users ADD COLUMN work_videos TEXT DEFAULT ''")
+
     if not column_exists(cur, "users", "governorate"):
         cur.execute("ALTER TABLE users ADD COLUMN governorate TEXT DEFAULT ''")
 
@@ -1335,6 +1457,7 @@ def init_db_postgres(cur):
         is_verified INTEGER DEFAULT 0,
         profile_pic TEXT DEFAULT '',
         work_images TEXT DEFAULT '',
+        work_videos TEXT DEFAULT '',
         governorate TEXT DEFAULT '',
         show_phone INTEGER DEFAULT 1,
         show_whatsapp INTEGER DEFAULT 1,
@@ -1353,6 +1476,7 @@ def init_db_postgres(cur):
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS birthdate TEXT DEFAULT ''",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_pic TEXT DEFAULT ''",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS work_images TEXT DEFAULT ''",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS work_videos TEXT DEFAULT ''",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS governorate TEXT DEFAULT ''",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS show_phone INTEGER DEFAULT 1",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS show_whatsapp INTEGER DEFAULT 1",
@@ -1644,6 +1768,8 @@ def cleanup_saved_files(user_data):
         delete_file_if_exists(user_data.get("profile_pic"))
     for img in [x.strip() for x in (user_data.get("work_images") or "").split(",") if x.strip()]:
         delete_file_if_exists(img)
+    for vid in [x.strip() for x in (user_data.get("work_videos") or "").split(",") if x.strip()]:
+        delete_video_file_if_exists(vid)
 
 
 def set_pending_registration(data, otp, role):
@@ -1704,6 +1830,7 @@ def complete_pending_registration():
                     "bio": "",
                     "profile_pic": "",
                     "work_images": "",
+                    "work_videos": "",
                 })
                 con.commit()
                 return True, "تم إنشاء حساب الزائر بنجاح", url_for("visitor_login")
@@ -1728,6 +1855,7 @@ def complete_pending_registration():
                 "bio": pending_data.get("bio", ""),
                 "profile_pic": pending_data.get("profile_pic", ""),
                 "work_images": pending_data.get("work_images", ""),
+                "work_videos": pending_data.get("work_videos", ""),
             })
             con.commit()
             return True, "تم إنشاء الحساب بنجاح", url_for("login")
@@ -2449,6 +2577,11 @@ a{
     color:#2563eb !important;
 }
 
+
+.work-video-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-top:12px}
+.work-video-tile{background:#f8fbff;border:1px solid rgba(37,99,235,.16);border-radius:18px;padding:10px;box-shadow:0 8px 18px rgba(37,99,235,.06)}
+.work-video-tile video{width:100%;height:180px;object-fit:cover;border-radius:14px;background:#000;display:block}
+@media(max-width:520px){.work-video-grid{grid-template-columns:1fr}.work-video-tile video{height:210px}}
 </style>
 
 <script>
@@ -2463,6 +2596,14 @@ function attachImageCompressionForms() {
       if (form.dataset.compressing === '1') return;
       const selectedInputs = Array.from(fileInputs).filter(inp => inp.files && inp.files.length);
       if (!selectedInputs.length) return;
+      for (const input of selectedInputs) {
+        if (input.name === 'work_videos') {
+          for (const file of Array.from(input.files)) {
+            const ok = await checkVideoDuration(file, 50);
+            if (!ok) { alert('مدة كل فيديو يجب أن لا تتجاوز 50 ثانية'); return; }
+          }
+        }
+      }
       e.preventDefault();
       form.dataset.compressing = '1';
       const submitBtn = form.querySelector('button[type="submit"], button:not([type]), input[type="submit"]');
@@ -2499,6 +2640,16 @@ function attachImageCompressionForms() {
         form.dataset.compressing = '0';
       }, 1500);
     });
+  });
+}
+async function checkVideoDuration(file, maxSeconds) {
+  if (!(file instanceof File) || !file.type.startsWith('video/')) return true;
+  return await new Promise((resolve) => {
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    video.onloadedmetadata = function() { URL.revokeObjectURL(video.src); resolve(!video.duration || video.duration <= maxSeconds); };
+    video.onerror = function() { resolve(true); };
+    video.src = URL.createObjectURL(file);
   });
 }
 async function compressImageFile(file) {
@@ -3084,6 +3235,65 @@ def manage_work_images(user_id):
                 <label>إضافة صور جديدة</label>
                 <input type="file" name="work_images" accept=".png,.jpg,.jpeg,.gif,.webp" multiple>
                 <button>حفظ التعديلات</button>
+            </form>
+        </div>
+        </body></html>
+        """
+    )
+
+
+@app.route("/manage-work-videos/<int:user_id>", methods=["GET", "POST"])
+def manage_work_videos(user_id):
+    if "user" not in session:
+        return redirect(url_for("login"))
+    if session.get("role") != "worker":
+        return redirect(url_for("settings"))
+    user = get_current_session_user()
+    if not user or int(user["id"]) != int(user_id):
+        return redirect(url_for("profile"))
+    existing_videos = [x.strip() for x in ((user["work_videos"] if "work_videos" in user.keys() else "") or "").split(",") if x.strip()]
+    if request.method == "POST":
+        remove_videos = request.form.getlist("remove_videos")
+        kept_videos = [vid for vid in existing_videos if vid not in remove_videos]
+        for vid in remove_videos:
+            delete_video_file_if_exists(vid)
+        added = []
+        if "work_videos" in request.files:
+            files = request.files.getlist("work_videos")
+            remaining = max(0, MAX_WORK_VIDEOS - len(kept_videos))
+            for file_obj in files[:remaining]:
+                if file_obj and file_obj.filename:
+                    try:
+                        saved = save_work_video(file_obj)
+                    except Exception as e:
+                        return render_template_string(STYLE + f'<div class="container"><div class="msg">{str(e)}</div><a href="/manage-work-videos/{user_id}"><button>رجوع</button></a></div></body></html>')
+                    if saved:
+                        added.append(saved)
+        final_videos = kept_videos + added
+        with get_db() as con:
+            con.execute("UPDATE users SET work_videos=? WHERE id=?", (",".join(final_videos), user["id"]))
+            con.commit()
+        return render_template_string(STYLE + '<div class="container"><div class="msg">تم تحديث الفيديوهات بنجاح</div><a href="/edit-profile"><button>رجوع</button></a></div></body></html>')
+
+    if existing_videos:
+        previews = "<div class='work-video-grid'>" + "".join(
+            f"""<label style='display:block;text-align:center;'><div class='work-video-tile'><video controls preload='metadata' playsinline><source src='{media_url(vid)}'>المتصفح لا يدعم عرض الفيديو.</video><div class='small'><input type='checkbox' name='remove_videos' value='{vid}'> حذف هذا الفيديو</div></div></label>"""
+            for vid in existing_videos
+        ) + "</div>"
+    else:
+        previews = '<div class="empty-state">لا توجد فيديوهات مرفوعة حالياً</div>'
+    return render_template_string(
+        STYLE + f"""
+        <div class="container">
+            <a href="/edit-profile"><button class="light-btn">رجوع</button></a>
+            <h2>إدارة فيديوهات الأعمال</h2>
+            <div class="section-subtitle">يمكنك إضافة حتى {MAX_WORK_VIDEOS} فيديوهات. مدة كل فيديو لا تتجاوز {MAX_WORK_VIDEO_SECONDS} ثانية.</div>
+            <form method="post" enctype="multipart/form-data">
+                {previews}
+                <label>إضافة فيديوهات جديدة</label>
+                <input type="file" name="work_videos" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,.m4v" multiple>
+                <div class="notice">مسموح 10 فيديوهات فقط لكل مختص. إذا كان الفيديو أكثر من 50 ثانية سيتم رفضه.</div>
+                <button>حفظ الفيديوهات</button>
             </form>
         </div>
         </body></html>
@@ -3780,6 +3990,9 @@ def worker_profile(user_id):
 
         work_images_raw = worker["work_images"] or ""
         imgs = [x.strip() for x in work_images_raw.split(",") if x.strip()]
+        work_videos_raw = ((worker["work_videos"] if "work_videos" in worker.keys() else "") or "")
+        videos = [x.strip() for x in work_videos_raw.split(",") if x.strip()]
+        work_videos_html = render_work_videos_grid(videos)
         work_images_html = ""
         if imgs:
             gallery_refs = quote("||".join(imgs), safe="")
@@ -3830,6 +4043,7 @@ def worker_profile(user_id):
             favorite_button = f'<a class="action-pill secondary" href="/toggle-favorite/{worker["id"]}?next=/worker/{worker["id"]}">{fav_text}</a>'
 
         works_count = len(imgs)
+        videos_count = len(videos)
         city_value = worker["city"] or "-"
         exp_value = worker["exp"] or "-"
         message_status_value = 'مفعل' if int((worker["allow_messages"] if worker["allow_messages"] is not None else 0) or 0) else 'معطل'
@@ -3837,7 +4051,8 @@ def worker_profile(user_id):
             <div class="stat-mini-grid">
                 <div class="stat-mini-card"><div class="stat-mini-label">التقييم</div><div class="stat-mini-value">{avg_rating}</div></div>
                 <div class="stat-mini-card"><div class="stat-mini-label">التقييمات</div><div class="stat-mini-value">{rating_count}</div></div>
-                <div class="stat-mini-card"><div class="stat-mini-label">الأعمال</div><div class="stat-mini-value">{works_count}</div></div>
+                <div class="stat-mini-card"><div class="stat-mini-label">الصور</div><div class="stat-mini-value">{works_count}</div></div>
+                <div class="stat-mini-card"><div class="stat-mini-label">الفيديوهات</div><div class="stat-mini-value">{videos_count}</div></div>
                 <div class="stat-mini-card"><div class="stat-mini-label">المشاهدات</div><div class="stat-mini-value">{worker["views"] or 0}</div></div>
             </div>
         """
@@ -3914,7 +4129,16 @@ def worker_profile(user_id):
                         <span class="badge">{works_count} صورة</span>
                     </div>
                     <div class="section-subtitle">صور الأعمال المعروضة داخل الملف الشخصي.</div>
-                    {work_images_html if work_images_html else '<div class="empty-state">لا توجد أعمال حتى الآن</div>'}
+                    {work_images_html if work_images_html else '<div class="empty-state">لا توجد صور أعمال حتى الآن</div>'}
+                </div>
+
+                <div class="card">
+                    <div class="gallery-head">
+                        <h3>فيديوهات الأعمال</h3>
+                        <span class="badge">{videos_count} فيديو</span>
+                    </div>
+                    <div class="section-subtitle">فيديوهات قصيرة لأعمال المختص، مدة كل فيديو لا تتجاوز 50 ثانية.</div>
+                    {work_videos_html if work_videos_html else '<div class="empty-state">لا توجد فيديوهات حتى الآن</div>'}
                 </div>
 
                 <div class="card">
@@ -5391,6 +5615,9 @@ def delete_account():
         if user["work_images"]:
             for img in [x.strip() for x in user["work_images"].split(",") if x.strip()]:
                 delete_file_if_exists(img)
+        if "work_videos" in user.keys() and user["work_videos"]:
+            for vid in [x.strip() for x in user["work_videos"].split(",") if x.strip()]:
+                delete_video_file_if_exists(vid)
 
         with get_db() as con:
             con.execute("DELETE FROM messages WHERE sender_name=? OR receiver_name=?", (user["name"], user["name"]))
@@ -5426,6 +5653,8 @@ def profile():
     )
 
     imgs = [x.strip() for x in (user["work_images"] or "").split(",") if x.strip()]
+    videos = [x.strip() for x in ((user["work_videos"] if "work_videos" in user.keys() else "") or "").split(",") if x.strip()]
+    work_videos_html = render_work_videos_grid(videos)
     work_images_html = ""
     if imgs:
         gallery_refs = quote("||".join(imgs), safe="")
@@ -5471,7 +5700,13 @@ def profile():
             <div class="card">
                 <h3>أعمالي</h3>
                 <div class="section-subtitle">الصور المرفوعة داخل ملفك الشخصي.</div>
-                {work_images_html if work_images_html else f'<div class="empty-state">لا توجد أعمال حتى الآن</div>'}
+                {work_images_html if work_images_html else f'<div class="empty-state">لا توجد صور أعمال حتى الآن</div>'}
+            </div>
+
+            <div class="card">
+                <h3>فيديوهات أعمالي</h3>
+                <div class="section-subtitle">الفيديوهات المرفوعة داخل ملفك الشخصي. الحد الأعلى {MAX_WORK_VIDEOS} فيديوهات، مدة كل فيديو {MAX_WORK_VIDEO_SECONDS} ثانية.</div>
+                {work_videos_html if work_videos_html else '<div class="empty-state">لا توجد فيديوهات حتى الآن</div>'}
             </div>
         </div>
         </body></html>
@@ -5796,7 +6031,8 @@ def edit_profile():
             </form>
 
             <a href="/change-password"><button>تغيير كلمة المرور</button></a>
-            <a href="/manage-work-images/{user['id']}"><button>إدارة أعمالي</button></a>
+            <a href="/manage-work-images/{user['id']}"><button>إدارة صور أعمالي</button></a>
+            <a href="/manage-work-videos/{user['id']}"><button>إدارة فيديوهات أعمالي</button></a>
             <a href="/delete-account"><button style="background:red;color:white;">حذف الحساب</button></a>
         </div>
         {specialty_script(user['section'] or '')}
