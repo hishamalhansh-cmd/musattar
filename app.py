@@ -4234,6 +4234,12 @@ def worker_profile(user_id):
             fav_text = "💔 إزالة من المفضلة" if fav_on else "❤️ إضافة للمفضلة"
             favorite_button = f'<a class="action-pill secondary" href="/toggle-favorite/{worker["id"]}?next=/worker/{worker["id"]}">{fav_text}</a>'
 
+        profile_share_url = request.url_root.rstrip("/") + url_for("worker_profile", user_id=worker["id"])
+        share_url_js = json.dumps(profile_share_url, ensure_ascii=False)
+        share_name_js = json.dumps(worker["name"] or "مختص", ensure_ascii=False)
+        share_button = f'<a class="action-pill secondary" href="#" onclick="shareWorkerProfile({share_url_js}, {share_name_js});return false;">🔗 مشاركة الملف</a>'
+        report_button = f'<a class="action-pill secondary" href="/report-worker/{worker["id"]}">🚩 بلاغ</a>'
+
         works_count = len(imgs)
         videos_count = len(videos)
         city_value = worker["city"] or "-"
@@ -4309,6 +4315,8 @@ def worker_profile(user_id):
                                 {favorite_button}
                                 {wa_html}
                                 {call_html}
+                                {share_button}
+                                {report_button}
                                 {map_html}
                             </div>
                         </div>
@@ -4333,6 +4341,22 @@ def worker_profile(user_id):
                 </div>
                 {comment_form}
             </div>
+            <script>
+            async function shareWorkerProfile(url, name) {{
+                const title = 'ملف المختص في المسطر: ' + (name || '');
+                const text = 'شاهد هذا المختص على تطبيق المسطر';
+                try {{
+                    if (navigator.share) {{
+                        await navigator.share({{title: title, text: text, url: url}});
+                    }} else if (navigator.clipboard) {{
+                        await navigator.clipboard.writeText(url);
+                        alert('تم نسخ رابط الملف');
+                    }} else {{
+                        prompt('انسخ رابط الملف:', url);
+                    }}
+                }} catch (e) {{}}
+            }}
+            </script>
             </body></html>
             """
         )
@@ -4340,6 +4364,110 @@ def worker_profile(user_id):
         import traceback
         traceback.print_exc()
         return render_template_string(STYLE + '<div class="container"><div class="msg">صار خطأ أثناء فتح الملف الشخصي</div><div class="notice">' + sanitize_input(str(e), 300) + '</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
+
+
+@app.route("/report-worker/<int:user_id>", methods=["GET", "POST"])
+def report_worker(user_id):
+    auto_login_from_cookie()
+    with get_db() as con:
+        worker = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+
+    if not worker:
+        return render_template_string(STYLE + '<div class="container"><div class="msg">هذا الملف غير موجود</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
+
+    if request.method == "POST":
+        reason = sanitize_input(request.form.get("reason", ""), 120)
+        details = sanitize_input(request.form.get("details", ""), 700)
+        reporter_id = int(session.get("user_id") or 0)
+        reporter_name = sanitize_input(session.get("user", "زائر"), 80) if "user" in session else "زائر"
+
+        if not reason:
+            return render_template_string(STYLE + f'<div class="container"><div class="msg">اختر سبب البلاغ</div><a href="/report-worker/{user_id}"><button>رجوع</button></a></div></body></html>')
+
+        with get_db() as con:
+            con.execute(
+                "INSERT INTO reports (worker_id, reporter_id, reporter_name, reason, details, status) VALUES (?, ?, ?, ?, ?, 'new')",
+                (user_id, reporter_id, reporter_name, reason, details)
+            )
+            con.commit()
+
+        return render_template_string(STYLE + f"""
+        <div class="container narrow-container">
+            <div class="msg">تم إرسال البلاغ للإدارة. شكراً لمساعدتك في تحسين المسطر.</div>
+            <a href="/worker/{user_id}"><button>رجوع لملف المختص</button></a>
+        </div>
+        </body></html>
+        """)
+
+    return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f"""
+    <div class="container narrow-container">
+        <a href="/worker/{user_id}"><button class="light-btn">رجوع</button></a>
+        <h2>الإبلاغ عن ملف</h2>
+        <div class="section-subtitle">المختص: {worker["name"]}</div>
+        <form method="post">
+            <label>سبب البلاغ</label>
+            <select name="reason" required>
+                <option value="">اختر السبب</option>
+                <option value="رقم هاتف غير صحيح">رقم هاتف غير صحيح</option>
+                <option value="محتوى غير مناسب">محتوى غير مناسب</option>
+                <option value="صور أو فيديوهات مخالفة">صور أو فيديوهات مخالفة</option>
+                <option value="حساب وهمي">حساب وهمي</option>
+                <option value="مشكلة أخرى">مشكلة أخرى</option>
+            </select>
+            <textarea name="details" placeholder="اكتب تفاصيل إضافية اختيارياً"></textarea>
+            <button>إرسال البلاغ</button>
+        </form>
+    </div>
+    </body></html>
+    """)
+
+
+@app.route("/admin/reports")
+def admin_reports():
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+
+    with get_db() as con:
+        rows = con.execute("""
+            SELECT r.*, u.name AS worker_name, u.phone AS worker_phone
+            FROM reports r
+            LEFT JOIN users u ON u.id = r.worker_id
+            ORDER BY r.id DESC
+            LIMIT 300
+        """).fetchall()
+
+    if rows:
+        reports_html = "".join(f"""
+        <div class="card">
+            <div class="inline" style="justify-content:space-between;">
+                <strong>بلاغ رقم {row["id"]}</strong>
+                <span class="badge">{row["status"] or "new"}</span>
+            </div>
+            <div class="detail-grid">
+                <div class="detail-box"><strong>المختص</strong>{row["worker_name"] or "غير معروف"}</div>
+                <div class="detail-box"><strong>الهاتف</strong>{row["worker_phone"] or "-"}</div>
+                <div class="detail-box"><strong>المبلغ</strong>{row["reporter_name"] or "زائر"}</div>
+                <div class="detail-box"><strong>السبب</strong>{row["reason"] or "-"}</div>
+            </div>
+            <div style="margin-top:10px;line-height:1.9;">{row["details"] or "لا توجد تفاصيل"}</div>
+            <div class="small">{row["created_at"]}</div>
+            <div class="inline" style="margin-top:10px;">
+                <a class="link-btn" href="/worker/{row["worker_id"]}">فتح الملف</a>
+            </div>
+        </div>
+        """ for row in rows)
+    else:
+        reports_html = '<div class="empty-state">لا توجد بلاغات حالياً</div>'
+
+    return render_template_string(STYLE + f"""
+    <div class="container">
+        <a href="/admin/panel"><button class="light-btn">رجوع للوحة الأدمن</button></a>
+        <h2>بلاغات المستخدمين</h2>
+        <div class="section-subtitle">هنا تظهر البلاغات التي يرسلها الزوار عن ملفات المختصين.</div>
+        {reports_html}
+    </div>
+    </body></html>
+    """)
 
 
 @app.route("/favorites")
