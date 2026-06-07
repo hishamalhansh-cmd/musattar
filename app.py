@@ -5505,6 +5505,7 @@ def admin_panel():
                     <a href="/admin/messages"><button class="light-btn">كل الرسائل</button></a>
                     <a href="/admin/comments"><button class="light-btn">كل التعليقات</button></a>
                     <a href="/admin/support"><button class="light-btn">الدعم الفني</button></a>
+                    <a href="/admin/reports"><button class="light-btn">🚩 البلاغات</button></a>
                     
                     <a href="/admin/logout"><button>خروج الأدمن</button></a>
                 </div>
