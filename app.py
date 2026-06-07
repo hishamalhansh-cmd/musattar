@@ -2905,10 +2905,19 @@ a{
 /* === NEW DEVELOPMENT FEATURES === */
 .status-pill{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:7px 12px;border-radius:999px;font-size:12px;font-weight:900;border:1px solid rgba(37,99,235,.18);background:#eef6ff;color:#12325f}
 .status-available{background:#dcfce7!important;color:#166534!important;border-color:rgba(22,101,52,.25)!important}.status-busy{background:#fef3c7!important;color:#92400e!important;border-color:rgba(146,64,14,.25)!important}.status-off{background:#fee2e2!important;color:#991b1b!important;border-color:rgba(153,27,27,.25)!important}
-.quick-search-box{display:grid;grid-template-columns:1.4fr 1fr 1fr auto;gap:10px;align-items:end;margin:14px 0}.worker-tools-row{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}
+.compact-search-card{padding:10px 12px!important;border-radius:18px!important;margin:10px 0 14px!important;box-shadow:0 8px 20px rgba(37,99,235,.07)!important}
+.compact-search-title{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 8px!important;font-size:15px!important;font-weight:900!important;color:#12325f!important}
+.quick-search-box{display:grid;grid-template-columns:1fr 86px;gap:8px;align-items:center;margin:0!important}
+.quick-search-box input{margin:0!important;height:42px!important;border-radius:999px!important;padding:9px 14px!important;font-size:13px!important;background:#f8fbff!important}
+.quick-search-box button{margin:0!important;height:42px!important;border-radius:999px!important;padding:0 14px!important;font-size:13px!important}
+.search-filter-details{margin-top:8px;background:#f8fbff;border:1px solid rgba(37,99,235,.12);border-radius:16px;padding:0 10px}
+.search-filter-details summary{cursor:pointer;list-style:none;padding:8px 0;font-size:12px;font-weight:800;color:#2563eb;display:flex;align-items:center;justify-content:space-between}
+.search-filter-details summary::-webkit-details-marker{display:none}.search-filter-details summary:after{content:'⌄';font-size:14px;color:#5f78a0}.search-filter-details[open] summary:after{content:'⌃'}
+.search-filter-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 0 10px}.search-filter-grid select{margin:0!important;height:40px!important;border-radius:14px!important;font-size:12px!important;padding:8px 10px!important}
+.worker-tools-row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 0}.worker-tools-row .link-btn{margin:0!important;padding:7px 10px!important;border-radius:999px!important;font-size:12px!important;box-shadow:none!important}
 .stats-big-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:14px}.stats-big-card{background:#fff;border:1px solid rgba(37,99,235,.16);border-radius:18px;padding:16px;text-align:center;box-shadow:0 8px 22px rgba(37,99,235,.08)}.stats-big-card .num{font-size:28px;font-weight:900;color:#2563eb}.stats-big-card .lbl{font-size:13px;color:#5f78a0}
 .reorder-list{display:grid;gap:10px}.reorder-item{display:flex;gap:10px;align-items:center;justify-content:space-between;background:#f8fbff;border:1px solid rgba(37,99,235,.14);border-radius:16px;padding:10px}.reorder-item img,.reorder-item video{width:72px;height:54px;object-fit:cover;border-radius:10px;background:#000}
-@media(max-width:720px){.quick-search-box{grid-template-columns:1fr}.worker-tools-row{display:grid;grid-template-columns:1fr 1fr}}
+@media(max-width:720px){.compact-search-card{padding:9px 10px!important}.compact-search-title{font-size:14px!important;margin-bottom:7px!important}.quick-search-box{grid-template-columns:1fr 72px;gap:6px}.quick-search-box input,.quick-search-box button{height:38px!important;font-size:12px!important}.search-filter-grid{grid-template-columns:1fr}.worker-tools-row{display:grid;grid-template-columns:1fr 1fr;gap:6px}.worker-tools-row .link-btn{font-size:11px!important;padding:7px 8px!important}}
 
 </style>
 
@@ -4073,14 +4082,22 @@ def worker_total_video_views(worker):
 
 
 def build_search_panel(q='', governorate='', specialty=''):
+    filters_open = ' open' if governorate or specialty else ''
     return f'''
-    <div class="card">
-        <h3>بحث سريع</h3>
-        <form class="quick-search-box" method="get" action="/search">
-            <input name="q" value="{q}" placeholder="ابحث باسم المختص أو المدينة">
-            <select name="governorate"><option value="">كل المحافظات</option>{build_governorates_options(governorate)}</select>
-            <select name="specialty"><option value="">كل الاختصاصات</option>{build_specialties_options(specialty, '')}</select>
-            <button>بحث</button>
+    <div class="card compact-search-card">
+        <div class="compact-search-title"><span>🔎 بحث سريع</span><span class="small">ناعم ومختصر</span></div>
+        <form method="get" action="/search">
+            <div class="quick-search-box">
+                <input name="q" value="{q}" placeholder="اسم المختص أو المدينة">
+                <button>بحث</button>
+            </div>
+            <details class="search-filter-details"{filters_open}>
+                <summary>فلترة حسب المحافظة والاختصاص</summary>
+                <div class="search-filter-grid">
+                    <select name="governorate"><option value="">كل المحافظات</option>{build_governorates_options(governorate)}</select>
+                    <select name="specialty"><option value="">كل الاختصاصات</option>{build_specialties_options(specialty, '')}</select>
+                </div>
+            </details>
         </form>
         <div class="worker-tools-row"><a class="link-btn secondary" href="/top-workers">⭐ أفضل المختصين</a><a class="link-btn secondary" href="/workers">📂 الأقسام</a></div>
     </div>'''
