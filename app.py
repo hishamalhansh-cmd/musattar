@@ -301,6 +301,7 @@ def clear_remember_token(user_id):
 
 @app.before_request
 def keep_user_logged_in():
+    cleanup_expired_temp_bans()
     auto_login_from_cookie()
 
 
@@ -325,6 +326,50 @@ def get_current_session_user():
                 session["last_email"] = user["email"] or session.get("last_email", "")
                 return user
     return None
+
+
+
+def parse_app_datetime(value):
+    value = (value or "").strip()
+    if not value:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(value)
+    except Exception:
+        try:
+            return datetime.datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return None
+
+
+def cleanup_expired_temp_bans():
+    try:
+        now = datetime.datetime.utcnow()
+        with get_db() as con:
+            rows = con.execute("SELECT id, ban_until FROM users WHERE COALESCE(ban_until,'') != ''").fetchall()
+            changed = False
+            for row in rows:
+                dt = parse_app_datetime(row.get("ban_until") if isinstance(row, dict) else row["ban_until"])
+                if dt and dt <= now:
+                    con.execute("UPDATE users SET is_blocked=0, hidden_by_admin=0, ban_until='', admin_warning='' WHERE id=?", (row["id"],))
+                    changed = True
+            if changed:
+                con.commit()
+    except Exception:
+        pass
+
+
+def active_temp_ban_text(user):
+    if not user:
+        return ""
+    try:
+        value = user["ban_until"] or ""
+    except Exception:
+        return ""
+    dt = parse_app_datetime(value)
+    if dt and dt > datetime.datetime.utcnow():
+        return dt.strftime("%Y-%m-%d %H:%M")
+    return ""
 
 def get_client_ip():
     forwarded = request.headers.get("X-Forwarded-For", "").strip()
@@ -1463,6 +1508,17 @@ def init_db_sqlite(cur):
     if not column_exists(cur, "users", "remember_token"):
         cur.execute("ALTER TABLE users ADD COLUMN remember_token TEXT DEFAULT ''")
 
+    if not column_exists(cur, "users", "warning_count"):
+        cur.execute("ALTER TABLE users ADD COLUMN warning_count INTEGER DEFAULT 0")
+    if not column_exists(cur, "users", "accepted_reports"):
+        cur.execute("ALTER TABLE users ADD COLUMN accepted_reports INTEGER DEFAULT 0")
+    if not column_exists(cur, "users", "rejected_reports"):
+        cur.execute("ALTER TABLE users ADD COLUMN rejected_reports INTEGER DEFAULT 0")
+    if not column_exists(cur, "users", "ban_until"):
+        cur.execute("ALTER TABLE users ADD COLUMN ban_until TEXT DEFAULT ''")
+    if not column_exists(cur, "users", "admin_warning"):
+        cur.execute("ALTER TABLE users ADD COLUMN admin_warning TEXT DEFAULT ''")
+
     cur.execute("""
     CREATE TABLE IF NOT EXISTS user_passkeys(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1594,6 +1650,10 @@ def init_db_sqlite(cur):
         cur.execute("ALTER TABLE reports ADD COLUMN status TEXT DEFAULT 'new'")
     if not column_exists(cur, "reports", "created_at"):
         cur.execute("ALTER TABLE reports ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+    if not column_exists(cur, "reports", "admin_action"):
+        cur.execute("ALTER TABLE reports ADD COLUMN admin_action TEXT DEFAULT ''")
+    if not column_exists(cur, "reports", "action_at"):
+        cur.execute("ALTER TABLE reports ADD COLUMN action_at TEXT DEFAULT ''")
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS support_messages(
@@ -1658,7 +1718,12 @@ def init_db_postgres(cur):
         is_pinned INTEGER DEFAULT 0,
         is_blocked INTEGER DEFAULT 0,
         hidden_by_admin INTEGER DEFAULT 0,
-        remember_token TEXT DEFAULT ''
+        remember_token TEXT DEFAULT '',
+        warning_count INTEGER DEFAULT 0,
+        accepted_reports INTEGER DEFAULT 0,
+        rejected_reports INTEGER DEFAULT 0,
+        ban_until TEXT DEFAULT '',
+        admin_warning TEXT DEFAULT ''
     )
     """)
 
@@ -1677,7 +1742,12 @@ def init_db_postgres(cur):
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_pinned INTEGER DEFAULT 0",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_blocked INTEGER DEFAULT 0",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS hidden_by_admin INTEGER DEFAULT 0",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS remember_token TEXT DEFAULT ''"
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS remember_token TEXT DEFAULT ''",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS warning_count INTEGER DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS accepted_reports INTEGER DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS rejected_reports INTEGER DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS ban_until TEXT DEFAULT ''",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_warning TEXT DEFAULT ''"
     ]:
         cur.execute(alter_sql)
 
@@ -1798,7 +1868,9 @@ def init_db_postgres(cur):
         "ALTER TABLE reports ADD COLUMN IF NOT EXISTS reason TEXT DEFAULT ''",
         "ALTER TABLE reports ADD COLUMN IF NOT EXISTS details TEXT DEFAULT ''",
         "ALTER TABLE reports ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'new'",
-        "ALTER TABLE reports ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+        "ALTER TABLE reports ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        "ALTER TABLE reports ADD COLUMN IF NOT EXISTS admin_action TEXT DEFAULT ''",
+        "ALTER TABLE reports ADD COLUMN IF NOT EXISTS action_at TEXT DEFAULT ''"
     ]:
         cur.execute(alter_sql)
 
@@ -3118,6 +3190,10 @@ def login():
         if not user or not check_password_hash(user["password"], password):
             return render_template_string(STYLE + '<div class="container"><div class="msg">البريد الإلكتروني أو كلمة المرور غير صحيحة</div><a href="/login"><button>رجوع</button></a></div></body></html>')
 
+        ban_until_text = active_temp_ban_text(user)
+        if ban_until_text:
+            return render_template_string(STYLE + f'<div class="container"><div class="msg">هذا الحساب محظور مؤقتاً إلى {ban_until_text}</div><a href="/login"><button>رجوع</button></a></div></body></html>')
+
         if user["is_blocked"]:
             return render_template_string(STYLE + '<div class="container"><div class="msg">هذا الحساب محظور من قبل الإدارة</div><a href="/login"><button>رجوع</button></a></div></body></html>')
 
@@ -3157,6 +3233,10 @@ def visitor_login():
 
         if not user or not check_password_hash(user["password"], password):
             return render_template_string(STYLE + '<div class="container"><div class="msg">البريد الإلكتروني أو كلمة المرور غير صحيحة</div><a href="/visitor/login"><button>رجوع</button></a></div></body></html>')
+
+        ban_until_text = active_temp_ban_text(user)
+        if ban_until_text:
+            return render_template_string(STYLE + f'<div class="container"><div class="msg">هذا الحساب محظور مؤقتاً إلى {ban_until_text}</div><a href="/visitor/login"><button>رجوع</button></a></div></body></html>')
 
         if user["is_blocked"]:
             return render_template_string(STYLE + '<div class="container"><div class="msg">هذا الحساب محظور من قبل الإدارة</div><a href="/visitor/login"><button>رجوع</button></a></div></body></html>')
@@ -4474,6 +4554,7 @@ def report_worker(user_id):
     """)
 
 
+
 @app.route("/admin/reports")
 def admin_reports():
     if not admin_required():
@@ -4481,7 +4562,12 @@ def admin_reports():
 
     with get_db() as con:
         rows = con.execute("""
-            SELECT r.*, u.name AS worker_name, u.phone AS worker_phone
+            SELECT r.*, u.name AS worker_name, u.phone AS worker_phone, u.email AS worker_email,
+                   u.is_blocked AS worker_blocked, u.hidden_by_admin AS worker_hidden,
+                   COALESCE(u.warning_count,0) AS warning_count,
+                   COALESCE(u.accepted_reports,0) AS accepted_reports,
+                   COALESCE(u.rejected_reports,0) AS rejected_reports,
+                   COALESCE(u.ban_until,'') AS ban_until
             FROM reports r
             LEFT JOIN users u ON u.id = r.worker_id
             ORDER BY r.id DESC
@@ -4489,25 +4575,42 @@ def admin_reports():
         """).fetchall()
 
     if rows:
-        reports_html = "".join(f"""
-        <div class="card">
-            <div class="inline" style="justify-content:space-between;">
-                <strong>بلاغ رقم {row["id"]}</strong>
-                <span class="badge">{row["status"] or "new"}</span>
+        blocks = []
+        for row in rows:
+            status = row["status"] or "new"
+            ban_text = f'<span class="badge">⏳ حظر إلى {row["ban_until"]}</span>' if row["ban_until"] else ""
+            blocks.append(f"""
+            <div class="card">
+                <div class="inline" style="justify-content:space-between;">
+                    <strong>بلاغ رقم {row["id"]}</strong>
+                    <span class="badge">{status}</span>
+                </div>
+                <div class="detail-grid">
+                    <div class="detail-box"><strong>المختص</strong>{row["worker_name"] or "غير معروف"}</div>
+                    <div class="detail-box"><strong>الهاتف</strong>{row["worker_phone"] or "-"}</div>
+                    <div class="detail-box"><strong>البريد</strong>{row["worker_email"] or "-"}</div>
+                    <div class="detail-box"><strong>المبلغ</strong>{row["reporter_name"] or "زائر"}</div>
+                    <div class="detail-box"><strong>السبب</strong>{row["reason"] or "-"}</div>
+                    <div class="detail-box"><strong>تحذيرات</strong>{row["warning_count"] or 0}</div>
+                    <div class="detail-box"><strong>بلاغات مقبولة</strong>{row["accepted_reports"] or 0}</div>
+                    <div class="detail-box"><strong>بلاغات مرفوضة</strong>{row["rejected_reports"] or 0}</div>
+                </div>
+                <div style="margin-top:10px;line-height:1.9;">{row["details"] or "لا توجد تفاصيل"}</div>
+                <div class="small">وقت البلاغ: {row["created_at"]}</div>
+                <div class="inline" style="margin-top:8px;">{ban_text}</div>
+                <div class="inline" style="margin-top:10px;">
+                    <a class="link-btn" href="/worker/{row["worker_id"]}">فتح الملف</a>
+                    <a class="link-btn" href="/admin/report-action/{row["id"]}/warn">⚠️ تحذير</a>
+                    <a class="link-btn" href="/admin/report-action/{row["id"]}/hide">🙈 إخفاء الملف</a>
+                    <a class="link-btn" href="/admin/report-action/{row["id"]}/tempban7">⏳ حظر 7 أيام</a>
+                    <a class="link-btn link-red" href="/admin/report-action/{row["id"]}/permban">⛔ حظر نهائي</a>
+                    <a class="link-btn secondary" href="/admin/report-action/{row["id"]}/reject">❌ رفض البلاغ</a>
+                    <a class="link-btn secondary" href="/admin/unhide-user/{row["worker_id"]}">إظهار الملف</a>
+                    <a class="link-btn secondary" href="/admin/unblock-user/{row["worker_id"]}">فك الحظر</a>
+                </div>
             </div>
-            <div class="detail-grid">
-                <div class="detail-box"><strong>المختص</strong>{row["worker_name"] or "غير معروف"}</div>
-                <div class="detail-box"><strong>الهاتف</strong>{row["worker_phone"] or "-"}</div>
-                <div class="detail-box"><strong>المبلغ</strong>{row["reporter_name"] or "زائر"}</div>
-                <div class="detail-box"><strong>السبب</strong>{row["reason"] or "-"}</div>
-            </div>
-            <div style="margin-top:10px;line-height:1.9;">{row["details"] or "لا توجد تفاصيل"}</div>
-            <div class="small">{row["created_at"]}</div>
-            <div class="inline" style="margin-top:10px;">
-                <a class="link-btn" href="/worker/{row["worker_id"]}">فتح الملف</a>
-            </div>
-        </div>
-        """ for row in rows)
+            """)
+        reports_html = "".join(blocks)
     else:
         reports_html = '<div class="empty-state">لا توجد بلاغات حالياً</div>'
 
@@ -4515,11 +4618,66 @@ def admin_reports():
     <div class="container">
         <a href="/admin/panel"><button class="light-btn">رجوع للوحة الأدمن</button></a>
         <h2>بلاغات المستخدمين</h2>
-        <div class="section-subtitle">هنا تظهر البلاغات التي يرسلها الزوار عن ملفات المختصين.</div>
+        <div class="section-subtitle">إدارة البلاغات: تحذير، إخفاء، حظر مؤقت، حظر نهائي، أو رفض البلاغ.</div>
         {reports_html}
     </div>
     </body></html>
     """)
+
+
+@app.route("/admin/report-action/<int:report_id>/<action>")
+def admin_report_action(report_id, action):
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+
+    allowed = {"warn", "hide", "tempban7", "permban", "reject"}
+    if action not in allowed:
+        return redirect(url_for("admin_reports"))
+
+    now_text = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+    with get_db() as con:
+        report = con.execute("SELECT * FROM reports WHERE id=?", (report_id,)).fetchone()
+        if not report:
+            return redirect(url_for("admin_reports"))
+
+        worker_id = report["worker_id"]
+        worker = con.execute("SELECT * FROM users WHERE id=?", (worker_id,)).fetchone()
+        if not worker:
+            con.execute("UPDATE reports SET status='worker_missing', admin_action=?, action_at=? WHERE id=?", (action, now_text, report_id))
+            con.commit()
+            return redirect(url_for("admin_reports"))
+
+        if action == "warn":
+            warning_text = "وصل تنبيه من الإدارة بسبب بلاغ على ملفك. يرجى الالتزام بالمعلومات الصحيحة والتعامل الجيد مع الزوار."
+            con.execute("UPDATE users SET warning_count=COALESCE(warning_count,0)+1, admin_warning=? WHERE id=?", (warning_text, worker_id))
+            con.execute("UPDATE reports SET status='warned', admin_action=?, action_at=? WHERE id=?", (action, now_text, report_id))
+            log_admin_action("تحذير مختص", worker["name"], f"تم إرسال تحذير بسبب البلاغ رقم {report_id}")
+
+        elif action == "hide":
+            con.execute("UPDATE users SET hidden_by_admin=1, accepted_reports=COALESCE(accepted_reports,0)+1 WHERE id=?", (worker_id,))
+            con.execute("UPDATE reports SET status='hidden_profile', admin_action=?, action_at=? WHERE id=?", (action, now_text, report_id))
+            log_admin_action("إخفاء ملف بسبب بلاغ", worker["name"], f"تم إخفاء الملف بسبب البلاغ رقم {report_id}")
+
+        elif action == "tempban7":
+            ban_until = (datetime.datetime.utcnow() + datetime.timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+            con.execute("UPDATE users SET is_blocked=1, hidden_by_admin=1, ban_until=?, accepted_reports=COALESCE(accepted_reports,0)+1, admin_warning=? WHERE id=?", (ban_until, "تم حظر الحساب مؤقتاً لمدة 7 أيام بسبب بلاغ مقبول.", worker_id))
+            con.execute("UPDATE reports SET status='temp_banned_7_days', admin_action=?, action_at=? WHERE id=?", (action, now_text, report_id))
+            log_admin_action("حظر مؤقت 7 أيام", worker["name"], f"حتى {ban_until} بسبب البلاغ رقم {report_id}")
+
+        elif action == "permban":
+            con.execute("UPDATE users SET is_blocked=1, hidden_by_admin=1, ban_until='', accepted_reports=COALESCE(accepted_reports,0)+1, admin_warning=? WHERE id=?", ("تم حظر الحساب نهائياً بسبب مخالفة البلاغات.", worker_id))
+            con.execute("UPDATE reports SET status='permanent_banned', admin_action=?, action_at=? WHERE id=?", (action, now_text, report_id))
+            log_admin_action("حظر نهائي بسبب بلاغ", worker["name"], f"تم الحظر النهائي بسبب البلاغ رقم {report_id}")
+
+        elif action == "reject":
+            con.execute("UPDATE users SET rejected_reports=COALESCE(rejected_reports,0)+1 WHERE id=?", (worker_id,))
+            con.execute("UPDATE reports SET status='rejected', admin_action=?, action_at=? WHERE id=?", (action, now_text, report_id))
+            log_admin_action("رفض بلاغ", worker["name"], f"تم رفض البلاغ رقم {report_id}")
+
+        con.commit()
+
+    return redirect(url_for("admin_reports"))
 
 
 @app.route("/favorites")
@@ -5636,7 +5794,7 @@ def admin_unblock_user(user_id):
     with get_db() as con:
         user = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
         if user:
-            con.execute("UPDATE users SET is_blocked=0 WHERE id=?", (user_id,))
+            con.execute("UPDATE users SET is_blocked=0, ban_until='', admin_warning='' WHERE id=?", (user_id,))
             con.commit()
             log_admin_action("فك حظر", user["name"], f"تم فك حظر المستخدم رقم {user_id}")
     return redirect(url_for("admin_panel"))
@@ -6114,11 +6272,16 @@ def settings():
             <a href="/logout"><button>تسجيل الخروج</button></a>
         """
 
+    warning_html = ""
+    if session.get("role") == "worker" and (user["admin_warning"] if "admin_warning" in user.keys() else ""):
+        warning_html = f'<div class="msg" style="border-color:rgba(245,158,11,.35);background:#fff8e7;color:#7c5200;">⚠️ تنبيه من الإدارة: {user["admin_warning"]}</div>'
+
     return render_template_string(
         STYLE + (settings_corner() if 'user' in session else '') + f"""
         <div class="container narrow-container">
             <h2>الإعدادات</h2>
             <div class="section-subtitle">اختر الصفحة التي تريدها.</div>
+            {warning_html}
 
             <div class="card">
                 {buttons_html}
