@@ -825,6 +825,12 @@ def save_work_video(file_obj):
             public_id=f"{uuid.uuid4().hex}",
             format=ext,
             overwrite=True,
+            eager=[
+                {"quality": "auto", "fetch_format": "mp4"},
+                {"width": 720, "height": 480, "crop": "limit", "quality": "auto", "fetch_format": "mp4"},
+                {"width": 640, "height": 420, "crop": "fill", "start_offset": "auto", "format": "jpg"},
+            ],
+            eager_async=False,
         )
         secure_url = (upload_result.get("secure_url") or "").strip()
         public_id = (upload_result.get("public_id") or "").strip()
@@ -863,26 +869,174 @@ def delete_video_file_if_exists(filename):
             pass
 
 
+
+def work_video_key(video_ref):
+    ref = parse_cloudinary_ref(video_ref)
+    if ref and ref.get("public_id"):
+        return ref["public_id"]
+    return (video_ref or "")[:240]
+
+
+def get_work_video_views(video_ref):
+    key = work_video_key(video_ref)
+    if not key:
+        return 0
+    try:
+        with get_db() as con:
+            row = con.execute("SELECT views FROM work_video_views WHERE video_key=?", (key,)).fetchone()
+            return int((row["views"] if row else 0) or 0)
+    except Exception:
+        return 0
+
+
+def cloudinary_video_thumb_url(video_ref):
+    url = media_url(video_ref)
+    if not url:
+        return ""
+    if "/video/upload/" in url:
+        try:
+            before, after = url.split("/video/upload/", 1)
+            # صورة معاينة من منتصف/أفضل لقطة، خفيفة وسريعة
+            transformed = before + "/video/upload/so_auto,w_720,h_480,c_fill,q_auto,f_jpg/" + after
+            if "." in transformed.rsplit("/", 1)[-1]:
+                transformed = transformed.rsplit(".", 1)[0] + ".jpg"
+            return transformed
+        except Exception:
+            return url
+    return url
+
+
+def render_work_video_tile(vid, idx=0):
+    url = media_url(vid)
+    if not url:
+        return ""
+    thumb = cloudinary_video_thumb_url(vid)
+    views = get_work_video_views(vid)
+    video_param = quote(vid, safe="")
+    return f"""
+    <div class='unified-media-tile video-media-tile' data-video-ref='{video_param}' data-video-url='{url}' onclick="openWorkVideoModal(this)">
+        <img src='{thumb}' alt='video thumbnail' class='unified-media-thumb' onerror="this.style.display='none';this.parentElement.classList.add('no-thumb');">
+        <video class='hidden-video-meta' preload='metadata' muted playsinline>
+            <source src='{url}'>
+        </video>
+        <div class='video-play-circle'>▶</div>
+        <div class='media-kind-badge'>فيديو</div>
+        <div class='video-duration-badge'>--:--</div>
+        <div class='video-views-badge'>👁 {views}</div>
+    </div>
+    """
+
+
 def render_work_videos_grid(videos):
     if not videos:
         return ""
-    blocks = []
-    for vid in videos:
-        url = media_url(vid)
-        if not url:
-            continue
-        blocks.append(f"""
-        <div class='work-video-tile'>
-            <video controls preload='metadata' playsinline>
-                <source src='{url}'>
-                المتصفح لا يدعم عرض الفيديو.
-            </video>
-            <a class='link-btn secondary' href='{url}' target='_blank' rel='noopener'>فتح الفيديو</a>
-        </div>
-        """)
+    blocks = [render_work_video_tile(vid, idx) for idx, vid in enumerate(videos)]
+    blocks = [b for b in blocks if b]
     if not blocks:
         return ""
     return '<div class="work-video-grid">' + "".join(blocks) + '</div>'
+
+
+def render_unified_work_gallery(imgs, videos, worker_id):
+    blocks = []
+    if imgs:
+        gallery_refs = quote("||".join(imgs), safe="")
+        for idx, img in enumerate(imgs):
+            blocks.append(f"""
+            <a class='unified-media-tile image-media-tile' href='{url_for("view_image")}?image={quote(img, safe="")}&images={gallery_refs}&idx={idx}&back=/worker/{worker_id}'>
+                <img src='{media_url(img)}' alt='work' class='unified-media-thumb'>
+                <div class='media-kind-badge'>صورة</div>
+            </a>
+            """)
+    for idx, vid in enumerate(videos or []):
+        tile = render_work_video_tile(vid, idx)
+        if tile:
+            blocks.append(tile)
+    if not blocks:
+        return '<div class="empty-state">لا توجد صور أو فيديوهات حتى الآن</div>'
+    return '<div class="unified-media-grid">' + "".join(blocks) + '</div>' + WORK_VIDEO_MODAL_HTML
+
+
+WORK_VIDEO_MODAL_HTML = """
+<div id="workVideoModal" class="work-video-modal" onclick="closeWorkVideoModal(event)">
+    <div class="work-video-modal-card">
+        <button type="button" class="video-modal-close" onclick="forceCloseWorkVideoModal()">×</button>
+        <video id="workVideoModalPlayer" controls playsinline preload="metadata"></video>
+    </div>
+</div>
+<script>
+function formatVideoDuration(seconds){
+    seconds = Number(seconds || 0);
+    if (!seconds || seconds < 0) return '--:--';
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+}
+function initWorkVideoTiles(){
+    document.querySelectorAll('.unified-media-tile .hidden-video-meta, .work-video-tile .hidden-video-meta').forEach(function(v){
+        if (v.dataset.bound === '1') return;
+        v.dataset.bound = '1';
+        v.addEventListener('loadedmetadata', function(){
+            const tile = v.closest('.unified-media-tile') || v.closest('.work-video-tile');
+            if (!tile) return;
+            const badge = tile.querySelector('.video-duration-badge');
+            if (badge) badge.textContent = formatVideoDuration(v.duration);
+        });
+    });
+}
+function openWorkVideoModal(tile){
+    const url = tile.getAttribute('data-video-url');
+    const ref = tile.getAttribute('data-video-ref') || '';
+    const modal = document.getElementById('workVideoModal');
+    const player = document.getElementById('workVideoModalPlayer');
+    if (!url || !modal || !player) return;
+    player.src = url;
+    modal.classList.add('show');
+    document.body.style.overflow = 'hidden';
+    try { player.play(); } catch(e) {}
+    try {
+        fetch('/api/work-video-view?video=' + ref, {method:'POST', cache:'no-store'}).then(r=>r.json()).then(function(data){
+            if (!data || !data.ok) return;
+            const viewsBadge = tile.querySelector('.video-views-badge');
+            if (viewsBadge) viewsBadge.textContent = '👁 ' + data.views;
+        });
+    } catch(e) {}
+}
+function forceCloseWorkVideoModal(){
+    const modal = document.getElementById('workVideoModal');
+    const player = document.getElementById('workVideoModalPlayer');
+    if (player) { try{player.pause();}catch(e){} player.removeAttribute('src'); player.load(); }
+    if (modal) modal.classList.remove('show');
+    document.body.style.overflow = '';
+}
+function closeWorkVideoModal(event){
+    if (event && event.target && event.target.id === 'workVideoModal') forceCloseWorkVideoModal();
+}
+document.addEventListener('DOMContentLoaded', initWorkVideoTiles);
+</script>
+"""
+
+@app.route("/api/work-video-view", methods=["POST"])
+def api_work_video_view():
+    video_ref = request.args.get("video", "").strip()
+    if not video_ref:
+        return jsonify({"ok": False, "views": 0})
+    key = work_video_key(video_ref)
+    if not key:
+        return jsonify({"ok": False, "views": 0})
+    try:
+        with get_db() as con:
+            row = con.execute("SELECT views FROM work_video_views WHERE video_key=?", (key,)).fetchone()
+            if row:
+                new_views = int(row["views"] or 0) + 1
+                con.execute("UPDATE work_video_views SET views=?, updated_at=CURRENT_TIMESTAMP WHERE video_key=?", (new_views, key))
+            else:
+                new_views = 1
+                con.execute("INSERT INTO work_video_views (video_key, views) VALUES (?, ?)", (key, new_views))
+            con.commit()
+        return jsonify({"ok": True, "views": new_views})
+    except Exception:
+        return jsonify({"ok": False, "views": get_work_video_views(video_ref)})
 
 def support_media_kind(filename="", mimetype=""):
     name = (filename or "").lower()
@@ -1405,6 +1559,15 @@ def init_db_sqlite(cur):
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS work_video_views(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        video_key TEXT UNIQUE,
+        views INTEGER DEFAULT 0,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS support_messages(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
@@ -1575,6 +1738,15 @@ def init_db_postgres(cur):
         worker_id BIGINT NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(visitor_id, worker_id)
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS work_video_views(
+        id BIGSERIAL PRIMARY KEY,
+        video_key TEXT UNIQUE,
+        views INTEGER DEFAULT 0,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
 
@@ -2582,6 +2754,25 @@ a{
 .work-video-tile{background:#f8fbff;border:1px solid rgba(37,99,235,.16);border-radius:18px;padding:10px;box-shadow:0 8px 18px rgba(37,99,235,.06)}
 .work-video-tile video{width:100%;height:180px;object-fit:cover;border-radius:14px;background:#000;display:block}
 @media(max-width:520px){.work-video-grid{grid-template-columns:1fr}.work-video-tile video{height:210px}}
+
+/* Advanced unified work gallery + video modal */
+.unified-media-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:12px}
+.unified-media-tile{position:relative;display:block;min-height:145px;border-radius:18px;overflow:hidden;background:linear-gradient(180deg,#eef6ff,#ffffff);border:1px solid rgba(37,99,235,.18);box-shadow:0 10px 24px rgba(37,99,235,.08);cursor:pointer}
+.unified-media-thumb{width:100%;height:170px;object-fit:cover;display:block;background:#f8fbff}
+.video-media-tile.no-thumb{background:linear-gradient(135deg,#12325f,#2563eb)}
+.video-play-circle{position:absolute;inset:0;margin:auto;width:58px;height:58px;border-radius:50%;background:rgba(15,23,42,.72);color:#fff;display:flex;align-items:center;justify-content:center;font-size:26px;padding-right:3px;box-shadow:0 10px 28px rgba(0,0,0,.24)}
+.media-kind-badge,.video-duration-badge,.video-views-badge{position:absolute;border-radius:999px;padding:5px 9px;font-size:12px;font-weight:800;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.media-kind-badge{top:8px;right:8px;background:rgba(250,204,21,.92);color:#12325f}
+.video-duration-badge{bottom:8px;left:8px;background:rgba(15,23,42,.78);color:#fff}
+.video-views-badge{bottom:8px;right:8px;background:rgba(255,255,255,.88);color:#12325f;border:1px solid rgba(37,99,235,.15)}
+.hidden-video-meta{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.work-video-modal{position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:20000;display:none;align-items:center;justify-content:center;padding:14px}
+.work-video-modal.show{display:flex}
+.work-video-modal-card{position:relative;width:min(96vw,900px);background:#000;border-radius:22px;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.16)}
+.work-video-modal-card video{width:100%;max-height:86vh;background:#000;display:block}
+.video-modal-close{position:absolute;top:10px;left:10px;z-index:2;width:44px!important;height:44px!important;border-radius:999px!important;padding:0!important;background:rgba(255,255,255,.92)!important;color:#111!important;font-size:30px!important;line-height:1!important}
+@media(max-width:520px){.unified-media-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.unified-media-thumb{height:128px}.unified-media-tile{min-height:128px}.video-play-circle{width:48px;height:48px;font-size:22px}.media-kind-badge,.video-duration-badge,.video-views-badge{font-size:10px;padding:4px 7px}}
+
 </style>
 
 <script>
@@ -3276,10 +3467,10 @@ def manage_work_videos(user_id):
         return render_template_string(STYLE + '<div class="container"><div class="msg">تم تحديث الفيديوهات بنجاح</div><a href="/edit-profile"><button>رجوع</button></a></div></body></html>')
 
     if existing_videos:
-        previews = "<div class='work-video-grid'>" + "".join(
-            f"""<label style='display:block;text-align:center;'><div class='work-video-tile'><video controls preload='metadata' playsinline><source src='{media_url(vid)}'>المتصفح لا يدعم عرض الفيديو.</video><div class='small'><input type='checkbox' name='remove_videos' value='{vid}'> حذف هذا الفيديو</div></div></label>"""
+        previews = "<div class='unified-media-grid'>" + "".join(
+            f"""<label style='display:block;text-align:center;'><div class='unified-media-tile video-media-tile'><img src='{cloudinary_video_thumb_url(vid)}' class='unified-media-thumb' onerror="this.style.display='none';this.parentElement.classList.add('no-thumb');"><video class='hidden-video-meta' preload='metadata' muted playsinline><source src='{media_url(vid)}'></video><div class='video-play-circle'>▶</div><div class='media-kind-badge'>فيديو</div><div class='video-duration-badge'>--:--</div><div class='small' style='position:absolute;top:8px;left:8px;background:rgba(255,255,255,.92);border-radius:999px;padding:4px 8px;'><input type='checkbox' name='remove_videos' value='{vid}'> حذف</div></div></label>"""
             for vid in existing_videos
-        ) + "</div>"
+        ) + "</div>" + WORK_VIDEO_MODAL_HTML
     else:
         previews = '<div class="empty-state">لا توجد فيديوهات مرفوعة حالياً</div>'
     return render_template_string(
@@ -3292,7 +3483,7 @@ def manage_work_videos(user_id):
                 {previews}
                 <label>إضافة فيديوهات جديدة</label>
                 <input type="file" name="work_videos" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,.m4v" multiple>
-                <div class="notice">مسموح 10 فيديوهات فقط لكل مختص. إذا كان الفيديو أكثر من 50 ثانية سيتم رفضه.</div>
+                <div class="notice">مسموح 10 فيديوهات فقط لكل مختص. سيتم فحص المدة قبل الرفع، وCloudinary يولّد نسخة محسّنة وصورة معاينة تلقائياً.</div>
                 <button>حفظ الفيديوهات</button>
             </form>
         </div>
@@ -3999,6 +4190,7 @@ def worker_profile(user_id):
             work_images_html = '<div class="work-grid">' + "".join(
                 f'<a class="work-tile" href="{url_for("view_image")}?image={quote(img, safe="")}&images={gallery_refs}&idx={idx}&back=/worker/{worker["id"]}"><img src="{media_url(img)}" alt="work" class="work-thumb"></a>' for idx, img in enumerate(imgs)
             ) + '</div>'
+        unified_gallery_html = render_unified_work_gallery(imgs, videos, worker["id"])
 
         phone_html = f'<div class="detail-box"><strong>الهاتف</strong>{worker["phone"]}</div>' if int((worker["show_phone"] if worker["show_phone"] is not None else 0) or 0) and worker["phone"] else ""
         wa_html = ""
@@ -4126,19 +4318,10 @@ def worker_profile(user_id):
                 <div class="card">
                     <div class="gallery-head">
                         <h3>معرض الأعمال</h3>
-                        <span class="badge">{works_count} صورة</span>
+                        <span class="badge">{works_count} صورة • {videos_count} فيديو</span>
                     </div>
-                    <div class="section-subtitle">صور الأعمال المعروضة داخل الملف الشخصي.</div>
-                    {work_images_html if work_images_html else '<div class="empty-state">لا توجد صور أعمال حتى الآن</div>'}
-                </div>
-
-                <div class="card">
-                    <div class="gallery-head">
-                        <h3>فيديوهات الأعمال</h3>
-                        <span class="badge">{videos_count} فيديو</span>
-                    </div>
-                    <div class="section-subtitle">فيديوهات قصيرة لأعمال المختص، مدة كل فيديو لا تتجاوز 50 ثانية.</div>
-                    {work_videos_html if work_videos_html else '<div class="empty-state">لا توجد فيديوهات حتى الآن</div>'}
+                    <div class="section-subtitle">الصور والفيديوهات مرتبة في معرض واحد. اضغط على الفيديو لفتحه بحجم كبير مع عداد المشاهدات والمدة.</div>
+                    {unified_gallery_html}
                 </div>
 
                 <div class="card">
