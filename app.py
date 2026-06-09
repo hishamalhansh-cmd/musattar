@@ -2919,38 +2919,6 @@ a{
 .reorder-list{display:grid;gap:10px}.reorder-item{display:flex;gap:10px;align-items:center;justify-content:space-between;background:#f8fbff;border:1px solid rgba(37,99,235,.14);border-radius:16px;padding:10px}.reorder-item img,.reorder-item video{width:72px;height:54px;object-fit:cover;border-radius:10px;background:#000}
 @media(max-width:720px){.compact-search-card{padding:9px 10px!important}.compact-search-title{font-size:14px!important;margin-bottom:7px!important}.quick-search-box{grid-template-columns:1fr 72px;gap:6px}.quick-search-box input,.quick-search-box button{height:38px!important;font-size:12px!important}.search-filter-grid{grid-template-columns:1fr}.worker-tools-row{display:grid;grid-template-columns:1fr 1fr;gap:6px}.worker-tools-row .link-btn{font-size:11px!important;padding:7px 8px!important}}
 
-
-
-/* === MODERN HOME LAYOUT - SAME COLORS === */
-.modern-home-shell{padding-bottom:78px!important;max-width:1080px!important}
-.modern-location-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
-.modern-location-pill{display:inline-flex;align-items:center;gap:8px;background:#ffffff;border:1px solid rgba(37,99,235,.16);border-radius:999px;padding:9px 13px;color:#12325f;font-weight:800;box-shadow:0 8px 18px rgba(37,99,235,.06)}
-.modern-hero-card{position:relative;overflow:hidden;border-radius:26px;padding:18px!important;background:linear-gradient(135deg,rgba(96,165,250,.16),rgba(250,204,21,.18),#ffffff)!important;border:1px solid rgba(37,99,235,.16)!important;margin-bottom:14px!important}
-.modern-hero-card:after{content:"";position:absolute;left:-40px;bottom:-50px;width:160px;height:160px;border-radius:50%;background:rgba(96,165,250,.20);pointer-events:none}
-.modern-hero-title{font-size:24px!important;margin:0 0 6px!important;color:#12325f!important;font-weight:900!important;line-height:1.45!important}
-.modern-hero-sub{font-size:13px;color:#5f78a0;margin-bottom:12px;line-height:1.8}
-.modern-hero-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;position:relative;z-index:1}
-.modern-hero-actions .link-btn{margin:0!important;border-radius:16px!important;padding:10px!important}
-.modern-search-card{padding:11px!important;border-radius:22px!important;margin:10px 0 14px!important;background:#ffffff!important;border:1px solid rgba(37,99,235,.16)!important;box-shadow:0 10px 24px rgba(37,99,235,.08)!important}
-.modern-search-main{display:grid;grid-template-columns:1fr 74px;gap:8px;align-items:center}
-.modern-search-main input{height:44px!important;margin:0!important;border-radius:999px!important;background:#f8fbff!important;font-size:14px!important;padding:9px 15px!important}
-.modern-search-main button{height:44px!important;margin:0!important;border-radius:999px!important;font-size:13px!important;padding:0 12px!important}
-.modern-filter-chips{display:flex;gap:8px;overflow-x:auto;padding:8px 2px 2px;scrollbar-width:none}
-.modern-filter-chips::-webkit-scrollbar{display:none}
-.modern-filter-chips select{min-width:138px;height:38px!important;margin:0!important;border-radius:999px!important;background:#ffffff!important;font-size:12px!important;padding:7px 10px!important;flex:0 0 auto}
-.modern-shortcuts{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0 14px}
-.modern-shortcut{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:78px;border-radius:20px;background:#ffffff;border:1px solid rgba(37,99,235,.14);box-shadow:0 8px 18px rgba(37,99,235,.06);font-weight:900;color:#12325f!important;text-align:center;font-size:12px;padding:8px}
-.modern-shortcut-icon{width:38px;height:38px;border-radius:15px;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#fde68a 0%,#facc15 100%);font-size:21px;color:#12325f}
-.modern-section-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px 0 8px}
-.modern-section-head h2,.modern-section-head h3{margin:0!important;font-size:19px!important;font-weight:900!important;color:#12325f!important}
-.modern-section-head .small{font-size:12px!important}
-.modern-bottom-nav{position:fixed;left:50%;bottom:10px;transform:translateX(-50%);z-index:9998;width:min(94%,520px);height:58px;background:rgba(255,255,255,.94);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(37,99,235,.16);border-radius:24px;box-shadow:0 12px 32px rgba(37,99,235,.16);display:grid;grid-template-columns:repeat(4,1fr);overflow:hidden}
-.modern-bottom-nav a{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:11px;font-weight:800;color:#2563eb!important;text-align:center}
-.modern-bottom-nav span{font-size:20px;line-height:1}
-.card .worker-card{align-items:center}.card .worker-card h3{font-size:18px!important;margin-bottom:4px!important}
-@media(max-width:720px){.modern-home-shell{width:min(94%,1000px)!important;margin:12px auto!important;padding:12px!important}.modern-hero-title{font-size:21px!important}.modern-shortcuts{grid-template-columns:repeat(4,1fr);gap:7px}.modern-shortcut{min-height:72px;font-size:11px;border-radius:17px}.modern-shortcut-icon{width:34px;height:34px;font-size:19px}.modern-search-main{grid-template-columns:1fr 68px}.modern-filter-chips select{min-width:128px}.modern-hero-actions{grid-template-columns:1fr 1fr}.specialties-grid{gap:9px!important}.specialty-group-card{border-radius:20px!important}}
-@media(max-width:420px){.modern-shortcuts{grid-template-columns:repeat(4,1fr)}.modern-shortcut{font-size:10px;padding:6px 3px}.modern-bottom-nav{height:56px;border-radius:22px}.modern-bottom-nav a{font-size:10px}}
-
 </style>
 
 <script>
@@ -3139,17 +3107,6 @@ def settings_corner():
         </div>
         ''' + message_notifier_html()
     return ""
-
-
-def modern_bottom_nav():
-    return """
-    <div class="modern-bottom-nav">
-        <a href="/workers"><span>🏠</span>الرئيسية</a>
-        <a href="/top-workers"><span>⭐</span>الأفضل</a>
-        <a href="/support"><span>🛟</span>الدعم</a>
-        <a href="/settings"><span>⚙️</span>الإعدادات</a>
-    </div>
-    """
 
 
 HOME_HTML = STYLE + """
@@ -4125,19 +4082,25 @@ def worker_total_video_views(worker):
 
 
 def build_search_panel(q='', governorate='', specialty=''):
-    return f"""
-    <div class="card modern-search-card">
+    filters_open = ' open' if governorate or specialty else ''
+    return f'''
+    <div class="card compact-search-card">
+        <div class="compact-search-title"><span>🔎 بحث سريع</span><span class="small">ناعم ومختصر</span></div>
         <form method="get" action="/search">
-            <div class="modern-search-main">
-                <input name="q" value="{q}" placeholder="ابحث عن مختص، مدينة، خدمة...">
+            <div class="quick-search-box">
+                <input name="q" value="{q}" placeholder="اسم المختص أو المدينة">
                 <button>بحث</button>
             </div>
-            <div class="modern-filter-chips">
-                <select name="governorate"><option value="">كل المحافظات</option>{build_governorates_options(governorate)}</select>
-                <select name="specialty"><option value="">كل الاختصاصات</option>{build_specialties_options(specialty, '')}</select>
-            </div>
+            <details class="search-filter-details"{filters_open}>
+                <summary>فلترة حسب المحافظة والاختصاص</summary>
+                <div class="search-filter-grid">
+                    <select name="governorate"><option value="">كل المحافظات</option>{build_governorates_options(governorate)}</select>
+                    <select name="specialty"><option value="">كل الاختصاصات</option>{build_specialties_options(specialty, '')}</select>
+                </div>
+            </details>
         </form>
-    </div>"""
+        <div class="worker-tools-row"><a class="link-btn secondary" href="/top-workers">⭐ أفضل المختصين</a><a class="link-btn secondary" href="/workers">📂 الأقسام</a></div>
+    </div>'''
 
 
 def worker_card(worker):
@@ -4206,46 +4169,32 @@ def worker_card(worker):
 def workers():
     auto_login_from_cookie()
 
+    user_buttons = ""
+
     groups_cards = build_main_groups_cards()
 
     return render_template_string(
         STYLE + (settings_corner() if 'user' in session else '') + f'''
-        <div class="container modern-home-shell">
-            <div class="modern-location-row">
-                <a href="/"><button class="light-btn" style="width:auto;margin:0;border-radius:999px;padding:9px 14px;">الرئيسية</button></a>
-                <div class="modern-location-pill">📍 العراق</div>
+        <div class="container">
+            <div class="topbar">
+                <div><a href="/"><button class="light-btn">الرئيسية</button></a></div>
+                <div class="inline"><span class="badge">اختَر القسم الرئيسي</span></div>
             </div>
 
-            <div class="modern-hero-card">
-                <div class="inline" style="margin-bottom:8px;position:relative;z-index:1;">
-                    <span class="hero-badge">المسطر</span>
-                    <span class="hero-badge">مختصين حسب الأقسام</span>
+            <div class="hero-panel" style="margin-bottom:16px;">
+                <div class="inline" style="margin-bottom:10px;">
+                    <span class="hero-badge">تصفح منظم</span>
+                    <span class="hero-badge">قسم ← اختصاص ← مستخدمون</span>
                 </div>
-                <h2 class="modern-hero-title">اختَر الخدمة ووصل للمختص بسرعة</h2>
-                <div class="modern-hero-sub">بحث سريع، أقسام مرتبة، ملفات مختصين، صور وفيديوهات أعمال، وتواصل واتساب مباشر.</div>
-                <div class="modern-hero-actions">
-                    <a class="link-btn" href="/top-workers">⭐ أفضل المختصين</a>
-                    <a class="link-btn secondary" href="/support">🛟 الدعم الفني</a>
-                </div>
+                <h2>الأقسام الرئيسية</h2>
+                
             </div>
 
             {build_search_panel()}
-
-            <div class="modern-shortcuts">
-                <a class="modern-shortcut" href="/workers-group/مهندسون"><div class="modern-shortcut-icon">🏗️</div><div>مهندسون</div></a>
-                <a class="modern-shortcut" href="/workers-group/خلفه بناء"><div class="modern-shortcut-icon">🧱</div><div>خلفه</div></a>
-                <a class="modern-shortcut" href="/workers-group/فنيين"><div class="modern-shortcut-icon">💡</div><div>فنيين</div></a>
-                <a class="modern-shortcut" href="/workers-group/مواد بناء"><div class="modern-shortcut-icon">🏬</div><div>مواد</div></a>
-            </div>
-
-            <div class="modern-section-head">
-                <h2>الأقسام الرئيسية</h2>
-                <span class="small">قسم ← اختصاص ← مختص</span>
-            </div>
+            {user_buttons}
 
             {groups_cards}
         </div>
-        {modern_bottom_nav()}
         </body></html>
         '''
     )
