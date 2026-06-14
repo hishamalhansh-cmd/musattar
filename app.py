@@ -4001,7 +4001,6 @@ def workers():
     has_search = bool(q or governorate or specialty)
 
     fast_cards = build_video_fast_categories()
-    main_cards = build_video_main_categories()
     bottom_nav = build_video_bottom_nav("home")
     gov_options = build_governorates_options(governorate)
     specialty_options = build_specialties_options(specialty, "")
@@ -4052,15 +4051,9 @@ def workers():
 
             <div class="ms-section-head">
                 <h2>الأقسام السريعة</h2>
-                <a href="#main-sections">عرض الكل</a>
-            </div>
-            {fast_cards}
-
-            <div class="ms-section-head" id="main-sections">
-                <h2>الأقسام الرئيسية</h2>
                 <span></span>
             </div>
-            {main_cards}
+            {fast_cards}
 
             {bottom_nav}
         </div>
