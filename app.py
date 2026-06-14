@@ -143,7 +143,7 @@ USING_POSTGRES = bool(DATABASE_URL and PSYCOPG2_AVAILABLE)
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = APP_ENV == "production"
-app.config["MAX_CONTENT_LENGTH"] = 60 * 1024 * 1024  # 60MB request cap for short work videos
+app.config["MAX_CONTENT_LENGTH"] = 30 * 1024 * 1024  # 30MB request cap
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=180)
 
 DEFAULT_SECRET_KEY = "adam_secret_key_2026"
@@ -175,10 +175,6 @@ ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
 MAX_SINGLE_FILE_SIZE = 5 * 1024 * 1024
 MAX_SUPPORT_MEDIA_SIZE = 20 * 1024 * 1024
 MAX_WORK_IMAGES = 10
-MAX_WORK_VIDEOS = 10
-MAX_WORK_VIDEO_SECONDS = 50
-MAX_WORK_VIDEO_SIZE = 50 * 1024 * 1024
-ALLOWED_WORK_VIDEO_EXTENSIONS = {"mp4", "mov", "webm", "m4v"}
 ALLOWED_SUPPORT_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
 ALLOWED_SUPPORT_VIDEO_EXTENSIONS = {"mp4", "mov", "webm", "m4v", "avi"}
 
@@ -301,7 +297,6 @@ def clear_remember_token(user_id):
 
 @app.before_request
 def keep_user_logged_in():
-    cleanup_expired_temp_bans()
     auto_login_from_cookie()
 
 
@@ -326,50 +321,6 @@ def get_current_session_user():
                 session["last_email"] = user["email"] or session.get("last_email", "")
                 return user
     return None
-
-
-
-def parse_app_datetime(value):
-    value = (value or "").strip()
-    if not value:
-        return None
-    try:
-        return datetime.datetime.fromisoformat(value)
-    except Exception:
-        try:
-            return datetime.datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
-        except Exception:
-            return None
-
-
-def cleanup_expired_temp_bans():
-    try:
-        now = datetime.datetime.utcnow()
-        with get_db() as con:
-            rows = con.execute("SELECT id, ban_until FROM users WHERE COALESCE(ban_until,'') != ''").fetchall()
-            changed = False
-            for row in rows:
-                dt = parse_app_datetime(row.get("ban_until") if isinstance(row, dict) else row["ban_until"])
-                if dt and dt <= now:
-                    con.execute("UPDATE users SET is_blocked=0, hidden_by_admin=0, ban_until='', admin_warning='' WHERE id=?", (row["id"],))
-                    changed = True
-            if changed:
-                con.commit()
-    except Exception:
-        pass
-
-
-def active_temp_ban_text(user):
-    if not user:
-        return ""
-    try:
-        value = user["ban_until"] or ""
-    except Exception:
-        return ""
-    dt = parse_app_datetime(value)
-    if dt and dt > datetime.datetime.utcnow():
-        return dt.strftime("%Y-%m-%d %H:%M")
-    return ""
 
 def get_client_ip():
     forwarded = request.headers.get("X-Forwarded-For", "").strip()
@@ -815,274 +766,6 @@ def delete_file_if_exists(filename):
             pass
 
 
-
-def video_file_size_ok(file_obj):
-    try:
-        current_pos = file_obj.stream.tell()
-        file_obj.stream.seek(0, os.SEEK_END)
-        size = file_obj.stream.tell()
-        file_obj.stream.seek(current_pos)
-        return size <= MAX_WORK_VIDEO_SIZE
-    except Exception:
-        return True
-
-
-def work_video_kind(filename="", mimetype=""):
-    name = (filename or "").lower()
-    mime = (mimetype or "").lower()
-    ext = name.rsplit(".", 1)[1] if "." in name else ""
-    if ext in ALLOWED_WORK_VIDEO_EXTENSIONS or mime.startswith("video/"):
-        return "video"
-    return ""
-
-
-def validate_work_video(file_obj):
-    if not file_obj or not file_obj.filename:
-        return False, "لا يوجد فيديو مرفوع"
-    if work_video_kind(file_obj.filename, getattr(file_obj, "mimetype", "")) != "video":
-        return False, "صيغة الفيديو غير مدعومة. استخدم MP4 أو MOV أو WEBM"
-    if not video_file_size_ok(file_obj):
-        return False, "حجم الفيديو أكبر من المسموح"
-    try:
-        file_obj.stream.seek(0)
-    except Exception:
-        pass
-    return True, ""
-
-
-def save_work_video(file_obj):
-    if not CLOUDINARY_ENABLED:
-        raise RuntimeError("Cloudinary غير مفعل في إعدادات البيئة")
-    ok, msg = validate_work_video(file_obj)
-    if not ok:
-        raise RuntimeError(msg)
-    original = secure_filename(file_obj.filename)
-    ext = original.rsplit(".", 1)[1].lower() if "." in original else "mp4"
-    try:
-        try:
-            file_obj.stream.seek(0)
-        except Exception:
-            pass
-        upload_result = cloudinary.uploader.upload(
-            file_obj.stream,
-            resource_type="video",
-            folder=f"{CLOUDINARY_UPLOAD_FOLDER}/work_videos",
-            public_id=f"{uuid.uuid4().hex}",
-            format=ext,
-            overwrite=True,
-            eager=[
-                {"quality": "auto", "fetch_format": "mp4"},
-                {"width": 720, "height": 480, "crop": "limit", "quality": "auto", "fetch_format": "mp4"},
-                {"width": 640, "height": 420, "crop": "fill", "start_offset": "auto", "format": "jpg"},
-            ],
-            eager_async=False,
-        )
-        secure_url = (upload_result.get("secure_url") or "").strip()
-        public_id = (upload_result.get("public_id") or "").strip()
-        duration = float(upload_result.get("duration") or 0)
-        if not secure_url or not public_id:
-            raise RuntimeError("فشل Cloudinary بإرجاع رابط الفيديو")
-        if duration and duration > MAX_WORK_VIDEO_SECONDS:
-            try:
-                cloudinary.uploader.destroy(public_id, resource_type="video", invalidate=True)
-            except Exception:
-                pass
-            raise RuntimeError(f"مدة الفيديو يجب أن لا تتجاوز {MAX_WORK_VIDEO_SECONDS} ثانية")
-        return make_cloudinary_ref(public_id, secure_url)
-    except RuntimeError:
-        raise
-    except Exception as e:
-        print("WORK VIDEO CLOUDINARY ERROR:", repr(e))
-        raise RuntimeError("فشل رفع الفيديو إلى Cloudinary")
-
-
-def delete_video_file_if_exists(filename):
-    if not filename:
-        return
-    cloud_ref = parse_cloudinary_ref(filename)
-    if cloud_ref and CLOUDINARY_ENABLED:
-        try:
-            cloudinary.uploader.destroy(cloud_ref["public_id"], resource_type="video", invalidate=True)
-        except Exception:
-            pass
-        return
-    path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-    if os.path.exists(path):
-        try:
-            os.remove(path)
-        except Exception:
-            pass
-
-
-
-def work_video_key(video_ref):
-    ref = parse_cloudinary_ref(video_ref)
-    if ref and ref.get("public_id"):
-        return ref["public_id"]
-    return (video_ref or "")[:240]
-
-
-def get_work_video_views(video_ref):
-    key = work_video_key(video_ref)
-    if not key:
-        return 0
-    try:
-        with get_db() as con:
-            row = con.execute("SELECT views FROM work_video_views WHERE video_key=?", (key,)).fetchone()
-            return int((row["views"] if row else 0) or 0)
-    except Exception:
-        return 0
-
-
-def cloudinary_video_thumb_url(video_ref):
-    url = media_url(video_ref)
-    if not url:
-        return ""
-    if "/video/upload/" in url:
-        try:
-            before, after = url.split("/video/upload/", 1)
-            # صورة معاينة من منتصف/أفضل لقطة، خفيفة وسريعة
-            transformed = before + "/video/upload/so_auto,w_720,h_480,c_fill,q_auto,f_jpg/" + after
-            if "." in transformed.rsplit("/", 1)[-1]:
-                transformed = transformed.rsplit(".", 1)[0] + ".jpg"
-            return transformed
-        except Exception:
-            return url
-    return url
-
-
-def render_work_video_tile(vid, idx=0):
-    url = media_url(vid)
-    if not url:
-        return ""
-    thumb = cloudinary_video_thumb_url(vid)
-    views = get_work_video_views(vid)
-    video_param = quote(vid, safe="")
-    return f"""
-    <div class='unified-media-tile video-media-tile' data-video-ref='{video_param}' data-video-url='{url}' onclick="openWorkVideoModal(this)">
-        <img src='{thumb}' alt='video thumbnail' class='unified-media-thumb' onerror="this.style.display='none';this.parentElement.classList.add('no-thumb');">
-        <video class='hidden-video-meta' preload='metadata' muted playsinline>
-            <source src='{url}'>
-        </video>
-        <div class='video-play-circle'>▶</div>
-        <div class='media-kind-badge'>فيديو</div>
-        <div class='video-duration-badge'>--:--</div>
-        <div class='video-views-badge'>👁 {views}</div>
-    </div>
-    """
-
-
-def render_work_videos_grid(videos):
-    if not videos:
-        return ""
-    blocks = [render_work_video_tile(vid, idx) for idx, vid in enumerate(videos)]
-    blocks = [b for b in blocks if b]
-    if not blocks:
-        return ""
-    return '<div class="work-video-grid">' + "".join(blocks) + '</div>'
-
-
-def render_unified_work_gallery(imgs, videos, worker_id):
-    blocks = []
-    if imgs:
-        gallery_refs = quote("||".join(imgs), safe="")
-        for idx, img in enumerate(imgs):
-            blocks.append(f"""
-            <a class='unified-media-tile image-media-tile' href='{url_for("view_image")}?image={quote(img, safe="")}&images={gallery_refs}&idx={idx}&back=/worker/{worker_id}'>
-                <img src='{media_url(img)}' alt='work' class='unified-media-thumb'>
-                <div class='media-kind-badge'>صورة</div>
-            </a>
-            """)
-    for idx, vid in enumerate(videos or []):
-        tile = render_work_video_tile(vid, idx)
-        if tile:
-            blocks.append(tile)
-    if not blocks:
-        return '<div class="empty-state">لا توجد صور أو فيديوهات حتى الآن</div>'
-    return '<div class="unified-media-grid">' + "".join(blocks) + '</div>' + WORK_VIDEO_MODAL_HTML
-
-
-WORK_VIDEO_MODAL_HTML = """
-<div id="workVideoModal" class="work-video-modal" onclick="closeWorkVideoModal(event)">
-    <div class="work-video-modal-card">
-        <button type="button" class="video-modal-close" onclick="forceCloseWorkVideoModal()">×</button>
-        <video id="workVideoModalPlayer" controls playsinline preload="metadata"></video>
-    </div>
-</div>
-<script>
-function formatVideoDuration(seconds){
-    seconds = Number(seconds || 0);
-    if (!seconds || seconds < 0) return '--:--';
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
-}
-function initWorkVideoTiles(){
-    document.querySelectorAll('.unified-media-tile .hidden-video-meta, .work-video-tile .hidden-video-meta').forEach(function(v){
-        if (v.dataset.bound === '1') return;
-        v.dataset.bound = '1';
-        v.addEventListener('loadedmetadata', function(){
-            const tile = v.closest('.unified-media-tile') || v.closest('.work-video-tile');
-            if (!tile) return;
-            const badge = tile.querySelector('.video-duration-badge');
-            if (badge) badge.textContent = formatVideoDuration(v.duration);
-        });
-    });
-}
-function openWorkVideoModal(tile){
-    const url = tile.getAttribute('data-video-url');
-    const ref = tile.getAttribute('data-video-ref') || '';
-    const modal = document.getElementById('workVideoModal');
-    const player = document.getElementById('workVideoModalPlayer');
-    if (!url || !modal || !player) return;
-    player.src = url;
-    modal.classList.add('show');
-    document.body.style.overflow = 'hidden';
-    try { player.play(); } catch(e) {}
-    try {
-        fetch('/api/work-video-view?video=' + ref, {method:'POST', cache:'no-store'}).then(r=>r.json()).then(function(data){
-            if (!data || !data.ok) return;
-            const viewsBadge = tile.querySelector('.video-views-badge');
-            if (viewsBadge) viewsBadge.textContent = '👁 ' + data.views;
-        });
-    } catch(e) {}
-}
-function forceCloseWorkVideoModal(){
-    const modal = document.getElementById('workVideoModal');
-    const player = document.getElementById('workVideoModalPlayer');
-    if (player) { try{player.pause();}catch(e){} player.removeAttribute('src'); player.load(); }
-    if (modal) modal.classList.remove('show');
-    document.body.style.overflow = '';
-}
-function closeWorkVideoModal(event){
-    if (event && event.target && event.target.id === 'workVideoModal') forceCloseWorkVideoModal();
-}
-document.addEventListener('DOMContentLoaded', initWorkVideoTiles);
-</script>
-"""
-
-@app.route("/api/work-video-view", methods=["POST"])
-def api_work_video_view():
-    video_ref = request.args.get("video", "").strip()
-    if not video_ref:
-        return jsonify({"ok": False, "views": 0})
-    key = work_video_key(video_ref)
-    if not key:
-        return jsonify({"ok": False, "views": 0})
-    try:
-        with get_db() as con:
-            row = con.execute("SELECT views FROM work_video_views WHERE video_key=?", (key,)).fetchone()
-            if row:
-                new_views = int(row["views"] or 0) + 1
-                con.execute("UPDATE work_video_views SET views=?, updated_at=CURRENT_TIMESTAMP WHERE video_key=?", (new_views, key))
-            else:
-                new_views = 1
-                con.execute("INSERT INTO work_video_views (video_key, views) VALUES (?, ?)", (key, new_views))
-            con.commit()
-        return jsonify({"ok": True, "views": new_views})
-    except Exception:
-        return jsonify({"ok": False, "views": get_work_video_views(video_ref)})
-
 def support_media_kind(filename="", mimetype=""):
     name = (filename or "").lower()
     mime = (mimetype or "").lower()
@@ -1209,26 +892,25 @@ def insert_user_record(con, values_dict):
         "bio": values_dict.get("bio", ""),
         "profile_pic": values_dict.get("profile_pic", ""),
         "work_images": values_dict.get("work_images", ""),
-        "work_videos": values_dict.get("work_videos", ""),
     }
 
     try:
         con.execute("""
         INSERT INTO users
-        (name, phone, email, password, role, birthdate, section, governorate, city, exp, bio, profile_pic, work_images, work_videos, is_verified)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
+        (name, phone, email, password, role, birthdate, section, governorate, city, exp, bio, profile_pic, work_images, is_verified)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)
         """, (
             payload["name"], payload["phone"], payload["email"], payload["password"], payload["role"], payload["birthdate"],
-            payload["section"], payload["governorate"], payload["city"], payload["exp"], payload["bio"], payload["profile_pic"], payload["work_images"], payload["work_videos"]
+            payload["section"], payload["governorate"], payload["city"], payload["exp"], payload["bio"], payload["profile_pic"], payload["work_images"]
         ))
     except DB_OPERATIONAL_ERRORS:
         con.execute("""
         INSERT INTO users
-        (name, phone, email, password, role, birthdate, section, governorate, city, exp, bio, profile_pic, work_images, work_videos)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        (name, phone, email, password, role, birthdate, section, governorate, city, exp, bio, profile_pic, work_images)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             payload["name"], payload["phone"], payload["email"], payload["password"], payload["role"], payload["birthdate"],
-            payload["section"], payload["governorate"], payload["city"], payload["exp"], payload["bio"], payload["profile_pic"], payload["work_images"], payload["work_videos"]
+            payload["section"], payload["governorate"], payload["city"], payload["exp"], payload["bio"], payload["profile_pic"], payload["work_images"]
         ))
 
 
@@ -1475,9 +1157,6 @@ def init_db_sqlite(cur):
     if not column_exists(cur, "users", "work_images"):
         cur.execute("ALTER TABLE users ADD COLUMN work_images TEXT DEFAULT ''")
 
-    if not column_exists(cur, "users", "work_videos"):
-        cur.execute("ALTER TABLE users ADD COLUMN work_videos TEXT DEFAULT ''")
-
     if not column_exists(cur, "users", "governorate"):
         cur.execute("ALTER TABLE users ADD COLUMN governorate TEXT DEFAULT ''")
 
@@ -1507,20 +1186,6 @@ def init_db_sqlite(cur):
 
     if not column_exists(cur, "users", "remember_token"):
         cur.execute("ALTER TABLE users ADD COLUMN remember_token TEXT DEFAULT ''")
-
-    if not column_exists(cur, "users", "availability_status"):
-        cur.execute("ALTER TABLE users ADD COLUMN availability_status TEXT DEFAULT 'متاح'")
-
-    if not column_exists(cur, "users", "warning_count"):
-        cur.execute("ALTER TABLE users ADD COLUMN warning_count INTEGER DEFAULT 0")
-    if not column_exists(cur, "users", "accepted_reports"):
-        cur.execute("ALTER TABLE users ADD COLUMN accepted_reports INTEGER DEFAULT 0")
-    if not column_exists(cur, "users", "rejected_reports"):
-        cur.execute("ALTER TABLE users ADD COLUMN rejected_reports INTEGER DEFAULT 0")
-    if not column_exists(cur, "users", "ban_until"):
-        cur.execute("ALTER TABLE users ADD COLUMN ban_until TEXT DEFAULT ''")
-    if not column_exists(cur, "users", "admin_warning"):
-        cur.execute("ALTER TABLE users ADD COLUMN admin_warning TEXT DEFAULT ''")
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS user_passkeys(
@@ -1618,47 +1283,6 @@ def init_db_sqlite(cur):
     """)
 
     cur.execute("""
-    CREATE TABLE IF NOT EXISTS work_video_views(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        video_key TEXT UNIQUE,
-        views INTEGER DEFAULT 0,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS reports(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        worker_id INTEGER,
-        reporter_id INTEGER DEFAULT 0,
-        reporter_name TEXT DEFAULT 'زائر',
-        reason TEXT DEFAULT '',
-        details TEXT DEFAULT '',
-        status TEXT DEFAULT 'new',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    """)
-
-    if not column_exists(cur, "reports", "worker_id"):
-        cur.execute("ALTER TABLE reports ADD COLUMN worker_id INTEGER DEFAULT 0")
-    if not column_exists(cur, "reports", "reporter_id"):
-        cur.execute("ALTER TABLE reports ADD COLUMN reporter_id INTEGER DEFAULT 0")
-    if not column_exists(cur, "reports", "reporter_name"):
-        cur.execute("ALTER TABLE reports ADD COLUMN reporter_name TEXT DEFAULT 'زائر'")
-    if not column_exists(cur, "reports", "reason"):
-        cur.execute("ALTER TABLE reports ADD COLUMN reason TEXT DEFAULT ''")
-    if not column_exists(cur, "reports", "details"):
-        cur.execute("ALTER TABLE reports ADD COLUMN details TEXT DEFAULT ''")
-    if not column_exists(cur, "reports", "status"):
-        cur.execute("ALTER TABLE reports ADD COLUMN status TEXT DEFAULT 'new'")
-    if not column_exists(cur, "reports", "created_at"):
-        cur.execute("ALTER TABLE reports ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
-    if not column_exists(cur, "reports", "admin_action"):
-        cur.execute("ALTER TABLE reports ADD COLUMN admin_action TEXT DEFAULT ''")
-    if not column_exists(cur, "reports", "action_at"):
-        cur.execute("ALTER TABLE reports ADD COLUMN action_at TEXT DEFAULT ''")
-
-    cur.execute("""
     CREATE TABLE IF NOT EXISTS support_messages(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
@@ -1711,7 +1335,6 @@ def init_db_postgres(cur):
         is_verified INTEGER DEFAULT 0,
         profile_pic TEXT DEFAULT '',
         work_images TEXT DEFAULT '',
-        work_videos TEXT DEFAULT '',
         governorate TEXT DEFAULT '',
         show_phone INTEGER DEFAULT 1,
         show_whatsapp INTEGER DEFAULT 1,
@@ -1721,13 +1344,7 @@ def init_db_postgres(cur):
         is_pinned INTEGER DEFAULT 0,
         is_blocked INTEGER DEFAULT 0,
         hidden_by_admin INTEGER DEFAULT 0,
-        remember_token TEXT DEFAULT '',
-        availability_status TEXT DEFAULT 'متاح',
-        warning_count INTEGER DEFAULT 0,
-        accepted_reports INTEGER DEFAULT 0,
-        rejected_reports INTEGER DEFAULT 0,
-        ban_until TEXT DEFAULT '',
-        admin_warning TEXT DEFAULT ''
+        remember_token TEXT DEFAULT ''
     )
     """)
 
@@ -1736,7 +1353,6 @@ def init_db_postgres(cur):
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS birthdate TEXT DEFAULT ''",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_pic TEXT DEFAULT ''",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS work_images TEXT DEFAULT ''",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS work_videos TEXT DEFAULT ''",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS governorate TEXT DEFAULT ''",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS show_phone INTEGER DEFAULT 1",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS show_whatsapp INTEGER DEFAULT 1",
@@ -1746,12 +1362,7 @@ def init_db_postgres(cur):
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_pinned INTEGER DEFAULT 0",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_blocked INTEGER DEFAULT 0",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS hidden_by_admin INTEGER DEFAULT 0",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS remember_token TEXT DEFAULT ''",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS warning_count INTEGER DEFAULT 0",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS accepted_reports INTEGER DEFAULT 0",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS rejected_reports INTEGER DEFAULT 0",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS ban_until TEXT DEFAULT ''",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_warning TEXT DEFAULT ''"
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS remember_token TEXT DEFAULT ''"
     ]:
         cur.execute(alter_sql)
 
@@ -1842,41 +1453,6 @@ def init_db_postgres(cur):
         UNIQUE(visitor_id, worker_id)
     )
     """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS work_video_views(
-        id BIGSERIAL PRIMARY KEY,
-        video_key TEXT UNIQUE,
-        views INTEGER DEFAULT 0,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS reports(
-        id BIGSERIAL PRIMARY KEY,
-        worker_id BIGINT,
-        reporter_id BIGINT DEFAULT 0,
-        reporter_name TEXT DEFAULT 'زائر',
-        reason TEXT DEFAULT '',
-        details TEXT DEFAULT '',
-        status TEXT DEFAULT 'new',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    """)
-
-    for alter_sql in [
-        "ALTER TABLE reports ADD COLUMN IF NOT EXISTS worker_id BIGINT",
-        "ALTER TABLE reports ADD COLUMN IF NOT EXISTS reporter_id BIGINT DEFAULT 0",
-        "ALTER TABLE reports ADD COLUMN IF NOT EXISTS reporter_name TEXT DEFAULT 'زائر'",
-        "ALTER TABLE reports ADD COLUMN IF NOT EXISTS reason TEXT DEFAULT ''",
-        "ALTER TABLE reports ADD COLUMN IF NOT EXISTS details TEXT DEFAULT ''",
-        "ALTER TABLE reports ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'new'",
-        "ALTER TABLE reports ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
-        "ALTER TABLE reports ADD COLUMN IF NOT EXISTS admin_action TEXT DEFAULT ''",
-        "ALTER TABLE reports ADD COLUMN IF NOT EXISTS action_at TEXT DEFAULT ''"
-    ]:
-        cur.execute(alter_sql)
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS support_messages(
@@ -2068,8 +1644,6 @@ def cleanup_saved_files(user_data):
         delete_file_if_exists(user_data.get("profile_pic"))
     for img in [x.strip() for x in (user_data.get("work_images") or "").split(",") if x.strip()]:
         delete_file_if_exists(img)
-    for vid in [x.strip() for x in (user_data.get("work_videos") or "").split(",") if x.strip()]:
-        delete_video_file_if_exists(vid)
 
 
 def set_pending_registration(data, otp, role):
@@ -2130,7 +1704,6 @@ def complete_pending_registration():
                     "bio": "",
                     "profile_pic": "",
                     "work_images": "",
-                    "work_videos": "",
                 })
                 con.commit()
                 return True, "تم إنشاء حساب الزائر بنجاح", url_for("visitor_login")
@@ -2155,7 +1728,6 @@ def complete_pending_registration():
                 "bio": pending_data.get("bio", ""),
                 "profile_pic": pending_data.get("profile_pic", ""),
                 "work_images": pending_data.get("work_images", ""),
-                "work_videos": pending_data.get("work_videos", ""),
             })
             con.commit()
             return True, "تم إنشاء الحساب بنجاح", url_for("login")
@@ -2878,62 +2450,346 @@ a{
 }
 
 
-.work-video-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-top:12px}
-.work-video-tile{background:#f8fbff;border:1px solid rgba(37,99,235,.16);border-radius:18px;padding:10px;box-shadow:0 8px 18px rgba(37,99,235,.06)}
-.work-video-tile video{width:100%;height:180px;object-fit:cover;border-radius:14px;background:#000;display:block}
-@media(max-width:520px){.work-video-grid{grid-template-columns:1fr}.work-video-tile video{height:210px}}
-
-/* Advanced unified work gallery + video modal */
-.unified-media-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:12px}
-.unified-media-tile{position:relative;display:block;min-height:145px;border-radius:18px;overflow:hidden;background:linear-gradient(180deg,#eef6ff,#ffffff);border:1px solid rgba(37,99,235,.18);box-shadow:0 10px 24px rgba(37,99,235,.08);cursor:pointer}
-.unified-media-thumb{width:100%;height:170px;object-fit:cover;display:block;background:#f8fbff}
-.video-media-tile.no-thumb{background:linear-gradient(135deg,#12325f,#2563eb)}
-.video-play-circle{position:absolute;inset:0;margin:auto;width:58px;height:58px;border-radius:50%;background:rgba(15,23,42,.72);color:#fff;display:flex;align-items:center;justify-content:center;font-size:26px;padding-right:3px;box-shadow:0 10px 28px rgba(0,0,0,.24)}
-.media-kind-badge,.video-duration-badge,.video-views-badge{position:absolute;border-radius:999px;padding:5px 9px;font-size:12px;font-weight:800;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
-.media-kind-badge{top:8px;right:8px;background:rgba(250,204,21,.92);color:#12325f}
-.video-duration-badge{bottom:8px;left:8px;background:rgba(15,23,42,.78);color:#fff}
-.video-views-badge{bottom:8px;right:8px;background:rgba(255,255,255,.88);color:#12325f;border:1px solid rgba(37,99,235,.15)}
-.hidden-video-meta{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
-.work-video-modal{position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:20000;display:none;align-items:center;justify-content:center;padding:14px}
-.work-video-modal.show{display:flex}
-.work-video-modal-card{position:relative;width:min(96vw,900px);background:#000;border-radius:22px;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.16)}
-.work-video-modal-card video{width:100%;max-height:86vh;background:#000;display:block}
-.video-modal-close{position:absolute;top:10px;left:10px;z-index:2;width:44px!important;height:44px!important;border-radius:999px!important;padding:0!important;background:rgba(255,255,255,.92)!important;color:#111!important;font-size:30px!important;line-height:1!important}
-@media(max-width:520px){.unified-media-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.unified-media-thumb{height:128px}.unified-media-tile{min-height:128px}.video-play-circle{width:48px;height:48px;font-size:22px}.media-kind-badge,.video-duration-badge,.video-views-badge{font-size:10px;padding:4px 7px}}
-
-
-/* === NEW DEVELOPMENT FEATURES === */
-.status-pill{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:7px 12px;border-radius:999px;font-size:12px;font-weight:900;border:1px solid rgba(37,99,235,.18);background:#eef6ff;color:#12325f}
-.status-available{background:#dcfce7!important;color:#166534!important;border-color:rgba(22,101,52,.25)!important}.status-busy{background:#fef3c7!important;color:#92400e!important;border-color:rgba(146,64,14,.25)!important}.status-off{background:#fee2e2!important;color:#991b1b!important;border-color:rgba(153,27,27,.25)!important}
-.compact-search-card{padding:10px 12px!important;border-radius:18px!important;margin:10px 0 14px!important;box-shadow:0 8px 20px rgba(37,99,235,.07)!important}
-.compact-search-title{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 8px!important;font-size:15px!important;font-weight:900!important;color:#12325f!important}
-.quick-search-box{display:grid;grid-template-columns:1fr 86px;gap:8px;align-items:center;margin:0!important}
-.quick-search-box input{margin:0!important;height:42px!important;border-radius:999px!important;padding:9px 14px!important;font-size:13px!important;background:#f8fbff!important}
-.quick-search-box button{margin:0!important;height:42px!important;border-radius:999px!important;padding:0 14px!important;font-size:13px!important}
-.search-filter-details{margin-top:8px;background:#f8fbff;border:1px solid rgba(37,99,235,.12);border-radius:16px;padding:0 10px}
-.search-filter-details summary{cursor:pointer;list-style:none;padding:8px 0;font-size:12px;font-weight:800;color:#2563eb;display:flex;align-items:center;justify-content:space-between}
-.search-filter-details summary::-webkit-details-marker{display:none}.search-filter-details summary:after{content:'⌄';font-size:14px;color:#5f78a0}.search-filter-details[open] summary:after{content:'⌃'}
-.search-filter-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 0 10px}.search-filter-grid select{margin:0!important;height:40px!important;border-radius:14px!important;font-size:12px!important;padding:8px 10px!important}
-.worker-tools-row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 0}.worker-tools-row .link-btn{margin:0!important;padding:7px 10px!important;border-radius:999px!important;font-size:12px!important;box-shadow:none!important}
-.stats-big-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:14px}.stats-big-card{background:#fff;border:1px solid rgba(37,99,235,.16);border-radius:18px;padding:16px;text-align:center;box-shadow:0 8px 22px rgba(37,99,235,.08)}.stats-big-card .num{font-size:28px;font-weight:900;color:#2563eb}.stats-big-card .lbl{font-size:13px;color:#5f78a0}
-.reorder-list{display:grid;gap:10px}.reorder-item{display:flex;gap:10px;align-items:center;justify-content:space-between;background:#f8fbff;border:1px solid rgba(37,99,235,.14);border-radius:16px;padding:10px}.reorder-item img,.reorder-item video{width:72px;height:54px;object-fit:cover;border-radius:10px;background:#000}
-@media(max-width:720px){.compact-search-card{padding:9px 10px!important}.compact-search-title{font-size:14px!important;margin-bottom:7px!important}.quick-search-box{grid-template-columns:1fr 72px;gap:6px}.quick-search-box input,.quick-search-box button{height:38px!important;font-size:12px!important}.search-filter-grid{grid-template-columns:1fr}.worker-tools-row{display:grid;grid-template-columns:1fr 1fr;gap:6px}.worker-tools-row .link-btn{font-size:11px!important;padding:7px 8px!important}}
-
-
-
-/* === VIDEO STYLE MOBILE HOME UPDATE - SAME COLORS === */
-.mobile-app-shell{width:min(96%,520px);margin:0 auto 92px;padding:12px 10px 22px;background:linear-gradient(180deg,#f8fbff 0%,#ffffff 55%,#eef6ff 100%);min-height:100vh;color:#12325f}
-.mobile-app-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:8px 0 12px;position:sticky;top:0;z-index:20;background:rgba(248,251,255,.92);backdrop-filter:blur(12px);padding:8px 2px;border-bottom:1px solid rgba(37,99,235,.08)}
-.mobile-logo-pill{display:flex;align-items:center;gap:8px;font-weight:900;color:#12325f}.mobile-logo-mark{width:42px;height:42px;border-radius:14px;background:linear-gradient(180deg,#fde68a,#facc15);display:flex;align-items:center;justify-content:center;box-shadow:0 8px 20px rgba(250,204,21,.20)}
-.mobile-icon-btn{width:42px;height:42px;border-radius:15px;background:#fff!important;color:#2563eb!important;border:1px solid rgba(37,99,235,.16)!important;box-shadow:0 8px 20px rgba(37,99,235,.08)!important;display:flex;align-items:center;justify-content:center;margin:0!important;padding:0!important}
-.mobile-location-card{display:flex;align-items:center;gap:10px;background:#fff;border:1px solid rgba(37,99,235,.14);border-radius:22px;padding:12px 14px;box-shadow:0 8px 22px rgba(37,99,235,.07);margin-bottom:10px}.location-pin{width:40px;height:40px;border-radius:14px;background:linear-gradient(180deg,#60a5fa,#2563eb);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900}.location-text{flex:1}.location-title{font-size:13px;color:#5f78a0}.location-value{font-size:17px;font-weight:900;color:#12325f;line-height:1.3}
-.video-promo-banner{position:relative;overflow:hidden;border-radius:24px;background:linear-gradient(135deg,#60a5fa 0%,#2563eb 55%,#facc15 160%);color:#fff;padding:18px 16px;margin:12px 0 16px;box-shadow:0 12px 28px rgba(37,99,235,.18)}.video-promo-banner:after{content:"";position:absolute;left:-26px;bottom:-38px;width:140px;height:140px;border-radius:50%;background:rgba(255,255,255,.16)}.video-promo-title{font-size:19px;font-weight:900;margin-bottom:6px;color:#fff}.video-promo-sub{font-size:13px;line-height:1.7;color:#eff6ff}.video-promo-badge{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.20);border:1px solid rgba(255,255,255,.24);border-radius:999px;padding:6px 10px;font-size:12px;font-weight:800;margin-bottom:8px;color:#fff}
-.mobile-section-head{display:flex;align-items:center;justify-content:space-between;margin:15px 2px 8px}.mobile-section-head h3{font-size:18px!important;margin:0!important;color:#12325f!important}.mobile-section-head a{font-size:12px!important;font-weight:800;color:#2563eb!important}
-.quick-cat-strip{display:flex;gap:9px;overflow-x:auto;padding:4px 2px 10px;scrollbar-width:none}.quick-cat-strip::-webkit-scrollbar{display:none}.quick-cat-chip{min-width:82px;background:#fff;border:1px solid rgba(37,99,235,.14);border-radius:20px;padding:11px 8px;text-align:center;box-shadow:0 8px 20px rgba(37,99,235,.07);color:#12325f!important}.quick-cat-chip .ico{font-size:24px;display:block;margin-bottom:4px}.quick-cat-chip .txt{font-size:12px;font-weight:900;white-space:nowrap;color:#12325f}
-.mobile-app-shell .specialties-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:11px!important}.mobile-app-shell .specialty-group-card{min-height:142px!important;border-radius:24px!important;background:#fff!important;box-shadow:0 10px 24px rgba(37,99,235,.08)!important}.mobile-app-shell .specialty-group-card h3{font-size:16px!important}.mobile-app-shell .specialty-group-card .section-subtitle{font-size:11px!important}.mobile-app-shell .specialty-icon{font-size:30px!important}.mobile-app-shell .compact-search-card{position:relative;margin:10px 0 12px!important;border-radius:24px!important;background:#fff!important}.mobile-app-shell .quick-search-box{grid-template-columns:1fr 68px!important}.mobile-app-shell .quick-search-box input{height:44px!important;background:#f8fbff!important;border-radius:17px!important}.mobile-app-shell .quick-search-box button{height:44px!important;border-radius:17px!important}
-.mobile-bottom-nav{position:fixed;right:50%;bottom:10px;transform:translateX(50%);width:min(94%,500px);height:64px;background:rgba(255,255,255,.94);backdrop-filter:blur(14px);border:1px solid rgba(37,99,235,.14);border-radius:24px;box-shadow:0 14px 36px rgba(37,99,235,.16);display:grid;grid-template-columns:repeat(4,1fr);z-index:9998;padding:6px}.mobile-bottom-nav a{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border-radius:18px;color:#5f78a0!important;font-size:11px;font-weight:800}.mobile-bottom-nav a.active{background:linear-gradient(180deg,#fde68a,#facc15);color:#12325f!important}.mobile-bottom-nav .nav-ico{font-size:19px;line-height:1}
-.video-splash{position:fixed;inset:0;background:#fff;z-index:30000;display:flex;align-items:center;justify-content:center;transition:opacity .35s ease,visibility .35s ease}.video-splash.hide{opacity:0;visibility:hidden}.video-splash-card{text-align:center;color:#12325f}.video-splash-icons{font-size:32px;margin-bottom:16px;animation:floatSplash 1.3s ease-in-out infinite}.video-splash-title{font-size:19px;font-weight:900;margin-bottom:6px}.video-splash-sub{font-size:13px;color:#5f78a0}.video-splash-line{width:130px;height:4px;border-radius:99px;background:#eef6ff;margin:16px auto 0;overflow:hidden}.video-splash-line span{display:block;width:45%;height:100%;background:linear-gradient(90deg,#2563eb,#facc15);border-radius:99px;animation:loadLine 1s infinite alternate}@keyframes floatSplash{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}@keyframes loadLine{from{transform:translateX(80px)}to{transform:translateX(-90px)}}
-@media(min-width:760px){.mobile-app-shell{border-radius:32px;margin-top:18px;box-shadow:0 18px 46px rgba(37,99,235,.10);border:1px solid rgba(37,99,235,.12);min-height:auto}.mobile-bottom-nav{display:none}}
+/* === 44608 VIDEO HOME DESIGN - SAME COLORS === */
+.musattar-app-shell{
+    width:min(96%,520px);
+    margin:10px auto 74px;
+    padding:0 10px 12px;
+    color:#12325f;
+}
+.musattar-app-top{
+    position:sticky;
+    top:0;
+    z-index:80;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    padding:10px 4px 8px;
+    background:linear-gradient(180deg,rgba(248,251,255,.98),rgba(248,251,255,.86));
+    backdrop-filter:blur(12px);
+    -webkit-backdrop-filter:blur(12px);
+}
+.ms-round-btn{
+    width:38px;
+    height:38px;
+    border-radius:14px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    background:#ffffff;
+    color:#2563eb!important;
+    border:1px solid rgba(37,99,235,.14);
+    box-shadow:0 8px 20px rgba(37,99,235,.08);
+    font-size:18px;
+    font-weight:900;
+}
+.ms-title-lockup{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    font-weight:900;
+    color:#12325f;
+}
+.ms-title-logo{
+    width:42px;
+    height:42px;
+    border-radius:15px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    background:linear-gradient(180deg,#fde68a,#facc15);
+    color:#12325f;
+    box-shadow:0 10px 24px rgba(250,204,21,.20);
+    border:1px solid rgba(250,204,21,.58);
+    font-size:22px;
+}
+.ms-search-card{
+    background:#ffffff;
+    border:1px solid rgba(37,99,235,.14);
+    border-radius:24px;
+    padding:12px;
+    box-shadow:0 14px 34px rgba(37,99,235,.10);
+    margin:4px 0 14px;
+}
+.ms-search-title{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    color:#12325f;
+    font-size:13px;
+    font-weight:900;
+    margin-bottom:8px;
+}
+.ms-search-main{
+    display:grid;
+    grid-template-columns:1fr 72px;
+    gap:8px;
+    align-items:center;
+    direction:rtl;
+}
+.ms-search-main input{
+    margin:0!important;
+    height:43px!important;
+    border-radius:18px!important;
+    background:#f8fbff!important;
+    font-size:13px!important;
+    color:#12325f!important;
+}
+.ms-search-main button{
+    margin:0!important;
+    height:43px!important;
+    border-radius:18px!important;
+    padding:0!important;
+    font-size:13px!important;
+}
+.ms-filter-row{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:8px;
+    margin-top:8px;
+}
+.ms-filter-row select{
+    margin:0!important;
+    height:40px!important;
+    border-radius:16px!important;
+    background:#ffffff!important;
+    color:#12325f!important;
+    font-size:12px!important;
+    font-weight:800!important;
+}
+.ms-filter-label{
+    margin:8px 0 2px;
+    font-size:12px;
+    color:#5f78a0;
+    font-weight:800;
+}
+.ms-quick-actions{
+    display:flex;
+    gap:8px;
+    margin-top:10px;
+    overflow-x:auto;
+    padding-bottom:2px;
+    scrollbar-width:none;
+}
+.ms-quick-actions::-webkit-scrollbar{display:none}
+.ms-action-chip{
+    flex:0 0 auto;
+    min-width:118px;
+    height:38px;
+    border-radius:999px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:6px;
+    padding:0 12px;
+    background:#ffffff;
+    color:#2563eb!important;
+    border:1px solid rgba(37,99,235,.16);
+    box-shadow:0 8px 20px rgba(37,99,235,.06);
+    font-size:12px;
+    font-weight:900;
+}
+.ms-hero-banner{
+    position:relative;
+    overflow:hidden;
+    border-radius:26px;
+    padding:18px 18px 20px;
+    min-height:128px;
+    color:#ffffff;
+    background:
+      radial-gradient(circle at 16% 28%, rgba(255,255,255,.24), transparent 24%),
+      linear-gradient(135deg,#60a5fa 0%,#2563eb 100%);
+    box-shadow:0 18px 38px rgba(37,99,235,.22);
+    border:1px solid rgba(96,165,250,.30);
+    margin:12px 0 16px;
+}
+.ms-hero-banner:before{
+    content:"";
+    position:absolute;
+    left:-36px;
+    top:-28px;
+    width:112px;
+    height:112px;
+    border-radius:50%;
+    background:rgba(255,255,255,.16);
+}
+.ms-hero-kicker{
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    padding:6px 10px;
+    border-radius:999px;
+    background:rgba(255,255,255,.16);
+    font-size:12px;
+    font-weight:800;
+    margin-bottom:10px;
+}
+.ms-hero-title{
+    font-size:19px;
+    line-height:1.55;
+    font-weight:900;
+    margin:0;
+    color:#ffffff!important;
+}
+.ms-hero-sub{
+    color:rgba(255,255,255,.88);
+    font-size:12px;
+    margin-top:5px;
+}
+.ms-section-head{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    margin:12px 0 10px;
+}
+.ms-section-head h2{
+    font-size:17px!important;
+    color:#12325f!important;
+    margin:0!important;
+}
+.ms-section-head a{
+    font-size:12px;
+    font-weight:900;
+    color:#2563eb!important;
+}
+.ms-fast-grid{
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+    gap:8px;
+    margin-bottom:14px;
+}
+.ms-fast-card{
+    min-height:74px;
+    border-radius:20px;
+    background:#ffffff;
+    border:1px solid rgba(37,99,235,.12);
+    box-shadow:0 10px 22px rgba(37,99,235,.07);
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:6px;
+    color:#12325f!important;
+    font-size:11px;
+    font-weight:900;
+    text-align:center;
+}
+.ms-fast-icon{
+    font-size:21px;
+    line-height:1;
+}
+.ms-main-grid{
+    display:grid;
+    grid-template-columns:repeat(2,1fr);
+    gap:10px;
+}
+.ms-main-card{
+    position:relative;
+    overflow:hidden;
+    min-height:132px;
+    border-radius:24px;
+    background:#ffffff;
+    border:1px solid rgba(37,99,235,.14);
+    box-shadow:0 12px 26px rgba(37,99,235,.08);
+    display:flex;
+    flex-direction:column;
+    justify-content:center;
+    align-items:center;
+    text-align:center;
+    gap:7px;
+    padding:14px 10px;
+    color:#12325f!important;
+}
+.ms-main-card:before{
+    content:"";
+    position:absolute;
+    top:0;
+    right:18px;
+    left:18px;
+    height:4px;
+    border-radius:0 0 999px 999px;
+    background:linear-gradient(90deg,#2563eb,#facc15);
+}
+.ms-main-icon{
+    font-size:30px;
+    margin-bottom:2px;
+}
+.ms-main-title{
+    color:#12325f;
+    font-size:16px;
+    font-weight:950;
+    line-height:1.35;
+}
+.ms-main-sub{
+    color:#5f78a0;
+    font-size:11px;
+    line-height:1.45;
+}
+.ms-results-wrap{
+    margin-top:12px;
+}
+.ms-results-wrap .card{
+    border-radius:22px!important;
+}
+.ms-bottom-nav{
+    position:fixed;
+    right:50%;
+    transform:translateX(50%);
+    bottom:10px;
+    z-index:120;
+    width:min(94%,500px);
+    height:58px;
+    display:grid;
+    grid-template-columns:repeat(5,1fr);
+    gap:4px;
+    padding:6px;
+    border-radius:22px;
+    background:rgba(255,255,255,.88);
+    backdrop-filter:blur(14px);
+    -webkit-backdrop-filter:blur(14px);
+    border:1px solid rgba(37,99,235,.12);
+    box-shadow:0 18px 44px rgba(37,99,235,.18);
+    direction:rtl;
+}
+.ms-nav-item{
+    border-radius:17px;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:2px;
+    color:#5f78a0!important;
+    font-size:10px;
+    font-weight:900;
+}
+.ms-nav-item span{font-size:17px;line-height:1}
+.ms-nav-item.active{
+    background:linear-gradient(180deg,#fde68a,#facc15);
+    color:#12325f!important;
+    box-shadow:0 8px 18px rgba(250,204,21,.22);
+}
+.ms-empty-soft{
+    background:#ffffff;
+    border:1px dashed rgba(37,99,235,.20);
+    border-radius:22px;
+    padding:18px;
+    color:#5f78a0;
+    text-align:center;
+    font-size:13px;
+    font-weight:800;
+}
+@media(max-width:430px){
+    .musattar-app-shell{width:100%;padding:0 8px 12px;margin-top:4px}
+    .ms-fast-grid{grid-template-columns:repeat(4,1fr);gap:7px}
+    .ms-fast-card{min-height:68px;border-radius:18px;font-size:10px}
+    .ms-main-grid{gap:8px}
+    .ms-main-card{min-height:122px;border-radius:22px}
+    .ms-main-title{font-size:15px}
+    .ms-hero-banner{min-height:116px;padding:16px}
+    .ms-hero-title{font-size:17px}
+    .ms-bottom-nav{height:56px;bottom:8px}
+}
 
 </style>
 
@@ -2949,14 +2805,6 @@ function attachImageCompressionForms() {
       if (form.dataset.compressing === '1') return;
       const selectedInputs = Array.from(fileInputs).filter(inp => inp.files && inp.files.length);
       if (!selectedInputs.length) return;
-      for (const input of selectedInputs) {
-        if (input.name === 'work_videos') {
-          for (const file of Array.from(input.files)) {
-            const ok = await checkVideoDuration(file, 50);
-            if (!ok) { alert('مدة كل فيديو يجب أن لا تتجاوز 50 ثانية'); return; }
-          }
-        }
-      }
       e.preventDefault();
       form.dataset.compressing = '1';
       const submitBtn = form.querySelector('button[type="submit"], button:not([type]), input[type="submit"]');
@@ -2993,16 +2841,6 @@ function attachImageCompressionForms() {
         form.dataset.compressing = '0';
       }, 1500);
     });
-  });
-}
-async function checkVideoDuration(file, maxSeconds) {
-  if (!(file instanceof File) || !file.type.startsWith('video/')) return true;
-  return await new Promise((resolve) => {
-    const video = document.createElement('video');
-    video.preload = 'metadata';
-    video.onloadedmetadata = function() { URL.revokeObjectURL(video.src); resolve(!video.duration || video.duration <= maxSeconds); };
-    video.onerror = function() { resolve(true); };
-    video.src = URL.createObjectURL(file);
   });
 }
 async function compressImageFile(file) {
@@ -3228,10 +3066,6 @@ def login():
         if not user or not check_password_hash(user["password"], password):
             return render_template_string(STYLE + '<div class="container"><div class="msg">البريد الإلكتروني أو كلمة المرور غير صحيحة</div><a href="/login"><button>رجوع</button></a></div></body></html>')
 
-        ban_until_text = active_temp_ban_text(user)
-        if ban_until_text:
-            return render_template_string(STYLE + f'<div class="container"><div class="msg">هذا الحساب محظور مؤقتاً إلى {ban_until_text}</div><a href="/login"><button>رجوع</button></a></div></body></html>')
-
         if user["is_blocked"]:
             return render_template_string(STYLE + '<div class="container"><div class="msg">هذا الحساب محظور من قبل الإدارة</div><a href="/login"><button>رجوع</button></a></div></body></html>')
 
@@ -3271,10 +3105,6 @@ def visitor_login():
 
         if not user or not check_password_hash(user["password"], password):
             return render_template_string(STYLE + '<div class="container"><div class="msg">البريد الإلكتروني أو كلمة المرور غير صحيحة</div><a href="/visitor/login"><button>رجوع</button></a></div></body></html>')
-
-        ban_until_text = active_temp_ban_text(user)
-        if ban_until_text:
-            return render_template_string(STYLE + f'<div class="container"><div class="msg">هذا الحساب محظور مؤقتاً إلى {ban_until_text}</div><a href="/visitor/login"><button>رجوع</button></a></div></body></html>')
 
         if user["is_blocked"]:
             return render_template_string(STYLE + '<div class="container"><div class="msg">هذا الحساب محظور من قبل الإدارة</div><a href="/visitor/login"><button>رجوع</button></a></div></body></html>')
@@ -3596,65 +3426,6 @@ def manage_work_images(user_id):
                 <label>إضافة صور جديدة</label>
                 <input type="file" name="work_images" accept=".png,.jpg,.jpeg,.gif,.webp" multiple>
                 <button>حفظ التعديلات</button>
-            </form>
-        </div>
-        </body></html>
-        """
-    )
-
-
-@app.route("/manage-work-videos/<int:user_id>", methods=["GET", "POST"])
-def manage_work_videos(user_id):
-    if "user" not in session:
-        return redirect(url_for("login"))
-    if session.get("role") != "worker":
-        return redirect(url_for("settings"))
-    user = get_current_session_user()
-    if not user or int(user["id"]) != int(user_id):
-        return redirect(url_for("profile"))
-    existing_videos = [x.strip() for x in ((user["work_videos"] if "work_videos" in user.keys() else "") or "").split(",") if x.strip()]
-    if request.method == "POST":
-        remove_videos = request.form.getlist("remove_videos")
-        kept_videos = [vid for vid in existing_videos if vid not in remove_videos]
-        for vid in remove_videos:
-            delete_video_file_if_exists(vid)
-        added = []
-        if "work_videos" in request.files:
-            files = request.files.getlist("work_videos")
-            remaining = max(0, MAX_WORK_VIDEOS - len(kept_videos))
-            for file_obj in files[:remaining]:
-                if file_obj and file_obj.filename:
-                    try:
-                        saved = save_work_video(file_obj)
-                    except Exception as e:
-                        return render_template_string(STYLE + f'<div class="container"><div class="msg">{str(e)}</div><a href="/manage-work-videos/{user_id}"><button>رجوع</button></a></div></body></html>')
-                    if saved:
-                        added.append(saved)
-        final_videos = kept_videos + added
-        with get_db() as con:
-            con.execute("UPDATE users SET work_videos=? WHERE id=?", (",".join(final_videos), user["id"]))
-            con.commit()
-        return render_template_string(STYLE + '<div class="container"><div class="msg">تم تحديث الفيديوهات بنجاح</div><a href="/edit-profile"><button>رجوع</button></a></div></body></html>')
-
-    if existing_videos:
-        previews = "<div class='unified-media-grid'>" + "".join(
-            f"""<label style='display:block;text-align:center;'><div class='unified-media-tile video-media-tile'><img src='{cloudinary_video_thumb_url(vid)}' class='unified-media-thumb' onerror="this.style.display='none';this.parentElement.classList.add('no-thumb');"><video class='hidden-video-meta' preload='metadata' muted playsinline><source src='{media_url(vid)}'></video><div class='video-play-circle'>▶</div><div class='media-kind-badge'>فيديو</div><div class='video-duration-badge'>--:--</div><div class='small' style='position:absolute;top:8px;left:8px;background:rgba(255,255,255,.92);border-radius:999px;padding:4px 8px;'><input type='checkbox' name='remove_videos' value='{vid}'> حذف</div></div></label>"""
-            for vid in existing_videos
-        ) + "</div>" + WORK_VIDEO_MODAL_HTML
-    else:
-        previews = '<div class="empty-state">لا توجد فيديوهات مرفوعة حالياً</div>'
-    return render_template_string(
-        STYLE + f"""
-        <div class="container">
-            <a href="/edit-profile"><button class="light-btn">رجوع</button></a>
-            <h2>إدارة فيديوهات الأعمال</h2>
-            <div class="section-subtitle">يمكنك إضافة حتى {MAX_WORK_VIDEOS} فيديوهات. مدة كل فيديو لا تتجاوز {MAX_WORK_VIDEO_SECONDS} ثانية.</div>
-            <form method="post" enctype="multipart/form-data">
-                {previews}
-                <label>إضافة فيديوهات جديدة</label>
-                <input type="file" name="work_videos" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,.m4v" multiple>
-                <div class="notice">مسموح 10 فيديوهات فقط لكل مختص. سيتم فحص المدة قبل الرفع، وCloudinary يولّد نسخة محسّنة وصورة معاينة تلقائياً.</div>
-                <button>حفظ الفيديوهات</button>
             </form>
         </div>
         </body></html>
@@ -4078,76 +3849,6 @@ def profile_thumb_html(filename, size_class="profile-img"):
     return '<div class="profile-placeholder">👤</div>'
 
 
-def worker_status_html(worker):
-    status = 'متاح'
-    try:
-        status = (worker['availability_status'] if 'availability_status' in worker.keys() else 'متاح') or 'متاح'
-    except Exception:
-        status = 'متاح'
-    css = 'status-available' if status == 'متاح' else ('status-busy' if status == 'مشغول' else 'status-off')
-    icon = '🟢' if status == 'متاح' else ('🟡' if status == 'مشغول' else '🔴')
-    return f'<span class="status-pill {css}">{icon} {status}</span>'
-
-
-def worker_total_video_views(worker):
-    try:
-        videos = [x.strip() for x in ((worker['work_videos'] if 'work_videos' in worker.keys() else '') or '').split(',') if x.strip()]
-        return sum(get_work_video_views(v) for v in videos)
-    except Exception:
-        return 0
-
-
-def build_search_panel(q='', governorate='', specialty=''):
-    filters_open = ' open' if governorate or specialty else ''
-    return f'''
-    <div class="card compact-search-card">
-        <div class="compact-search-title"><span>🔎 بحث سريع</span><span class="small">ناعم ومختصر</span></div>
-        <form method="get" action="/search">
-            <div class="quick-search-box">
-                <input name="q" value="{q}" placeholder="اسم المختص أو المدينة">
-                <button>بحث</button>
-            </div>
-            <details class="search-filter-details"{filters_open}>
-                <summary>فلترة حسب المحافظة والاختصاص</summary>
-                <div class="search-filter-grid">
-                    <select name="governorate"><option value="">كل المحافظات</option>{build_governorates_options(governorate)}</select>
-                    <select name="specialty"><option value="">كل الاختصاصات</option>{build_specialties_options(specialty, '')}</select>
-                </div>
-            </details>
-        </form>
-        <div class="worker-tools-row"><a class="link-btn secondary" href="/top-workers">⭐ أفضل المختصين</a><a class="link-btn secondary" href="/workers">📂 الأقسام</a></div>
-    </div>'''
-
-
-
-
-def mobile_bottom_nav(active="home"):
-    items = [
-        ("home", "/workers", "🏠", "الرئيسية"),
-        ("sections", "/workers", "🧰", "الأقسام"),
-        ("top", "/top-workers", "⭐", "الأفضل"),
-        ("settings", "/settings", "⚙️", "إعدادات"),
-    ]
-    html = '<nav class="mobile-bottom-nav">'
-    for key, href, icon, text in items:
-        cls = 'active' if key == active else ''
-        html += f'<a class="{cls}" href="{href}"><span class="nav-ico">{icon}</span><span>{text}</span></a>'
-    html += '</nav>'
-    return html
-
-
-def video_splash_html():
-    return """<div id='videoSplash' class='video-splash'><div class='video-splash-card'><div class='video-splash-icons'>🏗️ 🏢 🏠</div><div class='video-splash-title'>جاري تحميل المسطر</div><div class='video-splash-sub'>ثواني ويفتح التطبيق...</div><div class='video-splash-line'><span></span></div></div></div><script>window.addEventListener('load',function(){setTimeout(function(){var s=document.getElementById('videoSplash');if(s)s.classList.add('hide');},550);});</script>"""
-
-
-def quick_category_strip():
-    chips = []
-    for group_name, items in SPECIALTY_GROUPS.items():
-        icon = get_specialty_icon(items[0]) if items else '🛠️'
-        chips.append(f'<a class="quick-cat-chip" href="/workers-group/{group_name}"><span class="ico">{icon}</span><span class="txt">{group_name}</span></a>')
-    return '<div class="quick-cat-strip">' + ''.join(chips) + '</div>'
-
-
 def worker_card(worker):
     profile_html = (
         f'<img src="{media_url(worker["profile_pic"])}" class="profile-img" alt="" onerror="this.outerHTML=\'<div class=&quot;profile-placeholder&quot;>👤</div>\'">'
@@ -4180,7 +3881,6 @@ def worker_card(worker):
                 <div class="inline" style="margin-bottom:8px;">
                     <span class="worker-specialty-badge">{get_specialty_icon(worker["section"])} {worker["section"] or "بدون اختصاص"}</span>
                     <span class="badge">{worker["governorate"] or "بدون محافظة"}</span>
-                    {worker_status_html(worker)}
                     {verified_badge}
                     {pinned_badge}
                 </div>
@@ -4210,50 +3910,193 @@ def worker_card(worker):
     """
 
 
+
+def build_video_fast_categories():
+    fast_items = []
+    for group_name, items in SPECIALTY_GROUPS.items():
+        icon = get_specialty_icon(items[0]) if items else "🛠️"
+        fast_items.append((group_name, icon))
+    html = '<div class="ms-fast-grid">'
+    for group_name, icon in fast_items:
+        html += f"""
+        <a class="ms-fast-card" href="/workers-group/{group_name}">
+            <div class="ms-fast-icon">{icon}</div>
+            <div>{group_name}</div>
+        </a>
+        """
+    html += '</div>'
+    return html
+
+
+def build_video_main_categories():
+    html = '<div class="ms-main-grid">'
+    for group_name, items in SPECIALTY_GROUPS.items():
+        icon = get_specialty_icon(items[0]) if items else "🛠️"
+        html += f"""
+        <a class="ms-main-card" href="/workers-group/{group_name}">
+            <div class="ms-main-icon">{icon}</div>
+            <div class="ms-main-title">{group_name}</div>
+            <div class="ms-main-sub">عرض اختصاصات {group_name}</div>
+        </a>
+        """
+    html += '</div>'
+    return html
+
+
+def build_video_bottom_nav(active="home"):
+    favorites_link = "/favorites" if ("user" in session and session.get("role") == "visitor") else "/workers"
+    account_link = "/settings" if "user" in session else "/"
+    items = [
+        ("home", "/workers", "🏠", "الرئيسية"),
+        ("sections", "/workers", "☰", "الأقسام"),
+        ("work", "/workers", "💼", "العمل"),
+        ("favorite", favorites_link, "⭐", "المفضلة"),
+        ("settings", account_link, "⚙️", "إعدادات"),
+    ]
+    html = '<div class="ms-bottom-nav">'
+    for key, href, icon, label in items:
+        cls = " active" if key == active else ""
+        html += f'<a class="ms-nav-item{cls}" href="{href}"><span>{icon}</span><small>{label}</small></a>'
+    html += '</div>'
+    return html
+
+
+def search_workers_rows(q="", governorate="", specialty="", limit=40):
+    q = sanitize_input(q, 80)
+    governorate = sanitize_input(governorate, 80)
+    specialty = sanitize_input(specialty, 80)
+    sql = """
+        SELECT *
+        FROM users
+        WHERE is_verified=1
+          AND COALESCE(is_blocked,0)=0
+          AND COALESCE(hidden_by_admin,0)=0
+          AND (role='worker' OR role IS NULL)
+    """
+    params = []
+    if q:
+        like = f"%{q}%"
+        sql += " AND (name LIKE ? OR city LIKE ? OR governorate LIKE ? OR section LIKE ?)"
+        params.extend([like, like, like, like])
+    if governorate and governorate in IRAQ_GOVERNORATES:
+        sql += " AND governorate=?"
+        params.append(governorate)
+    if specialty and specialty in SPECIALTIES:
+        sql += " AND section=?"
+        params.append(specialty)
+    sql += " ORDER BY is_pinned DESC, views DESC, id DESC LIMIT ?"
+    params.append(int(limit))
+    with get_db() as con:
+        return con.execute(sql, tuple(params)).fetchall()
+
+
+
 @app.route("/workers")
 def workers():
     auto_login_from_cookie()
 
-    user_buttons = ""
-    groups_cards = build_main_groups_cards()
+    q = sanitize_input(request.args.get("q", ""), 80)
+    governorate = sanitize_input(request.args.get("governorate", ""), 80)
+    specialty = sanitize_input(request.args.get("specialty", ""), 80)
+    has_search = bool(q or governorate or specialty)
+
+    fast_cards = build_video_fast_categories()
+    main_cards = build_video_main_categories()
+    bottom_nav = build_video_bottom_nav("home")
+    gov_options = build_governorates_options(governorate)
+    specialty_options = build_specialties_options(specialty, "")
+
+    results_html = ""
+    if has_search:
+        rows = search_workers_rows(q, governorate, specialty)
+        if rows:
+            cards = "".join(worker_card(row) for row in rows)
+            results_html = f'''
+            <div class="ms-results-wrap">
+                <div class="ms-section-head">
+                    <h2>نتائج البحث</h2>
+                    <a href="/workers">مسح البحث</a>
+                </div>
+                {cards}
+            </div>
+            '''
+        else:
+            results_html = '''
+            <div class="ms-results-wrap">
+                <div class="ms-empty-soft">ماكو نتائج مطابقة حالياً. جرّب اسم أو محافظة ثانية.</div>
+            </div>
+            '''
 
     return render_template_string(
-        STYLE + video_splash_html() + (settings_corner() if 'user' in session else '') + f'''
-        <div class="mobile-app-shell">
-            <div class="mobile-app-top">
-                <button class="mobile-icon-btn" onclick="history.back()" title="رجوع">‹</button>
-                <div class="mobile-logo-pill"><span class="mobile-logo-mark">🏗️</span><span>المسطر</span></div>
-                <a class="mobile-icon-btn" href="/settings" title="الإعدادات">⚙️</a>
-            </div>
+        STYLE + (settings_corner() if 'user' in session else '') + f'''
+        <div class="musattar-app-shell">
 
-            <div class="mobile-location-card">
-                <div class="location-pin">📍</div>
-                <div class="location-text">
-                    <div class="location-title">موقع البحث</div>
-                    <div class="location-value">العراق • كل المحافظات</div>
+            <div class="musattar-app-top">
+                <a class="ms-round-btn" href="/">‹</a>
+                <div class="ms-title-lockup">
+                    <span>المسطر</span>
+                    <span class="ms-title-logo">🏗️</span>
                 </div>
+                <a class="ms-round-btn" href="/settings" aria-label="الإعدادات">⚙️</a>
             </div>
 
-            {build_search_panel()}
+            <div class="ms-search-card">
+                <div class="ms-search-title">
+                    <span>🔎 بحث سريع</span>
+                    <span>ناعم ومختصر</span>
+                </div>
 
-            <div class="video-promo-banner">
-                <div class="video-promo-badge">✨ تطبيق خدمات البناء</div>
-                <div class="video-promo-title">كل مختص تحتاجه تلقاه بسرعة</div>
-                <div class="video-promo-sub">اختَر القسم، شوف الأعمال والفيديوهات، وتواصل واتساب مباشرة.</div>
+                <form method="get" action="/workers">
+                    <div class="ms-search-main">
+                        <input name="q" value="{q}" placeholder="اسم المختص أو المدينة">
+                        <button type="submit">بحث</button>
+                    </div>
+
+                    <div class="ms-filter-label">فلترة حسب المحافظة والاختصاص</div>
+                    <div class="ms-filter-row">
+                        <select name="governorate">
+                            <option value="">كل المحافظات</option>
+                            {gov_options}
+                        </select>
+                        <select name="specialty">
+                            <option value="">كل الاختصاصات</option>
+                            {specialty_options}
+                        </select>
+                    </div>
+
+                    <div class="ms-quick-actions">
+                        <a class="ms-action-chip" href="/workers">✨ الكل</a>
+                        <a class="ms-action-chip" href="/workers?specialty=مهندس كهربائيات">⚡ المهندسون</a>
+                        <a class="ms-action-chip" href="/workers?specialty=عمال بناء">👷 العمال</a>
+                    </div>
+                </form>
             </div>
 
-            <div class="mobile-section-head"><h3>الأقسام السريعة</h3><a href="/workers">عرض الكل</a></div>
-            {quick_category_strip()}
+            <div class="ms-hero-banner">
+                <div class="ms-hero-kicker">✨ تطبيق خدمات البناء</div>
+                <h1 class="ms-hero-title">كل مختص تحتاجه تلقاه بسرعة</h1>
+                <div class="ms-hero-sub">اختر القسم، شوف الأعمال والفيديوهات، وتواصل واتساب مباشرة.</div>
+            </div>
 
-            <div class="mobile-section-head"><h3>الأقسام الرئيسية</h3><span class="badge">قسم ← اختصاص</span></div>
-            {user_buttons}
-            {groups_cards}
+            {results_html}
+
+            <div class="ms-section-head">
+                <h2>الأقسام السريعة</h2>
+                <a href="#main-sections">عرض الكل</a>
+            </div>
+            {fast_cards}
+
+            <div class="ms-section-head" id="main-sections">
+                <h2>الأقسام الرئيسية</h2>
+                <span></span>
+            </div>
+            {main_cards}
+
+            {bottom_nav}
         </div>
-        {mobile_bottom_nav('home')}
         </body></html>
         '''
     )
-
 
 @app.route("/workers-group/<path:group_name>")
 def workers_group(group_name):
@@ -4353,7 +4196,6 @@ def workers_specialty(specialty_name):
                 
             </div>
 
-            {build_search_panel(specialty=specialty_name)}
             {user_buttons}
 
             <div id="results" style="margin-top:18px;">
@@ -4434,16 +4276,12 @@ def worker_profile(user_id):
 
         work_images_raw = worker["work_images"] or ""
         imgs = [x.strip() for x in work_images_raw.split(",") if x.strip()]
-        work_videos_raw = ((worker["work_videos"] if "work_videos" in worker.keys() else "") or "")
-        videos = [x.strip() for x in work_videos_raw.split(",") if x.strip()]
-        work_videos_html = render_work_videos_grid(videos)
         work_images_html = ""
         if imgs:
             gallery_refs = quote("||".join(imgs), safe="")
             work_images_html = '<div class="work-grid">' + "".join(
                 f'<a class="work-tile" href="{url_for("view_image")}?image={quote(img, safe="")}&images={gallery_refs}&idx={idx}&back=/worker/{worker["id"]}"><img src="{media_url(img)}" alt="work" class="work-thumb"></a>' for idx, img in enumerate(imgs)
             ) + '</div>'
-        unified_gallery_html = render_unified_work_gallery(imgs, videos, worker["id"])
 
         phone_html = f'<div class="detail-box"><strong>الهاتف</strong>{worker["phone"]}</div>' if int((worker["show_phone"] if worker["show_phone"] is not None else 0) or 0) and worker["phone"] else ""
         wa_html = ""
@@ -4487,14 +4325,7 @@ def worker_profile(user_id):
             fav_text = "💔 إزالة من المفضلة" if fav_on else "❤️ إضافة للمفضلة"
             favorite_button = f'<a class="action-pill secondary" href="/toggle-favorite/{worker["id"]}?next=/worker/{worker["id"]}">{fav_text}</a>'
 
-        profile_share_url = request.url_root.rstrip("/") + url_for("worker_profile", user_id=worker["id"])
-        share_url_js = json.dumps(profile_share_url, ensure_ascii=False)
-        share_name_js = json.dumps(worker["name"] or "مختص", ensure_ascii=False)
-        share_button = f'<a class="action-pill secondary" href="#" onclick="shareWorkerProfile({share_url_js}, {share_name_js});return false;">🔗 مشاركة الملف</a>'
-        report_button = f'<a class="action-pill secondary" href="/report-worker/{worker["id"]}">🚩 بلاغ</a>'
-
         works_count = len(imgs)
-        videos_count = len(videos)
         city_value = worker["city"] or "-"
         exp_value = worker["exp"] or "-"
         message_status_value = 'مفعل' if int((worker["allow_messages"] if worker["allow_messages"] is not None else 0) or 0) else 'معطل'
@@ -4502,8 +4333,7 @@ def worker_profile(user_id):
             <div class="stat-mini-grid">
                 <div class="stat-mini-card"><div class="stat-mini-label">التقييم</div><div class="stat-mini-value">{avg_rating}</div></div>
                 <div class="stat-mini-card"><div class="stat-mini-label">التقييمات</div><div class="stat-mini-value">{rating_count}</div></div>
-                <div class="stat-mini-card"><div class="stat-mini-label">الصور</div><div class="stat-mini-value">{works_count}</div></div>
-                <div class="stat-mini-card"><div class="stat-mini-label">الفيديوهات</div><div class="stat-mini-value">{videos_count}</div></div>
+                <div class="stat-mini-card"><div class="stat-mini-label">الأعمال</div><div class="stat-mini-value">{works_count}</div></div>
                 <div class="stat-mini-card"><div class="stat-mini-label">المشاهدات</div><div class="stat-mini-value">{worker["views"] or 0}</div></div>
             </div>
         """
@@ -4543,7 +4373,6 @@ def worker_profile(user_id):
                             <div class="inline" style="margin-bottom:10px;">
                                 <span class="worker-specialty-badge">{get_specialty_icon(worker["section"])} {worker["section"] or "-"}</span>
                                 <span class="badge">{worker["governorate"] or "-"}</span>
-                                {worker_status_html(worker)}
                                 {verified_badge}
                                 {pinned_badge}
                             </div>
@@ -4569,8 +4398,6 @@ def worker_profile(user_id):
                                 {favorite_button}
                                 {wa_html}
                                 {call_html}
-                                {share_button}
-                                {report_button}
                                 {map_html}
                             </div>
                         </div>
@@ -4580,10 +4407,10 @@ def worker_profile(user_id):
                 <div class="card">
                     <div class="gallery-head">
                         <h3>معرض الأعمال</h3>
-                        <span class="badge">{works_count} صورة • {videos_count} فيديو</span>
+                        <span class="badge">{works_count} صورة</span>
                     </div>
-                    <div class="section-subtitle">الصور والفيديوهات مرتبة في معرض واحد. اضغط على الفيديو لفتحه بحجم كبير مع عداد المشاهدات والمدة.</div>
-                    {unified_gallery_html}
+                    <div class="section-subtitle">صور الأعمال المعروضة داخل الملف الشخصي.</div>
+                    {work_images_html if work_images_html else '<div class="empty-state">لا توجد أعمال حتى الآن</div>'}
                 </div>
 
                 <div class="card">
@@ -4595,22 +4422,6 @@ def worker_profile(user_id):
                 </div>
                 {comment_form}
             </div>
-            <script>
-            async function shareWorkerProfile(url, name) {{
-                const title = 'ملف المختص في المسطر: ' + (name || '');
-                const text = 'شاهد هذا المختص على تطبيق المسطر';
-                try {{
-                    if (navigator.share) {{
-                        await navigator.share({{title: title, text: text, url: url}});
-                    }} else if (navigator.clipboard) {{
-                        await navigator.clipboard.writeText(url);
-                        alert('تم نسخ رابط الملف');
-                    }} else {{
-                        prompt('انسخ رابط الملف:', url);
-                    }}
-                }} catch (e) {{}}
-            }}
-            </script>
             </body></html>
             """
         )
@@ -4618,188 +4429,6 @@ def worker_profile(user_id):
         import traceback
         traceback.print_exc()
         return render_template_string(STYLE + '<div class="container"><div class="msg">صار خطأ أثناء فتح الملف الشخصي</div><div class="notice">' + sanitize_input(str(e), 300) + '</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
-
-
-@app.route("/report-worker/<int:user_id>", methods=["GET", "POST"])
-def report_worker(user_id):
-    auto_login_from_cookie()
-    with get_db() as con:
-        worker = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
-
-    if not worker:
-        return render_template_string(STYLE + '<div class="container"><div class="msg">هذا الملف غير موجود</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
-
-    if request.method == "POST":
-        reason = sanitize_input(request.form.get("reason", ""), 120)
-        details = sanitize_input(request.form.get("details", ""), 700)
-        reporter_id = int(session.get("user_id") or 0)
-        reporter_name = sanitize_input(session.get("user", "زائر"), 80) if "user" in session else "زائر"
-
-        if not reason:
-            return render_template_string(STYLE + f'<div class="container"><div class="msg">اختر سبب البلاغ</div><a href="/report-worker/{user_id}"><button>رجوع</button></a></div></body></html>')
-
-        with get_db() as con:
-            con.execute(
-                "INSERT INTO reports (worker_id, reporter_id, reporter_name, reason, details, status) VALUES (?, ?, ?, ?, ?, 'new')",
-                (user_id, reporter_id, reporter_name, reason, details)
-            )
-            con.commit()
-
-        return render_template_string(STYLE + f"""
-        <div class="container narrow-container">
-            <div class="msg">تم إرسال البلاغ للإدارة. شكراً لمساعدتك في تحسين المسطر.</div>
-            <a href="/worker/{user_id}"><button>رجوع لملف المختص</button></a>
-        </div>
-        </body></html>
-        """)
-
-    return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f"""
-    <div class="container narrow-container">
-        <a href="/worker/{user_id}"><button class="light-btn">رجوع</button></a>
-        <h2>الإبلاغ عن ملف</h2>
-        <div class="section-subtitle">المختص: {worker["name"]}</div>
-        <form method="post">
-            <label>سبب البلاغ</label>
-            <select name="reason" required>
-                <option value="">اختر السبب</option>
-                <option value="رقم هاتف غير صحيح">رقم هاتف غير صحيح</option>
-                <option value="محتوى غير مناسب">محتوى غير مناسب</option>
-                <option value="صور أو فيديوهات مخالفة">صور أو فيديوهات مخالفة</option>
-                <option value="حساب وهمي">حساب وهمي</option>
-                <option value="مشكلة أخرى">مشكلة أخرى</option>
-            </select>
-            <textarea name="details" placeholder="اكتب تفاصيل إضافية اختيارياً"></textarea>
-            <button>إرسال البلاغ</button>
-        </form>
-    </div>
-    </body></html>
-    """)
-
-
-
-@app.route("/admin/reports")
-def admin_reports():
-    if not admin_required():
-        return redirect(url_for("admin_login"))
-
-    with get_db() as con:
-        rows = con.execute("""
-            SELECT r.*, u.name AS worker_name, u.phone AS worker_phone, u.email AS worker_email,
-                   u.is_blocked AS worker_blocked, u.hidden_by_admin AS worker_hidden,
-                   COALESCE(u.warning_count,0) AS warning_count,
-                   COALESCE(u.accepted_reports,0) AS accepted_reports,
-                   COALESCE(u.rejected_reports,0) AS rejected_reports,
-                   COALESCE(u.ban_until,'') AS ban_until
-            FROM reports r
-            LEFT JOIN users u ON u.id = r.worker_id
-            ORDER BY r.id DESC
-            LIMIT 300
-        """).fetchall()
-
-    if rows:
-        blocks = []
-        for row in rows:
-            status = row["status"] or "new"
-            ban_text = f'<span class="badge">⏳ حظر إلى {row["ban_until"]}</span>' if row["ban_until"] else ""
-            blocks.append(f"""
-            <div class="card">
-                <div class="inline" style="justify-content:space-between;">
-                    <strong>بلاغ رقم {row["id"]}</strong>
-                    <span class="badge">{status}</span>
-                </div>
-                <div class="detail-grid">
-                    <div class="detail-box"><strong>المختص</strong>{row["worker_name"] or "غير معروف"}</div>
-                    <div class="detail-box"><strong>الهاتف</strong>{row["worker_phone"] or "-"}</div>
-                    <div class="detail-box"><strong>البريد</strong>{row["worker_email"] or "-"}</div>
-                    <div class="detail-box"><strong>المبلغ</strong>{row["reporter_name"] or "زائر"}</div>
-                    <div class="detail-box"><strong>السبب</strong>{row["reason"] or "-"}</div>
-                    <div class="detail-box"><strong>تحذيرات</strong>{row["warning_count"] or 0}</div>
-                    <div class="detail-box"><strong>بلاغات مقبولة</strong>{row["accepted_reports"] or 0}</div>
-                    <div class="detail-box"><strong>بلاغات مرفوضة</strong>{row["rejected_reports"] or 0}</div>
-                </div>
-                <div style="margin-top:10px;line-height:1.9;">{row["details"] or "لا توجد تفاصيل"}</div>
-                <div class="small">وقت البلاغ: {row["created_at"]}</div>
-                <div class="inline" style="margin-top:8px;">{ban_text}</div>
-                <div class="inline" style="margin-top:10px;">
-                    <a class="link-btn" href="/worker/{row["worker_id"]}">فتح الملف</a>
-                    <a class="link-btn" href="/admin/report-action/{row["id"]}/warn">⚠️ تحذير</a>
-                    <a class="link-btn" href="/admin/report-action/{row["id"]}/hide">🙈 إخفاء الملف</a>
-                    <a class="link-btn" href="/admin/report-action/{row["id"]}/tempban7">⏳ حظر 7 أيام</a>
-                    <a class="link-btn link-red" href="/admin/report-action/{row["id"]}/permban">⛔ حظر نهائي</a>
-                    <a class="link-btn secondary" href="/admin/report-action/{row["id"]}/reject">❌ رفض البلاغ</a>
-                    <a class="link-btn secondary" href="/admin/unhide-user/{row["worker_id"]}">إظهار الملف</a>
-                    <a class="link-btn secondary" href="/admin/unblock-user/{row["worker_id"]}">فك الحظر</a>
-                </div>
-            </div>
-            """)
-        reports_html = "".join(blocks)
-    else:
-        reports_html = '<div class="empty-state">لا توجد بلاغات حالياً</div>'
-
-    return render_template_string(STYLE + f"""
-    <div class="container">
-        <a href="/admin/panel"><button class="light-btn">رجوع للوحة الأدمن</button></a>
-        <h2>بلاغات المستخدمين</h2>
-        <div class="section-subtitle">إدارة البلاغات: تحذير، إخفاء، حظر مؤقت، حظر نهائي، أو رفض البلاغ.</div>
-        {reports_html}
-    </div>
-    </body></html>
-    """)
-
-
-@app.route("/admin/report-action/<int:report_id>/<action>")
-def admin_report_action(report_id, action):
-    if not admin_required():
-        return redirect(url_for("admin_login"))
-
-    allowed = {"warn", "hide", "tempban7", "permban", "reject"}
-    if action not in allowed:
-        return redirect(url_for("admin_reports"))
-
-    now_text = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-
-    with get_db() as con:
-        report = con.execute("SELECT * FROM reports WHERE id=?", (report_id,)).fetchone()
-        if not report:
-            return redirect(url_for("admin_reports"))
-
-        worker_id = report["worker_id"]
-        worker = con.execute("SELECT * FROM users WHERE id=?", (worker_id,)).fetchone()
-        if not worker:
-            con.execute("UPDATE reports SET status='worker_missing', admin_action=?, action_at=? WHERE id=?", (action, now_text, report_id))
-            con.commit()
-            return redirect(url_for("admin_reports"))
-
-        if action == "warn":
-            warning_text = "وصل تنبيه من الإدارة بسبب بلاغ على ملفك. يرجى الالتزام بالمعلومات الصحيحة والتعامل الجيد مع الزوار."
-            con.execute("UPDATE users SET warning_count=COALESCE(warning_count,0)+1, admin_warning=? WHERE id=?", (warning_text, worker_id))
-            con.execute("UPDATE reports SET status='warned', admin_action=?, action_at=? WHERE id=?", (action, now_text, report_id))
-            log_admin_action("تحذير مختص", worker["name"], f"تم إرسال تحذير بسبب البلاغ رقم {report_id}")
-
-        elif action == "hide":
-            con.execute("UPDATE users SET hidden_by_admin=1, accepted_reports=COALESCE(accepted_reports,0)+1 WHERE id=?", (worker_id,))
-            con.execute("UPDATE reports SET status='hidden_profile', admin_action=?, action_at=? WHERE id=?", (action, now_text, report_id))
-            log_admin_action("إخفاء ملف بسبب بلاغ", worker["name"], f"تم إخفاء الملف بسبب البلاغ رقم {report_id}")
-
-        elif action == "tempban7":
-            ban_until = (datetime.datetime.utcnow() + datetime.timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
-            con.execute("UPDATE users SET is_blocked=1, hidden_by_admin=1, ban_until=?, accepted_reports=COALESCE(accepted_reports,0)+1, admin_warning=? WHERE id=?", (ban_until, "تم حظر الحساب مؤقتاً لمدة 7 أيام بسبب بلاغ مقبول.", worker_id))
-            con.execute("UPDATE reports SET status='temp_banned_7_days', admin_action=?, action_at=? WHERE id=?", (action, now_text, report_id))
-            log_admin_action("حظر مؤقت 7 أيام", worker["name"], f"حتى {ban_until} بسبب البلاغ رقم {report_id}")
-
-        elif action == "permban":
-            con.execute("UPDATE users SET is_blocked=1, hidden_by_admin=1, ban_until='', accepted_reports=COALESCE(accepted_reports,0)+1, admin_warning=? WHERE id=?", ("تم حظر الحساب نهائياً بسبب مخالفة البلاغات.", worker_id))
-            con.execute("UPDATE reports SET status='permanent_banned', admin_action=?, action_at=? WHERE id=?", (action, now_text, report_id))
-            log_admin_action("حظر نهائي بسبب بلاغ", worker["name"], f"تم الحظر النهائي بسبب البلاغ رقم {report_id}")
-
-        elif action == "reject":
-            con.execute("UPDATE users SET rejected_reports=COALESCE(rejected_reports,0)+1 WHERE id=?", (worker_id,))
-            con.execute("UPDATE reports SET status='rejected', admin_action=?, action_at=? WHERE id=?", (action, now_text, report_id))
-            log_admin_action("رفض بلاغ", worker["name"], f"تم رفض البلاغ رقم {report_id}")
-
-        con.commit()
-
-    return redirect(url_for("admin_reports"))
 
 
 @app.route("/favorites")
@@ -5785,7 +5414,6 @@ def admin_panel():
                     <a href="/admin/messages"><button class="light-btn">كل الرسائل</button></a>
                     <a href="/admin/comments"><button class="light-btn">كل التعليقات</button></a>
                     <a href="/admin/support"><button class="light-btn">الدعم الفني</button></a>
-                    <a href="/admin/reports"><button class="light-btn">🚩 البلاغات</button></a>
                     
                     <a href="/admin/logout"><button>خروج الأدمن</button></a>
                 </div>
@@ -5916,7 +5544,7 @@ def admin_unblock_user(user_id):
     with get_db() as con:
         user = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
         if user:
-            con.execute("UPDATE users SET is_blocked=0, ban_until='', admin_warning='' WHERE id=?", (user_id,))
+            con.execute("UPDATE users SET is_blocked=0 WHERE id=?", (user_id,))
             con.commit()
             log_admin_action("فك حظر", user["name"], f"تم فك حظر المستخدم رقم {user_id}")
     return redirect(url_for("admin_panel"))
@@ -6259,9 +5887,6 @@ def delete_account():
         if user["work_images"]:
             for img in [x.strip() for x in user["work_images"].split(",") if x.strip()]:
                 delete_file_if_exists(img)
-        if "work_videos" in user.keys() and user["work_videos"]:
-            for vid in [x.strip() for x in user["work_videos"].split(",") if x.strip()]:
-                delete_video_file_if_exists(vid)
 
         with get_db() as con:
             con.execute("DELETE FROM messages WHERE sender_name=? OR receiver_name=?", (user["name"], user["name"]))
@@ -6297,8 +5922,6 @@ def profile():
     )
 
     imgs = [x.strip() for x in (user["work_images"] or "").split(",") if x.strip()]
-    videos = [x.strip() for x in ((user["work_videos"] if "work_videos" in user.keys() else "") or "").split(",") if x.strip()]
-    work_videos_html = render_work_videos_grid(videos)
     work_images_html = ""
     if imgs:
         gallery_refs = quote("||".join(imgs), safe="")
@@ -6344,13 +5967,7 @@ def profile():
             <div class="card">
                 <h3>أعمالي</h3>
                 <div class="section-subtitle">الصور المرفوعة داخل ملفك الشخصي.</div>
-                {work_images_html if work_images_html else f'<div class="empty-state">لا توجد صور أعمال حتى الآن</div>'}
-            </div>
-
-            <div class="card">
-                <h3>فيديوهات أعمالي</h3>
-                <div class="section-subtitle">الفيديوهات المرفوعة داخل ملفك الشخصي. الحد الأعلى {MAX_WORK_VIDEOS} فيديوهات، مدة كل فيديو {MAX_WORK_VIDEO_SECONDS} ثانية.</div>
-                {work_videos_html if work_videos_html else '<div class="empty-state">لا توجد فيديوهات حتى الآن</div>'}
+                {work_images_html if work_images_html else f'<div class="empty-state">لا توجد أعمال حتى الآن</div>'}
             </div>
         </div>
         </body></html>
@@ -6384,8 +6001,6 @@ def settings():
     else:
         buttons_html = """
             <a href="/profile"><button>ملفي الشخصي</button></a>
-            <a href="/worker-stats"><button class="light-btn">إحصائياتي 📊</button></a>
-            <a href="/manage-work-gallery"><button class="light-btn">ترتيب المعرض 🖼️</button></a>
             <a href="/edit-profile"><button class="light-btn">تعديل الملف الشخصي</button></a>
             <a href="/inbox"><button class="light-btn">الرسائل</button></a>
             <a href="/support"><button class="light-btn">الدعم الفني</button></a>
@@ -6396,16 +6011,11 @@ def settings():
             <a href="/logout"><button>تسجيل الخروج</button></a>
         """
 
-    warning_html = ""
-    if session.get("role") == "worker" and (user["admin_warning"] if "admin_warning" in user.keys() else ""):
-        warning_html = f'<div class="msg" style="border-color:rgba(245,158,11,.35);background:#fff8e7;color:#7c5200;">⚠️ تنبيه من الإدارة: {user["admin_warning"]}</div>'
-
     return render_template_string(
         STYLE + (settings_corner() if 'user' in session else '') + f"""
         <div class="container narrow-container">
             <h2>الإعدادات</h2>
             <div class="section-subtitle">اختر الصفحة التي تريدها.</div>
-            {warning_html}
 
             <div class="card">
                 {buttons_html}
@@ -6509,9 +6119,6 @@ def edit_profile():
         city = sanitize_input(request.form.get("city", ""), 80)
         exp = sanitize_input(request.form.get("exp", ""), 30)
         bio = sanitize_input(request.form.get("bio", ""), 500)
-        availability_status = sanitize_input(request.form.get("availability_status", "متاح"), 20)
-        if availability_status not in {"متاح", "مشغول", "خارج الخدمة"}:
-            availability_status = "متاح"
 
         if not name or not phone or not email:
             return render_template_string(
@@ -6621,8 +6228,8 @@ def edit_profile():
                     new_profile_pic = saved_profile
 
             cur.execute(
-                "UPDATE users SET name=?, phone=?, email=?, section=?, governorate=?, city=?, exp=?, bio=?, profile_pic=?, availability_status=? WHERE id=?",
-                (name, phone, email, section, governorate, city, exp, bio, new_profile_pic, availability_status, user["id"])
+                "UPDATE users SET name=?, phone=?, email=?, section=?, governorate=?, city=?, exp=?, bio=?, profile_pic=? WHERE id=?",
+                (name, phone, email, section, governorate, city, exp, bio, new_profile_pic, user["id"])
             )
             con.commit()
 
@@ -6677,8 +6284,6 @@ def edit_profile():
                 <input name="city" value="{user['city'] or ''}" placeholder="المدينة / المنطقة">
                 <input name="exp" value="{user['exp'] or ''}" placeholder="سنوات الخبرة">
                 <textarea name="bio" placeholder="نبذة عنك">{user['bio'] or ''}</textarea>
-                <label>حالة المختص</label>
-                <select name="availability_status"><option value="متاح" {'selected' if ((user['availability_status'] if 'availability_status' in user.keys() else 'متاح') or 'متاح') == 'متاح' else ''}>🟢 متاح</option><option value="مشغول" {'selected' if ((user['availability_status'] if 'availability_status' in user.keys() else '') or '') == 'مشغول' else ''}>🟡 مشغول</option><option value="خارج الخدمة" {'selected' if ((user['availability_status'] if 'availability_status' in user.keys() else '') or '') == 'خارج الخدمة' else ''}>🔴 خارج الخدمة</option></select>
 
                 <label>تغيير الصورة الشخصية</label>
                 <input type="file" name="profile_pic" accept=".png,.jpg,.jpeg,.gif,.webp">
@@ -6687,8 +6292,7 @@ def edit_profile():
             </form>
 
             <a href="/change-password"><button>تغيير كلمة المرور</button></a>
-            <a href="/manage-work-images/{user['id']}"><button>إدارة صور أعمالي</button></a>
-            <a href="/manage-work-videos/{user['id']}"><button>إدارة فيديوهات أعمالي</button></a>
+            <a href="/manage-work-images/{user['id']}"><button>إدارة أعمالي</button></a>
             <a href="/delete-account"><button style="background:red;color:white;">حذف الحساب</button></a>
         </div>
         {specialty_script(user['section'] or '')}
@@ -6977,60 +6581,6 @@ def passkey_auth_finish():
         return resp
     except Exception as e:
         return jsonify({"ok": False, "error": "فشل التحقق من البصمة: " + str(e)}), 400
-
-
-
-@app.route('/search')
-def search_workers():
-    auto_login_from_cookie()
-    q=sanitize_input(request.args.get('q',''),80); governorate=sanitize_input(request.args.get('governorate',''),80); specialty=sanitize_input(request.args.get('specialty',''),80)
-    clauses=["users.is_verified=1","COALESCE(users.is_blocked,0)=0","COALESCE(users.hidden_by_admin,0)=0","(users.role='worker' OR users.role IS NULL)"]; params=[]
-    if q:
-        like=f"%{q}%"; clauses.append("(users.name LIKE ? OR users.city LIKE ? OR users.email LIKE ? OR users.phone LIKE ?)"); params += [like,like,like,like]
-    if governorate: clauses.append('users.governorate=?'); params.append(governorate)
-    if specialty: clauses.append('users.section=?'); params.append(specialty)
-    with get_db() as con: rows=con.execute('SELECT users.* FROM users WHERE '+' AND '.join(clauses)+' ORDER BY users.is_pinned DESC, users.views DESC, users.id DESC LIMIT 80', tuple(params)).fetchall()
-    cards=''.join(worker_card(row) for row in rows) if rows else '<div class="empty-state">ماكو نتائج مطابقة للبحث</div>'
-    return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f'''<div class="container"><a href="/workers"><button class="light-btn">رجوع</button></a><h2>البحث السريع</h2>{build_search_panel(q, governorate, specialty)}<div class="section-subtitle">عدد النتائج: {len(rows)}</div>{cards}</div></body></html>''')
-
-@app.route('/top-workers')
-def top_workers():
-    auto_login_from_cookie()
-    with get_db() as con:
-        rows=con.execute('''SELECT users.*, COALESCE((SELECT AVG(rating) FROM comments WHERE comments.user_id=users.id),0) AS avg_rating_calc, COALESCE((SELECT COUNT(*) FROM comments WHERE comments.user_id=users.id),0) AS rating_count_calc FROM users WHERE users.is_verified=1 AND COALESCE(users.is_blocked,0)=0 AND COALESCE(users.hidden_by_admin,0)=0 AND (users.role='worker' OR users.role IS NULL) ORDER BY users.is_pinned DESC, avg_rating_calc DESC, rating_count_calc DESC, users.views DESC LIMIT 50''').fetchall()
-    cards=''.join(worker_card(row) for row in rows) if rows else '<div class="empty-state">لا توجد بيانات كافية حالياً</div>'
-    return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f'''<div class="container"><a href="/workers"><button class="light-btn">رجوع</button></a><h2>⭐ أفضل المختصين</h2><div class="section-subtitle">الترتيب حسب التثبيت والتقييم والمشاهدات.</div>{build_search_panel()}{cards}</div></body></html>''')
-
-@app.route('/worker-stats')
-def worker_stats():
-    if 'user' not in session: return redirect(url_for('login'))
-    if session.get('role') != 'worker': return redirect(url_for('settings'))
-    user=get_current_session_user()
-    if not user: session.clear(); return redirect(url_for('login'))
-    avg_rating,rating_count=get_worker_rating_summary(user['id'])
-    imgs_count=len([x for x in ((user['work_images'] if 'work_images' in user.keys() else '') or '').split(',') if x.strip()])
-    videos=[x.strip() for x in ((user['work_videos'] if 'work_videos' in user.keys() else '') or '').split(',') if x.strip()]
-    video_views=sum(get_work_video_views(v) for v in videos); reports_count=0
-    try:
-        with get_db() as con:
-            row=con.execute('SELECT COUNT(*) AS c FROM worker_reports WHERE worker_id=?',(user['id'],)).fetchone(); reports_count=int((row['c'] if row else 0) or 0)
-    except Exception: pass
-    return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f'''<div class="container narrow-container"><a href="/settings"><button class="light-btn">رجوع</button></a><h2>إحصائياتي 📊</h2><div class="stats-big-grid"><div class="stats-big-card"><div class="num">{user['views'] or 0}</div><div class="lbl">مشاهدات الملف</div></div><div class="stats-big-card"><div class="num">{video_views}</div><div class="lbl">تشغيل الفيديوهات</div></div><div class="stats-big-card"><div class="num">{avg_rating}</div><div class="lbl">متوسط التقييم</div></div><div class="stats-big-card"><div class="num">{rating_count}</div><div class="lbl">عدد التقييمات</div></div><div class="stats-big-card"><div class="num">{imgs_count}</div><div class="lbl">عدد الصور</div></div><div class="stats-big-card"><div class="num">{len(videos)}</div><div class="lbl">عدد الفيديوهات</div></div><div class="stats-big-card"><div class="num">{reports_count}</div><div class="lbl">عدد البلاغات</div></div></div></div></body></html>''')
-
-@app.route('/manage-work-gallery', methods=['GET','POST'])
-def manage_work_gallery():
-    if 'user' not in session: return redirect(url_for('login'))
-    if session.get('role') != 'worker': return redirect(url_for('settings'))
-    user=get_current_session_user()
-    if not user: session.clear(); return redirect(url_for('login'))
-    imgs=[x.strip() for x in ((user['work_images'] if 'work_images' in user.keys() else '') or '').split(',') if x.strip()]
-    vids=[x.strip() for x in ((user['work_videos'] if 'work_videos' in user.keys() else '') or '').split(',') if x.strip()]
-    if request.method=='POST': return redirect(url_for('manage_work_gallery'))
-    rows=''
-    for idx,img in enumerate(imgs): rows += f'<div class="reorder-item"><div style="display:flex;gap:10px;align-items:center;"><img src="{media_url(img)}"><strong>صورة {idx+1}</strong></div><div class="small">الصورة محفوظة بهذا الترتيب</div></div>'
-    for idx,vid in enumerate(vids): rows += f'<div class="reorder-item"><div style="display:flex;gap:10px;align-items:center;"><video src="{media_url(vid)}" muted preload="metadata"></video><strong>فيديو {idx+1}</strong></div><div class="small">الفيديو محفوظ بهذا الترتيب</div></div>'
-    if not rows: rows='<div class="empty-state">لا توجد صور أو فيديوهات لترتيبها</div>'
-    return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f'''<div class="container"><a href="/settings"><button class="light-btn">رجوع</button></a><h2>ترتيب المعرض</h2><div class="section-subtitle">تعرض هذه الصفحة ترتيب المعرض الحالي. استخدم إدارة الصور والفيديوهات للتغيير.</div><div class="reorder-list">{rows}</div><a href="/manage-work-images/{user['id']}"><button class="light-btn">إدارة الصور</button></a><a href="/manage-work-videos/{user['id']}"><button class="light-btn">إدارة الفيديوهات</button></a></div></body></html>''')
 
 
 if __name__ == "__main__":
