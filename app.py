@@ -2791,6 +2791,19 @@ a{
     .ms-bottom-nav{height:56px;bottom:8px}
 }
 
+
+
+/* === HIDE TOP SETTINGS ON HOME, KEEP BOTTOM SETTINGS ONLY === */
+.ms-top-spacer{
+    width:42px !important;
+    height:42px !important;
+    display:inline-block !important;
+    flex:0 0 42px !important;
+}
+@media(max-width:520px){
+    .ms-top-spacer{width:38px !important;height:38px !important;flex-basis:38px !important;}
+}
+
 </style>
 
 <script>
@@ -4027,7 +4040,7 @@ def workers():
             '''
 
     return render_template_string(
-        STYLE + (settings_corner() if 'user' in session else '') + f'''
+        STYLE + f'''
         <div class="musattar-app-shell">
 
             <div class="musattar-app-top">
@@ -4036,7 +4049,7 @@ def workers():
                     <span>المسطر</span>
                     <span class="ms-title-logo">🏗️</span>
                 </div>
-                <a class="ms-round-btn" href="/settings" aria-label="الإعدادات">⚙️</a>
+                <span class="ms-top-spacer" aria-hidden="true"></span>
             </div>
 
             <!-- تم إلغاء مربع البحث السريع من الصفحة الرئيسية بطلبك -->
