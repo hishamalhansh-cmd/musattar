@@ -2804,6 +2804,24 @@ a{
     .ms-top-spacer{width:38px !important;height:38px !important;flex-basis:38px !important;}
 }
 
+
+
+/* === HIDE TOP SETTINGS ON MODERN HOME VERIFIED === */
+body:has(.musattar-app-shell) .settings-floating,
+body:has(.musattar-app-shell) .message-floating-wrap{
+    display:none !important;
+    visibility:hidden !important;
+    opacity:0 !important;
+    pointer-events:none !important;
+}
+.musattar-app-shell .musattar-app-top a[href="/settings"],
+.musattar-app-shell .musattar-app-top .settings-btn{
+    display:none !important;
+    visibility:hidden !important;
+    opacity:0 !important;
+    pointer-events:none !important;
+}
+
 </style>
 
 <script>
@@ -2879,6 +2897,18 @@ async function compressImageFile(file) {
 }
 document.addEventListener('DOMContentLoaded', attachImageCompressionForms);
 </script>
+
+<script>
+/* remove top settings on /workers verified */
+document.addEventListener('DOMContentLoaded', function(){
+  if (window.location.pathname === '/workers') {
+    document.querySelectorAll('.settings-floating, .message-floating-wrap, .musattar-app-top a[href="/settings"], .musattar-app-top .settings-btn').forEach(function(el){
+      try { el.remove(); } catch(e) { el.style.display = 'none'; }
+    });
+  }
+});
+</script>
+
 </head>
 <body>
 """
@@ -2967,6 +2997,8 @@ def message_notifier_html():
 
 def settings_corner():
     hidden_paths = {"/login", "/register", "/forgot", "/reset"}
+    if request.path == "/workers":
+        return ""
     if "user" in session and request.path not in hidden_paths:
         return '''
         <div class="settings-floating">
