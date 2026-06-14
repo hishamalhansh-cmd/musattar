@@ -2901,7 +2901,7 @@ document.addEventListener('DOMContentLoaded', attachImageCompressionForms);
 <script>
 /* remove top settings on /workers verified */
 document.addEventListener('DOMContentLoaded', function(){
-  if (window.location.pathname === '/workers') {
+  if (window.location.pathname === '/workers' || window.location.pathname.startsWith('/workers-')) {
     document.querySelectorAll('.settings-floating, .message-floating-wrap, .musattar-app-top a[href="/settings"], .musattar-app-top .settings-btn').forEach(function(el){
       try { el.remove(); } catch(e) { el.style.display = 'none'; }
     });
@@ -2997,7 +2997,8 @@ def message_notifier_html():
 
 def settings_corner():
     hidden_paths = {"/login", "/register", "/forgot", "/reset"}
-    if request.path == "/workers":
+    # إلغاء أيقونات الإعدادات/الرسائل العلوية من كل صفحات الأقسام.
+    if request.path.startswith("/workers"):
         return ""
     if "user" in session and request.path not in hidden_paths:
         return '''
@@ -4182,7 +4183,7 @@ def workers_group(group_name):
 
     if group_name not in SPECIALTY_GROUPS:
         return render_template_string(
-            STYLE + (settings_corner() if 'user' in session else '') + '''
+            STYLE + '''
             <div class="container">
                 <div class="msg">القسم المطلوب غير موجود</div>
                 <a href="/workers"><button>رجوع</button></a>
@@ -4192,11 +4193,12 @@ def workers_group(group_name):
         )
 
     specialties_cards = build_group_specialties_cards(group_name)
+    bottom_nav = build_video_bottom_nav("sections")
 
     user_buttons = ""
 
     return render_template_string(
-        STYLE + (settings_corner() if 'user' in session else '') + f'''
+        STYLE + f'''
         <div class="container">
             <div class="topbar">
                 <div><a href="/workers"><button class="light-btn">رجوع للأقسام</button></a></div>
@@ -4210,6 +4212,7 @@ def workers_group(group_name):
 
             {user_buttons}
             {specialties_cards}
+            {bottom_nav}
         </div>
         </body></html>
         '''
@@ -4223,7 +4226,7 @@ def workers_specialty(specialty_name):
 
     if specialty_name not in SPECIALTIES:
         return render_template_string(
-            STYLE + (settings_corner() if 'user' in session else '') + '''
+            STYLE + '''
             <div class="container">
                 <div class="msg">الاختصاص المطلوب غير موجود</div>
                 <a href="/workers"><button>رجوع</button></a>
@@ -4250,11 +4253,12 @@ def workers_specialty(specialty_name):
         ).fetchall()
 
     cards = "".join(worker_card(row) for row in rows) if rows else '<div class="msg">لا يوجد مستخدمون مسجلون حالياً بهذا الاختصاص</div>'
+    bottom_nav = build_video_bottom_nav("sections")
 
     user_buttons = ""
 
     return render_template_string(
-        STYLE + (settings_corner() if 'user' in session else '') + f'''
+        STYLE + f'''
         <div class="container">
             <div class="topbar">
                 <div class="inline">
@@ -4278,6 +4282,7 @@ def workers_specialty(specialty_name):
             <div id="results" style="margin-top:18px;">
                 {cards}
             </div>
+            {bottom_nav}
         </div>
         </body></html>
         '''
