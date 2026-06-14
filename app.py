@@ -3957,6 +3957,7 @@ def worker_card(worker):
 
 
 def build_video_fast_categories():
+    # الأقسام السريعة تفتح قائمة المختصين مباشرة، بدون صفحة اختيار فرعية
     fast_items = []
     for group_name, items in SPECIALTY_GROUPS.items():
         icon = get_specialty_icon(items[0]) if items else "🛠️"
@@ -3964,7 +3965,7 @@ def build_video_fast_categories():
     html = '<div class="ms-fast-grid">'
     for group_name, icon in fast_items:
         html += f"""
-        <a class="ms-fast-card" href="/workers-group/{group_name}">
+        <a class="ms-fast-card" href="/workers-quick/{group_name}">
             <div class="ms-fast-icon">{icon}</div>
             <div>{group_name}</div>
         </a>
@@ -4105,6 +4106,74 @@ def workers():
         </body></html>
         '''
     )
+
+
+@app.route("/workers-quick/<path:group_name>")
+def workers_quick_group(group_name):
+    auto_login_from_cookie()
+    group_name = sanitize_input(group_name, 80)
+
+    if group_name not in SPECIALTY_GROUPS:
+        return render_template_string(
+            STYLE + """
+            <div class="musattar-app-shell">
+                <div class="ms-empty-soft">القسم المطلوب غير موجود</div>
+                <a class="link-btn" href="/workers">رجوع</a>
+            </div>
+            </body></html>
+            """
+        )
+
+    items = SPECIALTY_GROUPS.get(group_name, [])
+    placeholders = ",".join(["?"] * len(items))
+    if items:
+        with get_db() as con:
+            rows = con.execute(
+                f"""
+                SELECT users.*
+                FROM users
+                WHERE users.is_verified=1
+                  AND COALESCE(users.is_blocked,0)=0
+                  AND COALESCE(users.hidden_by_admin,0)=0
+                  AND (users.role='worker' OR users.role IS NULL)
+                  AND users.section IN ({placeholders})
+                ORDER BY users.is_pinned DESC, users.views DESC, users.id DESC
+                """,
+                tuple(items)
+            ).fetchall()
+    else:
+        rows = []
+
+    cards = "".join(worker_card(row) for row in rows) if rows else '<div class="ms-empty-soft">لا يوجد مختصين مسجلين حالياً بهذا القسم</div>'
+    bottom_nav = build_video_bottom_nav("sections")
+    icon = get_specialty_icon(items[0]) if items else "🛠️"
+
+    page_html = f"""
+        <div class="musattar-app-shell">
+            <div class="musattar-app-top">
+                <a class="ms-round-btn" href="/workers">‹</a>
+                <div class="ms-title-lockup">
+                    <span>{group_name}</span>
+                    <span class="ms-title-logo">{icon}</span>
+                </div>
+                <span class="ms-top-spacer" aria-hidden="true"></span>
+            </div>
+
+            <div class="ms-section-head">
+                <h2>المختصين المسجلين</h2>
+                <a href="/workers">رجوع</a>
+            </div>
+
+            <div class="ms-results-wrap">
+                {cards}
+            </div>
+
+            {bottom_nav}
+        </div>
+        </body></html>
+    """
+    return render_template_string(STYLE + page_html)
+
 
 @app.route("/workers-group/<path:group_name>")
 def workers_group(group_name):
