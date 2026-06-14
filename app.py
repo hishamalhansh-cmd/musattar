@@ -4040,37 +4040,7 @@ def workers():
                 <a class="ms-round-btn" href="/settings" aria-label="الإعدادات">⚙️</a>
             </div>
 
-            <div class="ms-search-card">
-                <div class="ms-search-title">
-                    <span>🔎 بحث سريع</span>
-                    <span>ناعم ومختصر</span>
-                </div>
-
-                <form method="get" action="/workers">
-                    <div class="ms-search-main">
-                        <input name="q" value="{q}" placeholder="اسم المختص أو المدينة">
-                        <button type="submit">بحث</button>
-                    </div>
-
-                    <div class="ms-filter-label">فلترة حسب المحافظة والاختصاص</div>
-                    <div class="ms-filter-row">
-                        <select name="governorate">
-                            <option value="">كل المحافظات</option>
-                            {gov_options}
-                        </select>
-                        <select name="specialty">
-                            <option value="">كل الاختصاصات</option>
-                            {specialty_options}
-                        </select>
-                    </div>
-
-                    <div class="ms-quick-actions">
-                        <a class="ms-action-chip" href="/workers">✨ الكل</a>
-                        <a class="ms-action-chip" href="/workers?specialty=مهندس كهربائيات">⚡ المهندسون</a>
-                        <a class="ms-action-chip" href="/workers?specialty=عمال بناء">👷 العمال</a>
-                    </div>
-                </form>
-            </div>
+            <!-- تم إلغاء مربع البحث السريع من الصفحة الرئيسية بطلبك -->
 
             <div class="ms-hero-banner">
                 <div class="ms-hero-kicker">✨ تطبيق خدمات البناء</div>
