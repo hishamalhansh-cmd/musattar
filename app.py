@@ -110,6 +110,11 @@ DEV_CONSOLE_OTP_FALLBACK = False
 MAIL_ENABLED = env_flag("MAIL_ENABLED", True)
 OTP_EXPIRY_SECONDS = 10 * 60
 
+# OneSignal Push Notifications (optional; disabled until env vars are set)
+ONESIGNAL_APP_ID = os.environ.get("ONESIGNAL_APP_ID", "").strip()
+ONESIGNAL_REST_API_KEY = (os.environ.get("ONESIGNAL_REST_API_KEY", "").strip() or os.environ.get("ONESIGNAL_API_KEY", "").strip())
+ONESIGNAL_ADMIN_SUBSCRIPTION_IDS = os.environ.get("ONESIGNAL_ADMIN_SUBSCRIPTION_IDS", "").strip()
+
 CONTACT_PHONE = "+9647864145165"
 CONTACT_EMAIL = "hishamalhansh@gmail.com"
 
@@ -1187,6 +1192,15 @@ def init_db_sqlite(cur):
     if not column_exists(cur, "users", "remember_token"):
         cur.execute("ALTER TABLE users ADD COLUMN remember_token TEXT DEFAULT ''")
 
+    if not column_exists(cur, "users", "onesignal_subscription_id"):
+        cur.execute("ALTER TABLE users ADD COLUMN onesignal_subscription_id TEXT DEFAULT ''")
+
+    if not column_exists(cur, "users", "onesignal_player_id"):
+        cur.execute("ALTER TABLE users ADD COLUMN onesignal_player_id TEXT DEFAULT ''")
+
+    if not column_exists(cur, "users", "push_enabled"):
+        cur.execute("ALTER TABLE users ADD COLUMN push_enabled INTEGER DEFAULT 1")
+
     cur.execute("""
     CREATE TABLE IF NOT EXISTS user_passkeys(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1344,7 +1358,10 @@ def init_db_postgres(cur):
         is_pinned INTEGER DEFAULT 0,
         is_blocked INTEGER DEFAULT 0,
         hidden_by_admin INTEGER DEFAULT 0,
-        remember_token TEXT DEFAULT ''
+        remember_token TEXT DEFAULT '',
+        onesignal_subscription_id TEXT DEFAULT '',
+        onesignal_player_id TEXT DEFAULT '',
+        push_enabled INTEGER DEFAULT 1
     )
     """)
 
@@ -1362,7 +1379,10 @@ def init_db_postgres(cur):
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_pinned INTEGER DEFAULT 0",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_blocked INTEGER DEFAULT 0",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS hidden_by_admin INTEGER DEFAULT 0",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS remember_token TEXT DEFAULT ''"
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS remember_token TEXT DEFAULT ''",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS onesignal_subscription_id TEXT DEFAULT ''",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS onesignal_player_id TEXT DEFAULT ''",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS push_enabled INTEGER DEFAULT 1"
     ]:
         cur.execute(alter_sql)
 
@@ -1630,6 +1650,228 @@ def send_mail(to_email, subject, body, html_body=None):
         return False
 
 
+
+
+def onesignal_enabled():
+    return bool(ONESIGNAL_APP_ID and ONESIGNAL_REST_API_KEY)
+
+
+def parse_onesignal_ids(value):
+    if not value:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        raw_items = list(value)
+    else:
+        raw_items = str(value).replace("\n", ",").replace(";", ",").split(",")
+    cleaned = []
+    for item in raw_items:
+        item = str(item or "").strip()
+        if item and item not in cleaned:
+            cleaned.append(item)
+    return cleaned
+
+
+def absolute_app_url(path="/"):
+    path = path or "/"
+    try:
+        if path.startswith("http://") or path.startswith("https://"):
+            return path
+        return request.url_root.rstrip("/") + (path if path.startswith("/") else "/" + path)
+    except Exception:
+        return path
+
+
+def send_onesignal_payload(payload):
+    if not onesignal_enabled():
+        return False
+    try:
+        req = urllib.request.Request(
+            "https://api.onesignal.com/api/v1/notifications",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Basic {ONESIGNAL_REST_API_KEY}",
+                "Content-Type": "application/json; charset=utf-8",
+                "Accept": "application/json",
+                "User-Agent": "musattar-app/1.0",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=18) as resp:
+            raw = resp.read().decode("utf-8", errors="ignore")
+            print("ONESIGNAL STATUS:", getattr(resp, "status", "unknown"), raw)
+            return 200 <= int(getattr(resp, "status", 0) or 0) < 300
+    except urllib.error.HTTPError as e:
+        try:
+            detail = e.read().decode("utf-8", errors="ignore")
+        except Exception:
+            detail = str(e)
+        print("ONESIGNAL HTTP ERROR:", e.code, detail)
+        return False
+    except Exception as e:
+        print("ONESIGNAL SEND ERROR:", repr(e))
+        return False
+
+
+def send_push_to_subscription_ids(subscription_ids, title, message, url=""):
+    subscription_ids = parse_onesignal_ids(subscription_ids)
+    if not subscription_ids:
+        return False
+    payload = {
+        "app_id": ONESIGNAL_APP_ID,
+        "include_subscription_ids": subscription_ids,
+        "headings": {"en": title, "ar": title},
+        "contents": {"en": message, "ar": message},
+    }
+    if url:
+        payload["url"] = absolute_app_url(url)
+    return send_onesignal_payload(payload)
+
+
+def send_push_to_player_ids(player_ids, title, message, url=""):
+    player_ids = parse_onesignal_ids(player_ids)
+    if not player_ids:
+        return False
+    payload = {
+        "app_id": ONESIGNAL_APP_ID,
+        "include_player_ids": player_ids,
+        "headings": {"en": title, "ar": title},
+        "contents": {"en": message, "ar": message},
+    }
+    if url:
+        payload["url"] = absolute_app_url(url)
+    return send_onesignal_payload(payload)
+
+
+def get_user_push_ids(user):
+    if not user:
+        return [], []
+    subscription_ids = []
+    player_ids = []
+    try:
+        if "push_enabled" in user.keys() and int((user["push_enabled"] if user["push_enabled"] is not None else 1) or 0) == 0:
+            return [], []
+    except Exception:
+        pass
+    try:
+        if "onesignal_subscription_id" in user.keys():
+            subscription_ids = parse_onesignal_ids(user["onesignal_subscription_id"] or "")
+    except Exception:
+        subscription_ids = []
+    try:
+        if "onesignal_player_id" in user.keys():
+            player_ids = parse_onesignal_ids(user["onesignal_player_id"] or "")
+    except Exception:
+        player_ids = []
+    return subscription_ids, player_ids
+
+
+def send_push_to_user(user_id, title, message, url=""):
+    try:
+        with get_db() as con:
+            user = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+    except Exception:
+        user = None
+    subscription_ids, player_ids = get_user_push_ids(user)
+    sent = False
+    if subscription_ids:
+        sent = send_push_to_subscription_ids(subscription_ids, title, message, url) or sent
+    if player_ids:
+        sent = send_push_to_player_ids(player_ids, title, message, url) or sent
+    return sent
+
+
+def send_push_to_admins(title, message, url="/admin/pending-workers"):
+    admin_ids = parse_onesignal_ids(ONESIGNAL_ADMIN_SUBSCRIPTION_IDS)
+    if not admin_ids:
+        return False
+    return send_push_to_subscription_ids(admin_ids, title, message, url)
+
+
+def notify_admin_new_worker(worker):
+    if not worker:
+        return False
+    try:
+        name = worker["name"] or "مختص جديد"
+        section = worker["section"] or "بدون اختصاص"
+    except Exception:
+        name = "مختص جديد"
+        section = "بدون اختصاص"
+    return send_push_to_admins(
+        "حساب مختص جديد",
+        f"{name} سجل في المسطر وينتظر المراجعة - {section}",
+        "/admin/pending-workers"
+    )
+
+def push_preview_text(text, max_length=120):
+    text = sanitize_input(text or "", max_length * 2)
+    if len(text) > max_length:
+        return text[:max_length].rstrip() + "..."
+    return text
+
+
+def notify_new_direct_message(receiver_id, sender_name, msg, conversation_id):
+    try:
+        sender_name = sanitize_input(sender_name or "مستخدم", 80)
+        preview = push_preview_text(msg, 110)
+        return send_push_to_user(
+            receiver_id,
+            "رسالة جديدة في المسطر",
+            f"{sender_name}: {preview}",
+            f"/conversation/{conversation_id}"
+        )
+    except Exception as e:
+        print("DIRECT MESSAGE PUSH ERROR:", repr(e))
+        return False
+
+
+def notify_new_worker_rating(worker_id, commenter_name, rating, comment):
+    try:
+        commenter_name = sanitize_input(commenter_name or "زائر", 80)
+        preview = push_preview_text(comment, 105)
+        return send_push_to_user(
+            worker_id,
+            "تقييم جديد على ملفك",
+            f"{commenter_name} قيّمك {rating}/5: {preview}",
+            f"/worker/{worker_id}"
+        )
+    except Exception as e:
+        print("RATING PUSH ERROR:", repr(e))
+        return False
+
+
+def notify_admin_support_message(user, msg, attachment_type=""):
+    try:
+        if not user:
+            return False
+        name = sanitize_input(user["name"] or "مستخدم", 80)
+        preview = push_preview_text(msg, 95)
+        if not preview and attachment_type:
+            preview = "أرسل مرفقاً جديداً"
+        return send_push_to_admins(
+            "رسالة دعم جديدة",
+            f"{name}: {preview}",
+            f"/admin/support?user_id={user['id']}"
+        )
+    except Exception as e:
+        print("ADMIN SUPPORT PUSH ERROR:", repr(e))
+        return False
+
+
+def notify_user_support_reply(user_id, msg, attachment_type=""):
+    try:
+        preview = push_preview_text(msg, 110)
+        if not preview and attachment_type:
+            preview = "تم إرسال مرفق من الدعم الفني"
+        return send_push_to_user(
+            user_id,
+            "رد جديد من الدعم الفني",
+            f"الدعم الفني: {preview}",
+            "/support"
+        )
+    except Exception as e:
+        print("USER SUPPORT PUSH ERROR:", repr(e))
+        return False
+
 def otp_is_expired(session_key="otp_created_at"):
     created_at = session.get(session_key)
     if not created_at:
@@ -1729,8 +1971,18 @@ def complete_pending_registration():
                 "profile_pic": pending_data.get("profile_pic", ""),
                 "work_images": pending_data.get("work_images", ""),
             })
+            # بعد تأكيد البريد، حساب المختص لا يظهر للزوار إلا بعد موافقة الإدارة.
+            con.execute(
+                "UPDATE users SET is_verified=0, hidden_by_admin=0, admin_warning=? WHERE phone=? OR email=?",
+                ("قيد مراجعة الإدارة", phone, email)
+            )
+            new_worker = con.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
             con.commit()
-            return True, "تم إنشاء الحساب بنجاح", url_for("login")
+            try:
+                notify_admin_new_worker(new_worker)
+            except Exception as notify_error:
+                print("ADMIN PUSH NOTIFY ERROR:", repr(notify_error))
+            return True, "تم تأكيد البريد وإنشاء الحساب. الحساب الآن قيد مراجعة الإدارة ولن يظهر للزائرين إلا بعد الموافقة.", url_for("login")
     except DB_INTEGRITY_ERRORS:
         if role != "visitor":
             cleanup_saved_files(pending_data)
@@ -2892,7 +3144,7 @@ async function compressImageFile(file) {
   ctx.drawImage(bitmap, 0, 0, width, height);
   const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.82));
   if (!blob || blob.size >= file.size) return file;
-  const name = (file.name || 'image').replace(/\.[^.]+$/, '') + '.jpg';
+  const name = (file.name || 'image').replace(/\\.[^.]+$/, '') + '.jpg';
   return new File([blob], name, { type: 'image/jpeg', lastModified: Date.now() });
 }
 document.addEventListener('DOMContentLoaded', attachImageCompressionForms);
@@ -2995,6 +3247,66 @@ def message_notifier_html():
     '''
 
 
+
+
+def push_notifier_html():
+    if "user" not in session or not ONESIGNAL_APP_ID:
+        return ""
+    app_id_js = json.dumps(ONESIGNAL_APP_ID)
+    html = """
+    <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+    <script>
+    window.OneSignalDeferred = window.OneSignalDeferred || [];
+    window.musattarEnableNotifications = async function() {
+        if (!window.OneSignalDeferred) return;
+        window.OneSignalDeferred.push(async function(OneSignal) {
+            try {
+                await OneSignal.init({ appId: __APP_ID__, serviceWorkerPath: "/OneSignalSDKWorker.js" });
+                if (OneSignal.Notifications && OneSignal.Notifications.permission !== true) {
+                    await OneSignal.Notifications.requestPermission();
+                }
+                let subId = "";
+                try { subId = OneSignal.User && OneSignal.User.PushSubscription ? OneSignal.User.PushSubscription.id : ""; } catch(e) {}
+                if (subId) {
+                    await fetch('/api/push-subscription', {
+                        method:'POST',
+                        headers:{'Content-Type':'application/json'},
+                        body:JSON.stringify({subscription_id: subId})
+                    });
+                }
+            } catch(e) { console.log('OneSignal init error', e); }
+        });
+    };
+    window.OneSignalDeferred.push(async function(OneSignal) {
+        try {
+            await OneSignal.init({ appId: __APP_ID__, serviceWorkerPath: "/OneSignalSDKWorker.js" });
+            let subId = "";
+            try { subId = OneSignal.User && OneSignal.User.PushSubscription ? OneSignal.User.PushSubscription.id : ""; } catch(e) {}
+            if (subId) {
+                await fetch('/api/push-subscription', {
+                    method:'POST',
+                    headers:{'Content-Type':'application/json'},
+                    body:JSON.stringify({subscription_id: subId})
+                });
+            }
+            if (OneSignal.User && OneSignal.User.PushSubscription && OneSignal.User.PushSubscription.addEventListener) {
+                OneSignal.User.PushSubscription.addEventListener('change', async function(event) {
+                    const id = (event && event.current && event.current.id) || (OneSignal.User.PushSubscription.id || '');
+                    if (id) {
+                        await fetch('/api/push-subscription', {
+                            method:'POST',
+                            headers:{'Content-Type':'application/json'},
+                            body:JSON.stringify({subscription_id: id})
+                        });
+                    }
+                });
+            }
+        } catch(e) { console.log('OneSignal passive init error', e); }
+    });
+    </script>
+    """
+    return html.replace("__APP_ID__", app_id_js)
+
 def settings_corner():
     hidden_paths = {"/login", "/register", "/forgot", "/reset"}
     # إلغاء أيقونات الإعدادات/الرسائل العلوية من كل صفحات الأقسام.
@@ -3005,8 +3317,67 @@ def settings_corner():
         <div class="settings-floating">
             <a class="settings-btn" href="/settings" title="الإعدادات" aria-label="الإعدادات">⚙️</a>
         </div>
-        ''' + message_notifier_html()
+        ''' + message_notifier_html() + push_notifier_html()
     return ""
+
+
+@app.route("/api/push-subscription", methods=["POST"])
+def api_push_subscription():
+    if "user" not in session:
+        return jsonify({"ok": False, "error": "login_required"}), 401
+    current_user = get_current_session_user()
+    if not current_user:
+        return jsonify({"ok": False, "error": "user_not_found"}), 404
+    data = request.get_json(silent=True) or {}
+    subscription_id = sanitize_input(data.get("subscription_id", ""), 220)
+    player_id = sanitize_input(data.get("player_id", ""), 220)
+    if not subscription_id and not player_id:
+        return jsonify({"ok": False, "error": "missing_subscription"}), 400
+    try:
+        with get_db() as con:
+            if subscription_id and player_id:
+                con.execute(
+                    "UPDATE users SET onesignal_subscription_id=?, onesignal_player_id=?, push_enabled=1 WHERE id=?",
+                    (subscription_id, player_id, current_user["id"])
+                )
+            elif subscription_id:
+                con.execute(
+                    "UPDATE users SET onesignal_subscription_id=?, push_enabled=1 WHERE id=?",
+                    (subscription_id, current_user["id"])
+                )
+            else:
+                con.execute(
+                    "UPDATE users SET onesignal_player_id=?, push_enabled=1 WHERE id=?",
+                    (player_id, current_user["id"])
+                )
+            con.commit()
+        return jsonify({"ok": True})
+    except Exception as e:
+        print("PUSH SUBSCRIPTION SAVE ERROR:", repr(e))
+        return jsonify({"ok": False, "error": "save_failed"}), 500
+
+
+@app.route("/api/push-disable", methods=["POST"])
+def api_push_disable():
+    if "user" not in session:
+        return jsonify({"ok": False, "error": "login_required"}), 401
+    current_user = get_current_session_user()
+    if not current_user:
+        return jsonify({"ok": False, "error": "user_not_found"}), 404
+    try:
+        with get_db() as con:
+            con.execute("UPDATE users SET push_enabled=0 WHERE id=?", (current_user["id"],))
+            con.commit()
+        return jsonify({"ok": True})
+    except Exception:
+        return jsonify({"ok": False, "error": "save_failed"}), 500
+
+
+@app.route("/OneSignalSDKWorker.js")
+@app.route("/OneSignalSDKUpdaterWorker.js")
+def onesignal_service_worker():
+    js = "importScripts('https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.sw.js');"
+    return app.response_class(js, mimetype="application/javascript")
 
 
 HOME_HTML = STYLE + """
@@ -3632,7 +4003,7 @@ def verify():
         if not ok:
             return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f'<div class="container"><div class="msg">{msg}</div><a href="/register"><button>رجوع</button></a></div></body></html>')
 
-        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container"><div class="msg">تم تأكيد البريد الإلكتروني وإنشاء الحساب بنجاح</div><a href="/login"><button>تسجيل الدخول</button></a></div></body></html>')
+        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f'<div class="container"><div class="msg">{msg}</div><a href="/login"><button>تسجيل الدخول</button></a></div></body></html>')
 
     return render_template_string(
         STYLE + (settings_corner() if 'user' in session else '') + f"""
@@ -4289,6 +4660,11 @@ def worker_profile(user_id):
                 )
                 con.commit()
 
+            try:
+                notify_new_worker_rating(user_id, commenter_name, rating, comment)
+            except Exception as notify_error:
+                print("WORKER RATING PUSH ERROR:", repr(notify_error))
+
             return redirect(url_for("worker_profile", user_id=user_id))
 
         avg_rating, rating_count = get_worker_rating_summary(user_id)
@@ -4602,6 +4978,11 @@ def message_user(user_id):
             )
             con.commit()
 
+        try:
+            notify_new_direct_message(receiver["id"], sender["name"], msg, conversation_id)
+        except Exception as notify_error:
+            print("DIRECT MESSAGE PUSH ERROR:", repr(notify_error))
+
         return redirect(url_for("conversation_view", conversation_id=conversation_id))
 
     return redirect(url_for("conversation_view", conversation_id=conversation_id))
@@ -4691,6 +5072,11 @@ def conversation_view(conversation_id):
                 (conversation_id,)
             )
             con.commit()
+
+        try:
+            notify_new_direct_message(other["id"], current_user["name"], msg, conversation_id)
+        except Exception as notify_error:
+            print("CONVERSATION MESSAGE PUSH ERROR:", repr(notify_error))
 
         return redirect(url_for("conversation_view", conversation_id=conversation_id))
 
@@ -5063,6 +5449,11 @@ def support():
             )
             con.commit()
 
+        try:
+            notify_admin_support_message(current_user, msg, attachment_type)
+        except Exception as notify_error:
+            print("SUPPORT USER PUSH ERROR:", repr(notify_error))
+
         return redirect(url_for("support"))
 
     with get_db() as con:
@@ -5168,6 +5559,10 @@ def admin_support():
                         )
                         con.commit()
                         log_admin_action("رد دعم فني", user["name"], "تم إرسال رد من الأدمن داخل الدعم الفني")
+                        try:
+                            notify_user_support_reply(uid, msg, attachment_type)
+                        except Exception as notify_error:
+                            print("SUPPORT ADMIN REPLY PUSH ERROR:", repr(notify_error))
             return redirect(url_for("admin_support", user_id=selected_user_id))
 
     with get_db() as con:
@@ -5362,6 +5757,7 @@ def admin_panel():
         pinned_count = con.execute("SELECT COUNT(*) AS c FROM users WHERE is_pinned=1").fetchone()["c"]
         blocked_count = con.execute("SELECT COUNT(*) AS c FROM users WHERE COALESCE(is_blocked,0)=1").fetchone()["c"]
         hidden_count = con.execute("SELECT COUNT(*) AS c FROM users WHERE COALESCE(hidden_by_admin,0)=1").fetchone()["c"]
+        pending_approval_count = con.execute("SELECT COUNT(*) AS c FROM users WHERE COALESCE(is_verified,0)=0 AND COALESCE(role,'worker')='worker' AND COALESCE(is_blocked,0)=0").fetchone()["c"]
 
         if admin_q:
             like_q = f"%{admin_q}%"
@@ -5389,6 +5785,12 @@ def admin_panel():
         hide_text = 'إظهار الملف' if u["hidden_by_admin"] else 'إخفاء الملف'
         blocked_badge = '<span class="badge" style="background:rgba(220,38,38,.18);border:1px solid rgba(248,113,113,.35);">🚫 محظور</span>' if u["is_blocked"] else ''
         hidden_badge = '<span class="badge" style="background:rgba(245,158,11,.16);border:1px solid rgba(251,191,36,.28);">🙈 مخفي</span>' if u["hidden_by_admin"] else ''
+        is_worker_account = (u["role"] or "worker") == "worker"
+        is_pending_approval = is_worker_account and int((u["is_verified"] if u["is_verified"] is not None else 0) or 0) == 0
+        approval_badge = '<span class="badge" style="background:rgba(250,204,21,.20);border:1px solid rgba(250,204,21,.42);">⏳ قيد المراجعة</span>' if is_pending_approval else ''
+        approval_actions = ''
+        if is_pending_approval:
+            approval_actions = f'<a class="link-btn" href="/admin/approve-worker/{u["id"]}">✅ قبول الحساب</a><a class="link-btn link-red" href="/admin/reject-worker/{u["id"]}">رفض الحساب</a>'
         users_html += f"""
         <div class="admin-user-card">
             <div><strong>{u["name"]}</strong></div>
@@ -5400,6 +5802,7 @@ def admin_panel():
                 {pinned_badge}
                 {blocked_badge}
                 {hidden_badge}
+                {approval_badge}
             </div>
             <div class="small">الهاتف: {u["phone"] or "-"}</div>
             <div class="small">المدينة: {u["city"] or "-"}</div>
@@ -5408,6 +5811,7 @@ def admin_panel():
             <div class="inline" style="margin-top:12px;">
                 <a class="link-btn" href="/worker/{u['id']}">فتح الملف</a>
                 <a class="link-btn" href="/admin/edit-user/{u['id']}">تعديل البيانات</a>
+                {approval_actions}
                 <a class="link-btn" href="{trust_toggle}">{trust_text}</a>
                 <a class="link-btn" href="{pin_toggle}">{pin_text}</a>
                 <a class="link-btn" href="{block_toggle}">{block_text}</a>
@@ -5436,6 +5840,7 @@ def admin_panel():
                     <a href="/admin/messages"><button class="light-btn">كل الرسائل</button></a>
                     <a href="/admin/comments"><button class="light-btn">كل التعليقات</button></a>
                     <a href="/admin/support"><button class="light-btn">الدعم الفني</button></a>
+                    <a href="/admin/pending-workers"><button class="light-btn">قيد المراجعة ({pending_approval_count})</button></a>
                     
                     <a href="/admin/logout"><button>خروج الأدمن</button></a>
                 </div>
@@ -5462,7 +5867,7 @@ def admin_panel():
                 <div class="admin-stat"><div class="label">عدد الرسائل</div><div class="value">{messages_count}</div></div>
                 <div class="admin-stat"><div class="label">عدد التعليقات</div><div class="value">{comments_count}</div></div>
                 <div class="admin-stat"><div class="label">خريطة العمال</div><div class="value">جاهزة</div></div>
-                <div class="admin-stat"><div class="label">البحث الاحترافي</div><div class="value">مفعل</div></div>
+                <div class="admin-stat"><div class="label">قيد المراجعة</div><div class="value">{pending_approval_count}</div></div>
             </div>
 
             <div class="admin-search-box" style="margin-bottom:16px;">
@@ -5492,6 +5897,125 @@ def admin_panel():
         </body></html>
         """
     )
+
+
+
+@app.route("/admin/pending-workers")
+def admin_pending_workers():
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+
+    with get_db() as con:
+        pending_users = con.execute(
+            """
+            SELECT * FROM users
+            WHERE COALESCE(is_verified,0)=0
+              AND COALESCE(role,'worker')='worker'
+              AND COALESCE(is_blocked,0)=0
+            ORDER BY id DESC
+            """
+        ).fetchall()
+
+    cards = ""
+    for u in pending_users:
+        profile_html = profile_thumb_html(u["profile_pic"] or "", "profile-img")
+        cards += f"""
+        <div class="admin-user-card">
+            <div class="worker-card">
+                <div>{profile_html}</div>
+                <div>
+                    <div class="inline" style="margin-bottom:10px;">
+                        <span class="badge">⏳ قيد مراجعة الإدارة</span>
+                        <span class="worker-specialty-badge">{get_specialty_icon(u['section'])} {u['section'] or '-'}</span>
+                        <span class="badge">{u['governorate'] or '-'}</span>
+                    </div>
+                    <h3>{u['name'] or '-'}</h3>
+                    <div class="small">{u['email'] or '-'}</div>
+                    <div class="detail-grid" style="margin-top:12px;">
+                        <div class="detail-box"><strong>الهاتف</strong>{u['phone'] or '-'}</div>
+                        <div class="detail-box"><strong>المدينة</strong>{u['city'] or '-'}</div>
+                        <div class="detail-box"><strong>الخبرة</strong>{u['exp'] or '-'}</div>
+                        <div class="detail-box"><strong>الاختصاص</strong>{u['section'] or '-'}</div>
+                    </div>
+                    <div class="profile-bio-box">{u['bio'] or 'لا توجد نبذة'}</div>
+                    <div class="inline" style="margin-top:12px;">
+                        <a class="link-btn" href="/admin/approve-worker/{u['id']}">✅ قبول وإظهار الحساب</a>
+                        <a class="link-btn link-red" href="/admin/reject-worker/{u['id']}">رفض وإخفاء الحساب</a>
+                        <a class="link-btn secondary" href="/admin/edit-user/{u['id']}">تعديل البيانات</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+
+    if not cards:
+        cards = '<div class="empty-state">لا توجد حسابات مختصين قيد المراجعة حالياً</div>'
+
+    return render_template_string(
+        STYLE + f"""
+        <div class="container">
+            <div class="topbar">
+                <div class="inline">
+                    <a href="/admin/panel"><button class="light-btn">رجوع للوحة الأدمن</button></a>
+                    <a href="/workers"><button class="light-btn">واجهة التطبيق</button></a>
+                </div>
+                <span class="badge">مراجعة الحسابات الجديدة</span>
+            </div>
+            <div class="hero-panel" style="margin-top:14px;margin-bottom:16px;">
+                <h2>حسابات المختصين قيد المراجعة</h2>
+                <div class="section-subtitle">أي مختص يسجل ويؤكد البريد لا يظهر للزوار إلا بعد ضغط قبول من الإدارة.</div>
+            </div>
+            <div class="admin-users-grid">{cards}</div>
+        </div>
+        </body></html>
+        """
+    )
+
+
+@app.route("/admin/approve-worker/<int:user_id>")
+def admin_approve_worker(user_id):
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+    target_name = ""
+    with get_db() as con:
+        user = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        if user:
+            target_name = user["name"] or ""
+            con.execute(
+                "UPDATE users SET is_verified=1, hidden_by_admin=0, admin_warning='' WHERE id=?",
+                (user_id,)
+            )
+            con.commit()
+    if target_name:
+        log_admin_action("قبول حساب مختص", target_name, f"تم قبول الحساب وإظهاره للزوار رقم {user_id}")
+        try:
+            send_push_to_user(user_id, "تم قبول حسابك", "تمت موافقة الإدارة على حسابك في المسطر، وأصبح ملفك ظاهراً للزوار.", f"/worker/{user_id}")
+        except Exception as notify_error:
+            print("WORKER APPROVAL PUSH ERROR:", repr(notify_error))
+    return redirect(url_for("admin_pending_workers"))
+
+
+@app.route("/admin/reject-worker/<int:user_id>")
+def admin_reject_worker(user_id):
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+    target_name = ""
+    with get_db() as con:
+        user = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        if user:
+            target_name = user["name"] or ""
+            con.execute(
+                "UPDATE users SET is_verified=0, hidden_by_admin=1, admin_warning=? WHERE id=?",
+                ("تم رفض الحساب من الإدارة. راجع الدعم الفني لتصحيح البيانات.", user_id)
+            )
+            con.commit()
+    if target_name:
+        log_admin_action("رفض حساب مختص", target_name, f"تم رفض وإخفاء الحساب رقم {user_id}")
+        try:
+            send_push_to_user(user_id, "تم رفض الحساب", "تم رفض حسابك من الإدارة. راجع الدعم الفني لتصحيح البيانات ثم أعد المحاولة.", "/support")
+        except Exception as notify_error:
+            print("WORKER REJECT PUSH ERROR:", repr(notify_error))
+    return redirect(url_for("admin_pending_workers"))
 
 
 @app.route("/admin/verify-worker/<int:user_id>")
@@ -6033,6 +6557,10 @@ def settings():
             <a href="/logout"><button>تسجيل الخروج</button></a>
         """
 
+    notification_button = ""
+    if ONESIGNAL_APP_ID:
+        notification_button = '\n            <button type="button" class="light-btn" onclick="musattarEnableNotifications();return false;">🔔 تفعيل الإشعارات</button>\n            <div class="notice">اضغط مرة واحدة حتى تسمح للتطبيق بإرسال إشعارات مهمة.</div>\n        '
+
     return render_template_string(
         STYLE + (settings_corner() if 'user' in session else '') + f"""
         <div class="container narrow-container">
@@ -6040,6 +6568,7 @@ def settings():
             <div class="section-subtitle">اختر الصفحة التي تريدها.</div>
 
             <div class="card">
+                {notification_button}
                 {buttons_html}
             </div>
         </div>
