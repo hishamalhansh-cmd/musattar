@@ -791,8 +791,15 @@ def validate_support_media(file_obj):
     if media_kind not in {"image", "video"}:
         return False, "الملف يجب أن يكون صورة أو فيديو"
 
-    if not file_size_ok(file_obj):
-        return False, "حجم الملف أكبر من المسموح"
+    try:
+        current_pos = file_obj.stream.tell()
+        file_obj.stream.seek(0, os.SEEK_END)
+        size = file_obj.stream.tell()
+        file_obj.stream.seek(current_pos)
+        if size > MAX_SUPPORT_MEDIA_SIZE:
+            return False, "حجم الملف أكبر من المسموح"
+    except Exception:
+        pass
 
     try:
         file_obj.stream.seek(0)
@@ -1332,6 +1339,29 @@ def init_db_sqlite(cur):
         cur.execute("ALTER TABLE support_messages ADD COLUMN attachment_type TEXT DEFAULT ''")
 
 
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS service_requests(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        requester_id INTEGER DEFAULT 0,
+        requester_name TEXT DEFAULT '',
+        phone TEXT DEFAULT '',
+        governorate TEXT DEFAULT '',
+        city TEXT DEFAULT '',
+        main_group TEXT DEFAULT '',
+        specialty TEXT DEFAULT '',
+        title TEXT DEFAULT '',
+        description TEXT DEFAULT '',
+        attachment TEXT DEFAULT '',
+        attachment_type TEXT DEFAULT '',
+        status TEXT DEFAULT 'new',
+        assigned_worker_id INTEGER DEFAULT 0,
+        admin_note TEXT DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+
 def init_db_postgres(cur):
     cur.execute("""
     CREATE TABLE IF NOT EXISTS users(
@@ -1498,6 +1528,29 @@ def init_db_postgres(cur):
         "ALTER TABLE support_messages ADD COLUMN IF NOT EXISTS attachment_type TEXT DEFAULT ''"
     ]:
         cur.execute(alter_sql)
+
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS service_requests(
+        id BIGSERIAL PRIMARY KEY,
+        requester_id BIGINT DEFAULT 0,
+        requester_name TEXT DEFAULT '',
+        phone TEXT DEFAULT '',
+        governorate TEXT DEFAULT '',
+        city TEXT DEFAULT '',
+        main_group TEXT DEFAULT '',
+        specialty TEXT DEFAULT '',
+        title TEXT DEFAULT '',
+        description TEXT DEFAULT '',
+        attachment TEXT DEFAULT '',
+        attachment_type TEXT DEFAULT '',
+        status TEXT DEFAULT 'new',
+        assigned_worker_id BIGINT DEFAULT 0,
+        admin_note TEXT DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
 
 
 def init_db():
@@ -1854,6 +1907,143 @@ def notify_admin_support_message(user, msg, attachment_type=""):
         )
     except Exception as e:
         print("ADMIN SUPPORT PUSH ERROR:", repr(e))
+        return False
+
+
+
+def service_request_status_label(status):
+    status = (status or "new").strip()
+    labels = {
+        "new": "جديد",
+        "offers": "وصلت عروض",
+        "selected": "تم اختيار مختص",
+        "contacted": "تم التواصل",
+        "closed": "مغلق",
+        "rejected": "مرفوض",
+    }
+    return labels.get(status, "جديد")
+
+
+def service_request_status_badge(status):
+    status = (status or "new").strip()
+    css = {
+        "new": "service-status-new",
+        "offers": "service-status-offers",
+        "selected": "service-status-selected",
+        "contacted": "service-status-contacted",
+        "closed": "service-status-closed",
+        "rejected": "service-status-rejected",
+    }.get(status, "service-status-new")
+    return f'<span class="service-status {css}">{service_request_status_label(status)}</span>'
+
+
+def service_request_attachment_html(req):
+    try:
+        attachment = req["attachment"] or ""
+        attachment_type = req["attachment_type"] or ""
+    except Exception:
+        attachment = ""
+        attachment_type = ""
+    if not attachment:
+        return ""
+    return render_support_attachment(attachment, attachment_type)
+
+
+def service_request_card(req, viewer="user"):
+    status = req["status"] or "new"
+    attachment_html = service_request_attachment_html(req)
+    phone_html = f'<a class="link-btn whatsapp-pill" href="{build_whatsapp_link(req["phone"])}" target="_blank" rel="noopener">واتساب</a>' if (req["phone"] or "") else ""
+    offers_count = get_service_offer_count(req["id"])
+    offers_badge = f'<span class="badge">💰 {offers_count} عرض</span>' if offers_count else '<span class="badge">لا توجد عروض</span>'
+    actions = ""
+    if viewer == "worker":
+        if status not in {"closed", "rejected", "selected"}:
+            actions += f'<a class="link-btn" href="/service-request-offer/{req["id"]}">إرسال عرض</a>'
+            if status == "new":
+                actions += f'<a class="link-btn secondary" href="/service-request-contacted/{req["id"]}">استلام بدون عرض</a>'
+        actions += f'<a class="link-btn secondary" href="/service-request-offers/{req["id"]}">عروضي</a>'
+        actions += phone_html
+    elif viewer == "admin":
+        actions += f'<a class="link-btn secondary" href="/service-request-offers/{req["id"]}">العروض ({offers_count})</a>'
+        actions += f'<a class="link-btn" href="/admin/service-request-status/{req["id"]}/contacted">تم التواصل</a>'
+        actions += f'<a class="link-btn" href="/admin/service-request-status/{req["id"]}/closed">إغلاق</a>'
+        actions += f'<a class="link-btn link-red" href="/admin/service-request-status/{req["id"]}/rejected">رفض</a>'
+        actions += phone_html
+    else:
+        actions += f'<a class="link-btn" href="/service-request-offers/{req["id"]}">مشاهدة العروض ({offers_count})</a>'
+        actions += '<a class="link-btn secondary" href="/my-service-requests">طلباتي</a>'
+
+    return f"""
+    <div class="service-request-card">
+        <div class="service-request-top">
+            <div>
+                <div class="service-request-title">{req["title"] or "طلب خدمة"}</div>
+                <div class="small">{req["created_at"]}</div>
+            </div>
+            {service_request_status_badge(status)}
+        </div>
+        <div class="service-request-meta">
+            <span class="badge">{req["governorate"] or "-"}</span>
+            <span class="badge">{req["city"] or "-"}</span>
+            <span class="worker-specialty-badge">{get_specialty_icon(req["specialty"])} {req["specialty"] or req["main_group"] or "-"}</span>
+            {offers_badge}
+        </div>
+        <div class="small">الاسم: {req["requester_name"] or "زائر"} • الهاتف: {req["phone"] or "-"}</div>
+        <div class="service-request-desc">{req["description"] or "لا يوجد وصف"}</div>
+        {attachment_html}
+        <div class="service-request-actions">{actions}</div>
+    </div>
+    """
+
+
+def notify_matching_workers_service_request(request_id, specialty, governorate, title):
+    specialty = sanitize_input(specialty, 80)
+    governorate = sanitize_input(governorate, 80)
+    title = sanitize_input(title or "طلب خدمة جديد", 120)
+    if not specialty:
+        return 0
+    try:
+        with get_db() as con:
+            rows = con.execute(
+                """
+                SELECT id FROM users
+                WHERE COALESCE(is_verified,0)=1
+                  AND COALESCE(is_blocked,0)=0
+                  AND COALESCE(hidden_by_admin,0)=0
+                  AND COALESCE(push_enabled,1)=1
+                  AND (role='worker' OR role IS NULL)
+                  AND section=?
+                  AND (?='' OR governorate=?)
+                ORDER BY is_pinned DESC, id DESC
+                LIMIT ?
+                """,
+                (specialty, governorate, governorate, 40)
+            ).fetchall()
+        sent_count = 0
+        for row in rows:
+            try:
+                if send_push_to_user(row["id"], "طلب خدمة جديد", f"{title} - {governorate or specialty}", f"/worker-service-requests"):
+                    sent_count += 1
+            except Exception as e:
+                print("SERVICE REQUEST WORKER PUSH ERROR:", repr(e))
+        return sent_count
+    except Exception as e:
+        print("SERVICE REQUEST MATCH ERROR:", repr(e))
+        return 0
+
+
+def notify_admin_new_service_request(request_id, requester_name, specialty, governorate):
+    try:
+        requester_name = sanitize_input(requester_name or "زائر", 80)
+        specialty = sanitize_input(specialty or "طلب خدمة", 80)
+        governorate = sanitize_input(governorate or "", 80)
+        return send_push_to_admins(
+            "طلب خدمة جديد",
+            f"{requester_name} طلب {specialty} {governorate}",
+            "/admin/service-requests"
+        )
+    except Exception as e:
+        print("SERVICE REQUEST ADMIN PUSH ERROR:", repr(e))
         return False
 
 
@@ -3073,6 +3263,60 @@ body:has(.musattar-app-shell) .message-floating-wrap{
     opacity:0 !important;
     pointer-events:none !important;
 }
+
+
+
+/* === SERVICE REQUESTS UPDATE 1.2.0 === */
+.ms-service-cta{
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:10px;
+    margin-top:16px;
+    padding:14px 18px;
+    border-radius:22px;
+    background:linear-gradient(180deg,#60a5fa 0%,#2563eb 100%) !important;
+    color:#fff !important;
+    font-weight:900;
+    box-shadow:0 12px 28px rgba(37,99,235,.20);
+    border:1px solid rgba(37,99,235,.25);
+}
+.ms-service-cta small{display:block;font-weight:700;opacity:.92;font-size:12px;color:#eaf4ff!important}
+.service-request-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-top:14px}
+.service-request-card{background:#fff;border:1px solid rgba(37,99,235,.16);border-radius:22px;padding:16px;box-shadow:0 10px 24px rgba(37,99,235,.08)}
+.service-request-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.service-request-title{font-size:18px;font-weight:900;color:#12325f;margin:0 0 4px}
+.service-request-meta{display:flex;gap:7px;flex-wrap:wrap;margin:8px 0}
+.service-status{display:inline-flex;align-items:center;justify-content:center;gap:5px;padding:6px 10px;border-radius:999px;font-size:12px;font-weight:900;border:1px solid rgba(37,99,235,.14);background:#eef6ff;color:#12325f}
+.service-status-new{background:#fef3c7!important;color:#92400e!important;border-color:rgba(146,64,14,.22)!important}
+.service-status-contacted{background:#dbeafe!important;color:#1d4ed8!important;border-color:rgba(29,78,216,.22)!important}
+.service-status-closed{background:#dcfce7!important;color:#166534!important;border-color:rgba(22,101,52,.22)!important}
+.service-status-rejected{background:#fee2e2!important;color:#991b1b!important;border-color:rgba(153,27,27,.22)!important}
+.service-request-desc{background:#f8fbff;border:1px solid rgba(37,99,235,.12);border-radius:16px;padding:11px 12px;line-height:1.9;color:#12325f;white-space:pre-wrap;word-break:break-word;margin-top:10px}
+.service-request-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.service-request-actions .link-btn{margin:0!important}
+.service-request-form-head{background:linear-gradient(180deg,#eef6ff,#ffffff);border:1px solid rgba(37,99,235,.16);border-radius:24px;padding:18px;margin-bottom:14px;box-shadow:0 10px 24px rgba(37,99,235,.08)}
+@media(max-width:720px){.service-request-grid{grid-template-columns:1fr}.service-request-actions{display:grid;grid-template-columns:1fr 1fr}.ms-service-cta{padding:12px 14px;border-radius:18px}}
+
+
+
+/* === SERVICE OFFERS UPDATE 1.3.0 === */
+.offer-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-top:14px}
+.offer-card{background:#fff;border:1px solid rgba(37,99,235,.16);border-radius:22px;padding:16px;box-shadow:0 10px 24px rgba(37,99,235,.08)}
+.offer-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.offer-worker{font-size:18px;font-weight:900;color:#12325f;margin:0 0 4px}
+.offer-price{font-size:23px;font-weight:900;color:#2563eb;margin:6px 0}
+.offer-duration{display:inline-flex;align-items:center;gap:6px;background:#eef6ff;color:#12325f;border:1px solid rgba(37,99,235,.16);border-radius:999px;padding:6px 10px;font-size:12px;font-weight:900}
+.offer-note{background:#f8fbff;border:1px solid rgba(37,99,235,.12);border-radius:16px;padding:11px 12px;line-height:1.9;color:#12325f;white-space:pre-wrap;word-break:break-word;margin-top:10px}
+.offer-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.offer-actions .link-btn{margin:0!important}
+.offer-status{display:inline-flex;align-items:center;justify-content:center;gap:5px;padding:6px 10px;border-radius:999px;font-size:12px;font-weight:900;border:1px solid rgba(37,99,235,.14);background:#eef6ff;color:#12325f}
+.offer-status-pending{background:#fef3c7!important;color:#92400e!important;border-color:rgba(146,64,14,.22)!important}
+.offer-status-selected{background:#dcfce7!important;color:#166534!important;border-color:rgba(22,101,52,.22)!important}
+.offer-status-cancelled{background:#fee2e2!important;color:#991b1b!important;border-color:rgba(153,27,27,.22)!important}
+.service-status-offers{background:#e0f2fe!important;color:#075985!important;border-color:rgba(7,89,133,.22)!important}
+.service-status-selected{background:#dcfce7!important;color:#166534!important;border-color:rgba(22,101,52,.22)!important}
+.offer-form-card{background:linear-gradient(180deg,#eef6ff,#ffffff);border:1px solid rgba(37,99,235,.16);border-radius:24px;padding:18px;margin-bottom:14px;box-shadow:0 10px 24px rgba(37,99,235,.08)}
+@media(max-width:720px){.offer-grid{grid-template-columns:1fr}.offer-actions{display:grid;grid-template-columns:1fr 1fr}.offer-price{font-size:21px}}
 
 </style>
 
@@ -4367,8 +4611,8 @@ def build_video_bottom_nav(active="home"):
     items = [
         ("home", "/workers", "🏠", "الرئيسية"),
         ("sections", "/workers", "☰", "الأقسام"),
-        ("work", "/workers", "💼", "العمل"),
-        ("favorite", favorites_link, "⭐", "المفضلة"),
+        ("work", "/request-service", "🧰", "اطلب"),
+        ("favorite", "/my-service-requests", "📋", "طلباتي"),
         ("settings", account_link, "⚙️", "إعدادات"),
     ]
     html = '<div class="ms-bottom-nav">'
@@ -4463,6 +4707,10 @@ def workers():
                 <div class="ms-hero-kicker">✨ تطبيق خدمات البناء</div>
                 <h1 class="ms-hero-title">كل مختص تحتاجه تلقاه بسرعة</h1>
                 <div class="ms-hero-sub">اختر القسم، شوف الأعمال والفيديوهات، وتواصل واتساب مباشرة.</div>
+                <a class="ms-service-cta" href="/request-service">
+                    <span>🧰 اطلب خدمة الآن</span>
+                    <small>وصل طلبك للمختصين المناسبين مباشرة</small>
+                </a>
             </div>
 
             {results_html}
@@ -4598,6 +4846,254 @@ def workers_specialty(specialty_name):
         </body></html>
         '''
     )
+
+
+
+@app.route("/request-service", methods=["GET", "POST"])
+def request_service():
+    auto_login_from_cookie()
+    current_user = get_current_session_user() if "user" in session else None
+
+    if request.method == "POST":
+        requester_id = int(session.get("user_id") or 0)
+        requester_name = sanitize_input(request.form.get("requester_name", ""), 80)
+        if current_user:
+            requester_name = current_user["name"] or requester_name
+        phone = sanitize_input(request.form.get("phone", ""), 30)
+        if current_user and not phone:
+            try:
+                phone = current_user["phone"] or ""
+            except Exception:
+                phone = ""
+        governorate = sanitize_input(request.form.get("governorate", ""), 80)
+        city = sanitize_input(request.form.get("city", ""), 80)
+        main_group = sanitize_input(request.form.get("main_group", ""), 80)
+        specialty = sanitize_input(request.form.get("section", ""), 80)
+        title = sanitize_input(request.form.get("title", ""), 120)
+        description = sanitize_input(request.form.get("description", ""), 1500)
+
+        if not requester_name or not phone or not governorate or not city or not main_group or not specialty or not description:
+            return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + '<div class="container narrow-container"><div class="msg">اكمل كل الحقول المطلوبة</div><a href="/request-service"><button>رجوع</button></a></div></body></html>')
+        if governorate not in IRAQ_GOVERNORATES:
+            return render_template_string(STYLE + '<div class="container narrow-container"><div class="msg">اختر محافظة صحيحة</div><a href="/request-service"><button>رجوع</button></a></div></body></html>')
+        if main_group not in SPECIALTY_GROUPS or specialty not in SPECIALTY_GROUPS.get(main_group, []):
+            return render_template_string(STYLE + '<div class="container narrow-container"><div class="msg">اختر قسم واختصاص صحيح</div><a href="/request-service"><button>رجوع</button></a></div></body></html>')
+        phone = normalize_iraq_phone(phone)
+        if not valid_phone(phone):
+            return render_template_string(STYLE + '<div class="container narrow-container"><div class="msg">رقم الهاتف غير صحيح</div><a href="/request-service"><button>رجوع</button></a></div></body></html>')
+        if not title:
+            title = f"طلب {specialty}"
+
+        attachment_ref = ""
+        attachment_type = ""
+        media_file = request.files.get("attachment")
+        if media_file and media_file.filename:
+            try:
+                attachment_ref, attachment_type = save_support_media(media_file)
+            except Exception as e:
+                return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f'<div class="container narrow-container"><div class="msg">تعذر رفع الملف: {str(e)}</div><a href="/request-service"><button>رجوع</button></a></div></body></html>')
+
+        with get_db() as con:
+            con.execute(
+                """
+                INSERT INTO service_requests
+                (requester_id, requester_name, phone, governorate, city, main_group, specialty, title, description, attachment, attachment_type, status, assigned_worker_id, admin_note)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', 0, '')
+                """,
+                (requester_id, requester_name, phone, governorate, city, main_group, specialty, title, description, attachment_ref, attachment_type)
+            )
+            con.commit()
+            row = con.execute("SELECT id FROM service_requests ORDER BY id DESC LIMIT 1").fetchone()
+            request_id = int(row["id"] if row else 0)
+
+        notify_matching_workers_service_request(request_id, specialty, governorate, title)
+        notify_admin_new_service_request(request_id, requester_name, specialty, governorate)
+
+        return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f"""
+        <div class="container narrow-container">
+            <div class="msg">تم إرسال طلبك بنجاح. المختصون المناسبون راح يوصلهم إشعار.</div>
+            <a href="/my-service-requests"><button>عرض طلباتي</button></a>
+            <a href="/workers"><button class="light-btn">الرئيسية</button></a>
+        </div>
+        </body></html>
+        """)
+
+    group_options = build_main_groups_options("")
+    gov_options = build_governorates_options("")
+    specialty_options = build_specialties_options("", "")
+    default_name = current_user["name"] if current_user else ""
+    default_phone = ""
+    if current_user:
+        try:
+            default_phone = current_user["phone"] or ""
+        except Exception:
+            default_phone = ""
+    bottom_nav = build_video_bottom_nav("work")
+    return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f"""
+    <div class="container narrow-container">
+        <a href="/workers"><button class="light-btn">رجوع</button></a>
+        <div class="service-request-form-head">
+            <span class="hero-badge">تحديث قوي</span>
+            <h2>اطلب خدمة الآن</h2>
+            <div class="section-subtitle">اكتب المشكلة وحدد الاختصاص، وراح يوصل إشعار للمختصين المناسبين بنفس المحافظة.</div>
+        </div>
+        <form method="post" enctype="multipart/form-data">
+            <input name="requester_name" value="{default_name}" placeholder="اسمك" required>
+            <input name="phone" value="{default_phone}" placeholder="رقم واتساب 07XXXXXXXXX" required>
+            <label>المحافظة</label>
+            <select name="governorate" required>
+                <option value="">اختر المحافظة</option>
+                {gov_options}
+            </select>
+            <input name="city" placeholder="المدينة / المنطقة" required>
+            <label>القسم الرئيسي</label>
+            <select name="main_group" id="main_group" onchange="updateSpecialties()" required>
+                <option value="">اختر القسم</option>
+                {group_options}
+            </select>
+            <label>الاختصاص</label>
+            <select name="section" id="section" required>
+                <option value="">اختر الاختصاص</option>
+                {specialty_options}
+            </select>
+            <input name="title" placeholder="عنوان الطلب مثل: أحتاج فني كهرباء">
+            <textarea name="description" placeholder="اشرح المشكلة أو الخدمة المطلوبة" required></textarea>
+            <label>إرفاق صورة أو فيديو اختياري</label>
+            <input type="file" name="attachment" accept="image/*,video/*">
+            <div class="notice">يفضل ترفع صورة أو فيديو قصير حتى المختص يفهم المشكلة بسرعة.</div>
+            <button>إرسال الطلب للمختصين</button>
+        </form>
+        {bottom_nav}
+    </div>
+    {specialty_script("")}
+    </body></html>
+    """)
+
+
+@app.route("/my-service-requests")
+def my_service_requests():
+    auto_login_from_cookie()
+    if "user" not in session:
+        return render_template_string(STYLE + '<div class="container narrow-container"><div class="msg">حتى تشوف طلباتك، سجل دخول كزائر أو مختص.</div><a href="/visitor/login"><button>دخول الزائر</button></a><a href="/workers"><button class="light-btn">رجوع</button></a></div></body></html>')
+    current_user = get_current_session_user()
+    if not current_user:
+        session.clear()
+        return redirect(url_for("home"))
+    with get_db() as con:
+        rows = con.execute("SELECT * FROM service_requests WHERE requester_id=? ORDER BY id DESC", (current_user["id"],)).fetchall()
+    cards = "".join(service_request_card(r, "user") for r in rows) if rows else '<div class="empty-state">ما عندك طلبات خدمة بعد.</div>'
+    bottom_nav = build_video_bottom_nav("favorite")
+    return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f"""
+    <div class="container">
+        <a href="/workers"><button class="light-btn">رجوع</button></a>
+        <h2>طلباتي</h2>
+        <div class="section-subtitle">هنا تشوف حالة طلبات الخدمة اللي أرسلتها.</div>
+        <div class="service-request-grid">{cards}</div>
+        {bottom_nav}
+    </div>
+    </body></html>
+    """)
+
+
+@app.route("/worker-service-requests")
+def worker_service_requests():
+    if "user" not in session:
+        return redirect(url_for("login"))
+    current_user = get_current_session_user()
+    if not current_user or (current_user["role"] or "worker") == "visitor":
+        return redirect(url_for("workers"))
+    section = current_user["section"] or ""
+    governorate = current_user["governorate"] or ""
+    with get_db() as con:
+        rows = con.execute(
+            """
+            SELECT * FROM service_requests
+            WHERE specialty=?
+              AND (
+                    (status IN ('new','contacted','offers') AND (?='' OR governorate=?))
+                    OR (status='selected' AND assigned_worker_id=?)
+                  )
+            ORDER BY CASE WHEN status='new' THEN 0 WHEN status='offers' THEN 1 ELSE 2 END, id DESC
+            LIMIT ?
+            """,
+            (section, governorate, governorate, current_user["id"], 80)
+        ).fetchall()
+    cards = "".join(service_request_card(r, "worker") for r in rows) if rows else '<div class="empty-state">ماكو طلبات مناسبة لاختصاصك حالياً.</div>'
+    bottom_nav = build_video_bottom_nav("work")
+    return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f"""
+    <div class="container">
+        <a href="/settings"><button class="light-btn">رجوع</button></a>
+        <h2>طلبات الخدمة المناسبة لك</h2>
+        <div class="section-subtitle">تظهر هنا الطلبات المطابقة لاختصاصك ومحافظتك.</div>
+        <div class="service-request-grid">{cards}</div>
+        {bottom_nav}
+    </div>
+    </body></html>
+    """)
+
+
+@app.route("/service-request-contacted/<int:req_id>")
+def service_request_contacted(req_id):
+    if "user" not in session:
+        return redirect(url_for("login"))
+    current_user = get_current_session_user()
+    if not current_user or (current_user["role"] or "worker") == "visitor":
+        return redirect(url_for("workers"))
+    with get_db() as con:
+        con.execute(
+            "UPDATE service_requests SET status='contacted', assigned_worker_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=? AND specialty=?",
+            (current_user["id"], req_id, current_user["section"] or "")
+        )
+        con.commit()
+    return redirect(url_for("worker_service_requests"))
+
+
+@app.route("/admin/service-requests")
+def admin_service_requests():
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+    status = sanitize_input(request.args.get("status", ""), 40)
+    with get_db() as con:
+        if status in {"new", "offers", "selected", "contacted", "closed", "rejected"}:
+            rows = con.execute("SELECT * FROM service_requests WHERE status=? ORDER BY id DESC LIMIT ?", (status, 200)).fetchall()
+        else:
+            rows = con.execute("SELECT * FROM service_requests ORDER BY id DESC LIMIT ?", (200,)).fetchall()
+    cards = "".join(service_request_card(r, "admin") for r in rows) if rows else '<div class="empty-state">لا توجد طلبات خدمة حالياً.</div>'
+    return render_template_string(STYLE + f"""
+    <div class="container">
+        <div class="topbar">
+            <a href="/admin/panel"><button class="light-btn">رجوع للأدمن</button></a>
+            <span class="badge">طلبات الخدمات</span>
+        </div>
+        <h2>إدارة طلبات الخدمات</h2>
+        <div class="inline" style="margin-bottom:14px;">
+            <a class="link-btn secondary" href="/admin/service-requests">الكل</a>
+            <a class="link-btn secondary" href="/admin/service-requests?status=new">الجديدة</a>
+            <a class="link-btn secondary" href="/admin/service-requests?status=offers">وصلت عروض</a>
+            <a class="link-btn secondary" href="/admin/service-requests?status=selected">تم اختيار مختص</a>
+            <a class="link-btn secondary" href="/admin/service-requests?status=contacted">تم التواصل</a>
+            <a class="link-btn secondary" href="/admin/service-requests?status=closed">المغلقة</a>
+            <a class="link-btn secondary" href="/admin/service-requests?status=rejected">المرفوضة</a>
+        </div>
+        <div class="service-request-grid">{cards}</div>
+    </div>
+    </body></html>
+    """)
+
+
+@app.route("/admin/service-request-status/<int:req_id>/<status>")
+def admin_service_request_status(req_id, status):
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+    if status not in {"new", "offers", "selected", "contacted", "closed", "rejected"}:
+        status = "new"
+    with get_db() as con:
+        req = con.execute("SELECT * FROM service_requests WHERE id=?", (req_id,)).fetchone()
+        con.execute("UPDATE service_requests SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (status, req_id))
+        con.commit()
+    if req:
+        log_admin_action("تحديث طلب خدمة", req["requester_name"] or "طلب", f"الحالة الجديدة: {service_request_status_label(status)}")
+    return redirect(url_for("admin_service_requests"))
 
 
 @app.route("/worker/<int:user_id>", methods=["GET", "POST"])
@@ -5758,6 +6254,8 @@ def admin_panel():
         blocked_count = con.execute("SELECT COUNT(*) AS c FROM users WHERE COALESCE(is_blocked,0)=1").fetchone()["c"]
         hidden_count = con.execute("SELECT COUNT(*) AS c FROM users WHERE COALESCE(hidden_by_admin,0)=1").fetchone()["c"]
         pending_approval_count = con.execute("SELECT COUNT(*) AS c FROM users WHERE COALESCE(is_verified,0)=0 AND COALESCE(role,'worker')='worker' AND COALESCE(is_blocked,0)=0").fetchone()["c"]
+        service_requests_count = con.execute("SELECT COUNT(*) AS c FROM service_requests").fetchone()["c"]
+        new_service_requests_count = con.execute("SELECT COUNT(*) AS c FROM service_requests WHERE status='new'").fetchone()["c"]
 
         if admin_q:
             like_q = f"%{admin_q}%"
@@ -5841,6 +6339,7 @@ def admin_panel():
                     <a href="/admin/comments"><button class="light-btn">كل التعليقات</button></a>
                     <a href="/admin/support"><button class="light-btn">الدعم الفني</button></a>
                     <a href="/admin/pending-workers"><button class="light-btn">قيد المراجعة ({pending_approval_count})</button></a>
+                    <a href="/admin/service-requests"><button class="light-btn">طلبات الخدمات ({new_service_requests_count})</button></a>
                     
                     <a href="/admin/logout"><button>خروج الأدمن</button></a>
                 </div>
@@ -5866,7 +6365,7 @@ def admin_panel():
             <div class="admin-stats-grid" style="margin-top:14px;">
                 <div class="admin-stat"><div class="label">عدد الرسائل</div><div class="value">{messages_count}</div></div>
                 <div class="admin-stat"><div class="label">عدد التعليقات</div><div class="value">{comments_count}</div></div>
-                <div class="admin-stat"><div class="label">خريطة العمال</div><div class="value">جاهزة</div></div>
+                <div class="admin-stat"><div class="label">طلبات الخدمات</div><div class="value">{service_requests_count}</div></div>
                 <div class="admin-stat"><div class="label">قيد المراجعة</div><div class="value">{pending_approval_count}</div></div>
             </div>
 
@@ -6538,6 +7037,7 @@ def settings():
             <a href="/inbox"><button class="light-btn">الرسائل</button></a>
             <a href="/favorites"><button class="light-btn">المفضلة ❤️</button></a>
             <a href="/support"><button class="light-btn">الدعم الفني</button></a>
+            <a href="/my-service-requests"><button class="light-btn">طلباتي</button></a>
             <a href="/workers"><button class="light-btn">تصفح الاختصاصات</button></a>
             <a href="/privacy-policy"><button class="light-btn">سياسة الخصوصية</button></a>
             <a href="/terms-of-use"><button class="light-btn">شروط الاستخدام</button></a>
@@ -6550,6 +7050,7 @@ def settings():
             <a href="/edit-profile"><button class="light-btn">تعديل الملف الشخصي</button></a>
             <a href="/inbox"><button class="light-btn">الرسائل</button></a>
             <a href="/support"><button class="light-btn">الدعم الفني</button></a>
+            <a href="/worker-service-requests"><button class="light-btn">طلبات خدمة مناسبة لي</button></a>
             <a href="/workers"><button class="light-btn">الاختصاصات</button></a>
             <a href="/privacy-policy"><button class="light-btn">سياسة الخصوصية</button></a>
             <a href="/terms-of-use"><button class="light-btn">شروط الاستخدام</button></a>
@@ -7132,6 +7633,319 @@ def passkey_auth_finish():
         return resp
     except Exception as e:
         return jsonify({"ok": False, "error": "فشل التحقق من البصمة: " + str(e)}), 400
+
+
+# === SERVICE OFFERS UPDATE 1.3.0: offers and prices ===
+def ensure_service_offers_db():
+    try:
+        with get_db() as con:
+            cur = con.cursor()
+            if USING_POSTGRES:
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS service_offers(
+                    id BIGSERIAL PRIMARY KEY,
+                    request_id BIGINT NOT NULL,
+                    worker_id BIGINT NOT NULL,
+                    price TEXT DEFAULT '',
+                    duration TEXT DEFAULT '',
+                    note TEXT DEFAULT '',
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+                cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_service_offers_unique_worker_request ON service_offers(request_id, worker_id)")
+            else:
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS service_offers(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    request_id INTEGER NOT NULL,
+                    worker_id INTEGER NOT NULL,
+                    price TEXT DEFAULT '',
+                    duration TEXT DEFAULT '',
+                    note TEXT DEFAULT '',
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+                cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_service_offers_unique_worker_request ON service_offers(request_id, worker_id)")
+            con.commit()
+    except Exception as e:
+        print("SERVICE OFFERS DB INIT ERROR:", repr(e))
+
+ensure_service_offers_db()
+
+
+def get_service_offer_count(request_id):
+    try:
+        with get_db() as con:
+            row = con.execute("SELECT COUNT(*) AS c FROM service_offers WHERE request_id=?", (int(request_id),)).fetchone()
+            return int((row["c"] if row else 0) or 0)
+    except Exception:
+        return 0
+
+
+def offer_status_label(status):
+    status = (status or "pending").strip()
+    return {
+        "pending": "بانتظار الاختيار",
+        "selected": "تم اختياره",
+        "cancelled": "ملغي",
+    }.get(status, "بانتظار الاختيار")
+
+
+def offer_status_badge(status):
+    status = (status or "pending").strip()
+    css = {
+        "pending": "offer-status-pending",
+        "selected": "offer-status-selected",
+        "cancelled": "offer-status-cancelled",
+    }.get(status, "offer-status-pending")
+    return f'<span class="offer-status {css}">{offer_status_label(status)}</span>'
+
+
+def user_can_view_service_request(req, current_user=None):
+    if admin_required():
+        return True
+    if not current_user:
+        return False
+    try:
+        if int(req["requester_id"] or 0) == int(current_user["id"]):
+            return True
+        if (current_user["role"] or "worker") != "visitor" and (current_user["section"] or "") == (req["specialty"] or ""):
+            worker_gov = current_user["governorate"] or ""
+            req_gov = req["governorate"] or ""
+            return (not worker_gov) or (not req_gov) or worker_gov == req_gov
+    except Exception:
+        return False
+    return False
+
+
+def service_offer_worker_join_sql(extra_where=""):
+    return f"""
+        SELECT o.*,
+               u.name AS worker_name,
+               u.phone AS worker_phone,
+               u.section AS worker_section,
+               u.governorate AS worker_governorate,
+               u.city AS worker_city,
+               u.profile_pic AS worker_profile_pic,
+               u.views AS worker_views,
+               u.verified_worker AS worker_verified,
+               u.is_pinned AS worker_pinned
+        FROM service_offers o
+        JOIN users u ON u.id=o.worker_id
+        {extra_where}
+        ORDER BY CASE WHEN o.status='selected' THEN 0 ELSE 1 END, o.id DESC
+    """
+
+
+def service_offer_card(offer, req, viewer="user", can_select=False):
+    avg_rating, rating_count = get_worker_rating_summary(offer["worker_id"])
+    stars = render_stars(avg_rating)
+    profile_html = profile_thumb_html(offer["worker_profile_pic"] or "", "profile-img")
+    status = offer["status"] or "pending"
+    selected = status == "selected"
+    worker_phone = offer["worker_phone"] or ""
+    wa_html = ""
+    if selected and worker_phone:
+        wa_html = f'<a class="link-btn whatsapp-pill" href="{build_whatsapp_link(worker_phone)}" target="_blank" rel="noopener">واتساب المختص</a>'
+    actions = f'<a class="link-btn secondary" href="/worker/{offer["worker_id"]}">فتح ملف المختص</a>'
+    if can_select and status != "selected" and (req["status"] or "new") not in {"closed", "rejected"}:
+        actions += f'<a class="link-btn" href="/service-offer-select/{offer["id"]}">اختيار هذا العرض</a>'
+    if viewer == "admin":
+        actions += f'<a class="link-btn link-red" href="/admin/service-offer-delete/{offer["id"]}">حذف العرض</a>'
+    actions += wa_html
+    return f"""
+    <div class="offer-card">
+        <div class="offer-top">
+            <div style="display:flex;gap:12px;align-items:center;">
+                <div>{profile_html}</div>
+                <div>
+                    <div class="offer-worker">{offer["worker_name"] or "مختص"}</div>
+                    <div class="small">{offer["worker_governorate"] or "-"} • {offer["worker_city"] or "-"}</div>
+                    <div class="worker-rating-line"><span class="rating-stars">{stars}</span><span class="rating-text">{avg_rating} / 5</span><span class="badge">{rating_count} تقييم</span></div>
+                </div>
+            </div>
+            {offer_status_badge(status)}
+        </div>
+        <div class="offer-price">{offer["price"] or "سعر غير محدد"}</div>
+        <span class="offer-duration">⏱ {offer["duration"] or "مدة غير محددة"}</span>
+        <div class="offer-note">{offer["note"] or "لا توجد ملاحظة"}</div>
+        <div class="small" style="margin-top:8px;">تاريخ العرض: {offer["created_at"]}</div>
+        <div class="offer-actions">{actions}</div>
+    </div>
+    """
+
+
+def notify_requester_new_offer(req, worker_name, offer_id):
+    try:
+        requester_id = int(req["requester_id"] or 0)
+        if requester_id:
+            send_push_to_user(requester_id, "وصلك عرض جديد", f"{worker_name} أرسل عرض على طلبك", f"/service-request-offers/{req['id']}")
+        send_push_to_admins("عرض جديد على طلب خدمة", f"{worker_name} أرسل عرضاً جديداً", f"/service-request-offers/{req['id']}")
+    except Exception as e:
+        print("SERVICE OFFER PUSH ERROR:", repr(e))
+
+
+def notify_worker_offer_selected(worker_id, req):
+    try:
+        send_push_to_user(worker_id, "تم اختيار عرضك", f"تم اختيارك لطلب: {req['title'] or 'طلب خدمة'}", f"/worker-service-requests")
+    except Exception as e:
+        print("SERVICE OFFER SELECT PUSH ERROR:", repr(e))
+
+
+@app.route("/service-request-offer/<int:req_id>", methods=["GET", "POST"])
+def service_request_offer(req_id):
+    if "user" not in session:
+        return redirect(url_for("login"))
+    current_user = get_current_session_user()
+    if not current_user or (current_user["role"] or "worker") == "visitor":
+        return redirect(url_for("workers"))
+    with get_db() as con:
+        req = con.execute("SELECT * FROM service_requests WHERE id=?", (req_id,)).fetchone()
+        existing = con.execute("SELECT * FROM service_offers WHERE request_id=? AND worker_id=?", (req_id, current_user["id"])).fetchone()
+    if not req:
+        return render_template_string(STYLE + '<div class="container narrow-container"><div class="msg">الطلب غير موجود</div><a href="/worker-service-requests"><button>رجوع</button></a></div></body></html>')
+    if (req["status"] or "new") in {"closed", "rejected", "selected"}:
+        return render_template_string(STYLE + '<div class="container narrow-container"><div class="msg">هذا الطلب مغلق أو تم اختيار مختص له</div><a href="/worker-service-requests"><button>رجوع</button></a></div></body></html>')
+    if (current_user["section"] or "") != (req["specialty"] or ""):
+        return render_template_string(STYLE + '<div class="container narrow-container"><div class="msg">هذا الطلب لا يطابق اختصاصك</div><a href="/worker-service-requests"><button>رجوع</button></a></div></body></html>')
+    worker_gov = current_user["governorate"] or ""
+    req_gov = req["governorate"] or ""
+    if worker_gov and req_gov and worker_gov != req_gov:
+        return render_template_string(STYLE + '<div class="container narrow-container"><div class="msg">هذا الطلب ليس ضمن محافظتك</div><a href="/worker-service-requests"><button>رجوع</button></a></div></body></html>')
+    if existing and (existing["status"] or "pending") == "selected":
+        return redirect(url_for("service_request_offers", req_id=req_id))
+
+    if request.method == "POST":
+        price = sanitize_input(request.form.get("price", ""), 60)
+        duration = sanitize_input(request.form.get("duration", ""), 80)
+        note = sanitize_input(request.form.get("note", ""), 700)
+        if not price or not duration:
+            return render_template_string(STYLE + f'<div class="container narrow-container"><div class="msg">اكتب السعر ومدة التنفيذ</div><a href="/service-request-offer/{req_id}"><button>رجوع</button></a></div></body></html>')
+        if not any(ch.isdigit() for ch in price):
+            return render_template_string(STYLE + f'<div class="container narrow-container"><div class="msg">السعر يجب أن يحتوي على رقم</div><a href="/service-request-offer/{req_id}"><button>رجوع</button></a></div></body></html>')
+        try:
+            with get_db() as con:
+                old = con.execute("SELECT * FROM service_offers WHERE request_id=? AND worker_id=?", (req_id, current_user["id"])).fetchone()
+                if old:
+                    con.execute("UPDATE service_offers SET price=?, duration=?, note=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (price, duration, note, old["id"]))
+                    offer_id = old["id"]
+                else:
+                    con.execute("INSERT INTO service_offers (request_id, worker_id, price, duration, note, status) VALUES (?, ?, ?, ?, ?, 'pending')", (req_id, current_user["id"], price, duration, note))
+                    offer_row = con.execute("SELECT id FROM service_offers WHERE request_id=? AND worker_id=?", (req_id, current_user["id"])).fetchone()
+                    offer_id = int(offer_row["id"] if offer_row else 0)
+                con.execute("UPDATE service_requests SET status=CASE WHEN status IN ('new','contacted') THEN 'offers' ELSE status END, updated_at=CURRENT_TIMESTAMP WHERE id=?", (req_id,))
+                con.commit()
+            notify_requester_new_offer(req, current_user["name"] or "مختص", offer_id)
+            return render_template_string(STYLE + f'<div class="container narrow-container"><div class="msg">تم إرسال عرضك بنجاح</div><a href="/service-request-offers/{req_id}"><button>عرض الطلب</button></a><a href="/worker-service-requests"><button class="light-btn">طلبات مناسبة لي</button></a></div></body></html>')
+        except Exception as e:
+            return render_template_string(STYLE + f'<div class="container narrow-container"><div class="msg">تعذر حفظ العرض: {sanitize_input(str(e), 300)}</div><a href="/service-request-offer/{req_id}"><button>رجوع</button></a></div></body></html>')
+
+    old_price = existing["price"] if existing else ""
+    old_duration = existing["duration"] if existing else ""
+    old_note = existing["note"] if existing else ""
+    return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f"""
+    <div class="container narrow-container">
+        <a href="/worker-service-requests"><button class="light-btn">رجوع</button></a>
+        <div class="offer-form-card">
+            <span class="hero-badge">نظام العروض والأسعار</span>
+            <h2>إرسال عرض على الطلب</h2>
+            <div class="section-subtitle">الطلب: {req["title"] or "طلب خدمة"} — {req["governorate"] or ""} / {req["city"] or ""}</div>
+        </div>
+        {service_request_card(req, "user")}
+        <form method="post">
+            <label>السعر التقريبي</label>
+            <input name="price" value="{old_price}" placeholder="مثلاً: 75000 دينار" required>
+            <label>مدة التنفيذ</label>
+            <input name="duration" value="{old_duration}" placeholder="مثلاً: يوم واحد أو 3 ساعات" required>
+            <label>ملاحظة للمستخدم</label>
+            <textarea name="note" placeholder="اكتب تفاصيل العرض أو المواد المطلوبة">{old_note}</textarea>
+            <button>إرسال العرض</button>
+        </form>
+    </div>
+    </body></html>
+    """)
+
+
+@app.route("/service-request-offers/<int:req_id>")
+def service_request_offers(req_id):
+    auto_login_from_cookie()
+    current_user = get_current_session_user() if "user" in session else None
+    with get_db() as con:
+        req = con.execute("SELECT * FROM service_requests WHERE id=?", (req_id,)).fetchone()
+    if not req:
+        return render_template_string(STYLE + '<div class="container narrow-container"><div class="msg">الطلب غير موجود</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
+    if not user_can_view_service_request(req, current_user):
+        return render_template_string(STYLE + '<div class="container narrow-container"><div class="msg">لا تملك صلاحية عرض هذه الصفحة</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
+
+    is_admin = admin_required()
+    is_owner = current_user is not None and int(req["requester_id"] or 0) == int(current_user["id"])
+    is_worker = current_user is not None and not is_owner and not is_admin
+    with get_db() as con:
+        if is_worker:
+            offers = con.execute(service_offer_worker_join_sql("WHERE o.request_id=? AND o.worker_id=?"), (req_id, current_user["id"])).fetchall()
+        else:
+            offers = con.execute(service_offer_worker_join_sql("WHERE o.request_id=?"), (req_id,)).fetchall()
+    can_select = bool(is_owner and (req["status"] or "new") not in {"closed", "rejected", "selected"})
+    viewer = "admin" if is_admin else ("owner" if is_owner else "worker")
+    cards = "".join(service_offer_card(o, req, viewer, can_select) for o in offers) if offers else '<div class="empty-state">لا توجد عروض على هذا الطلب حتى الآن.</div>'
+    back_link = "/admin/service-requests" if is_admin else ("/my-service-requests" if is_owner else "/worker-service-requests")
+    return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f"""
+    <div class="container">
+        <a href="{back_link}"><button class="light-btn">رجوع</button></a>
+        <h2>عروض الطلب</h2>
+        <div class="section-subtitle">{req["title"] or "طلب خدمة"} — {req["governorate"] or ""} / {req["city"] or ""}</div>
+        {service_request_card(req, "user")}
+        <div class="offer-grid">{cards}</div>
+    </div>
+    </body></html>
+    """)
+
+
+@app.route("/service-offer-select/<int:offer_id>")
+def service_offer_select(offer_id):
+    if "user" not in session:
+        return redirect(url_for("visitor_login"))
+    current_user = get_current_session_user()
+    if not current_user:
+        session.clear()
+        return redirect(url_for("home"))
+    with get_db() as con:
+        offer = con.execute("SELECT * FROM service_offers WHERE id=?", (offer_id,)).fetchone()
+        if not offer:
+            return render_template_string(STYLE + '<div class="container narrow-container"><div class="msg">العرض غير موجود</div><a href="/my-service-requests"><button>رجوع</button></a></div></body></html>')
+        req = con.execute("SELECT * FROM service_requests WHERE id=?", (offer["request_id"],)).fetchone()
+        if not req or int(req["requester_id"] or 0) != int(current_user["id"]):
+            return render_template_string(STYLE + '<div class="container narrow-container"><div class="msg">لا تملك صلاحية اختيار هذا العرض</div><a href="/my-service-requests"><button>رجوع</button></a></div></body></html>')
+        if (req["status"] or "new") in {"closed", "rejected", "selected"}:
+            return render_template_string(STYLE + '<div class="container narrow-container"><div class="msg">لا يمكن اختيار عرض لهذا الطلب حالياً</div><a href="/my-service-requests"><button>رجوع</button></a></div></body></html>')
+        con.execute("UPDATE service_offers SET status='cancelled', updated_at=CURRENT_TIMESTAMP WHERE request_id=?", (req["id"],))
+        con.execute("UPDATE service_offers SET status='selected', updated_at=CURRENT_TIMESTAMP WHERE id=?", (offer_id,))
+        con.execute("UPDATE service_requests SET status='selected', assigned_worker_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (offer["worker_id"], req["id"]))
+        con.commit()
+    notify_worker_offer_selected(offer["worker_id"], req)
+    return render_template_string(STYLE + f'<div class="container narrow-container"><div class="msg">تم اختيار العرض بنجاح. تقدر الآن تتواصل مع المختص عبر واتساب.</div><a href="/service-request-offers/{req["id"]}"><button>عرض المختص المختار</button></a><a href="/my-service-requests"><button class="light-btn">طلباتي</button></a></div></body></html>')
+
+
+@app.route("/admin/service-offer-delete/<int:offer_id>")
+def admin_service_offer_delete(offer_id):
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+    with get_db() as con:
+        offer = con.execute("SELECT * FROM service_offers WHERE id=?", (offer_id,)).fetchone()
+        if offer:
+            req_id = offer["request_id"]
+            con.execute("DELETE FROM service_offers WHERE id=?", (offer_id,))
+            count = con.execute("SELECT COUNT(*) AS c FROM service_offers WHERE request_id=?", (req_id,)).fetchone()
+            if int((count["c"] if count else 0) or 0) == 0:
+                con.execute("UPDATE service_requests SET status='new' WHERE id=? AND status='offers'", (req_id,))
+            con.commit()
+            log_admin_action("حذف عرض خدمة", str(offer_id), f"طلب رقم {req_id}")
+            return redirect(url_for("service_request_offers", req_id=req_id))
+    return redirect(url_for("admin_service_requests"))
 
 
 if __name__ == "__main__":
