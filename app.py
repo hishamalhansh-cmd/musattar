@@ -3824,6 +3824,18 @@ HOME_HTML = STYLE + """
 </body></html>
 """
 
+
+@app.route("/")
+def home():
+    if "user" in session:
+        return redirect("/workers")
+    return redirect("/login")
+
+
+@app.route("/home")
+def home_alias():
+    return home()
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
