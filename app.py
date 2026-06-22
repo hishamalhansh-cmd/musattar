@@ -1918,6 +1918,10 @@ def service_request_status_label(status):
         "offers": "وصلت عروض",
         "selected": "تم اختيار مختص",
         "contacted": "تم التواصل",
+        "scheduled": "موعد مؤكد",
+        "in_progress": "العمل جارٍ",
+        "completed": "اكتملت الخدمة",
+        "disputed": "نزاع مفتوح",
         "closed": "مغلق",
         "rejected": "مرفوض",
     }
@@ -1931,6 +1935,10 @@ def service_request_status_badge(status):
         "offers": "service-status-offers",
         "selected": "service-status-selected",
         "contacted": "service-status-contacted",
+        "scheduled": "service-status-scheduled",
+        "in_progress": "service-status-in-progress",
+        "completed": "service-status-completed",
+        "disputed": "service-status-disputed",
         "closed": "service-status-closed",
         "rejected": "service-status-rejected",
     }.get(status, "service-status-new")
@@ -1955,23 +1963,31 @@ def service_request_card(req, viewer="user"):
     phone_html = f'<a class="link-btn whatsapp-pill" href="{build_whatsapp_link(req["phone"])}" target="_blank" rel="noopener">واتساب</a>' if (req["phone"] or "") else ""
     offers_count = get_service_offer_count(req["id"])
     offers_badge = f'<span class="badge">💰 {offers_count} عرض</span>' if offers_count else '<span class="badge">لا توجد عروض</span>'
+    assigned_worker_id = int(request_row_value(req, "assigned_worker_id", 0) or 0)
+    current_user_id = int(session.get("user_id") or 0)
+    post_selection = status in {"selected", "scheduled", "in_progress", "completed", "disputed", "closed"}
     actions = ""
     if viewer == "worker":
-        if status not in {"closed", "rejected", "selected"}:
+        if status in {"new", "contacted", "offers"}:
             actions += f'<a class="link-btn" href="/service-request-offer/{req["id"]}">إرسال عرض</a>'
-            if status == "new":
-                actions += f'<a class="link-btn secondary" href="/service-request-contacted/{req["id"]}">استلام بدون عرض</a>'
-        actions += f'<a class="link-btn secondary" href="/service-request-offers/{req["id"]}">عروضي</a>'
-        actions += phone_html
+            actions += f'<a class="link-btn secondary" href="/service-request-offers/{req["id"]}">عروضي</a>'
+        if assigned_worker_id and assigned_worker_id == current_user_id and post_selection:
+            actions += f'<a class="link-btn" href="/service-request-track/{req["id"]}">متابعة التنفيذ</a>'
+            actions += phone_html
     elif viewer == "admin":
+        actions += f'<a class="link-btn" href="/service-request-track/{req["id"]}">متابعة التنفيذ</a>'
         actions += f'<a class="link-btn secondary" href="/service-request-offers/{req["id"]}">العروض ({offers_count})</a>'
-        actions += f'<a class="link-btn" href="/admin/service-request-status/{req["id"]}/contacted">تم التواصل</a>'
         actions += f'<a class="link-btn" href="/admin/service-request-status/{req["id"]}/closed">إغلاق</a>'
         actions += f'<a class="link-btn link-red" href="/admin/service-request-status/{req["id"]}/rejected">رفض</a>'
         actions += phone_html
     else:
         actions += f'<a class="link-btn" href="/service-request-offers/{req["id"]}">مشاهدة العروض ({offers_count})</a>'
+        if assigned_worker_id and post_selection:
+            actions += f'<a class="link-btn" href="/service-request-track/{req["id"]}">متابعة التنفيذ</a>'
         actions += '<a class="link-btn secondary" href="/my-service-requests">طلباتي</a>'
+
+    scheduled_at = request_row_value(req, "scheduled_at", "")
+    schedule_html = f'<span class="badge">📅 {format_service_schedule(scheduled_at)}</span>' if scheduled_at else ""
 
     return f"""
     <div class="service-request-card">
@@ -1987,6 +2003,7 @@ def service_request_card(req, viewer="user"):
             <span class="badge">{req["city"] or "-"}</span>
             <span class="worker-specialty-badge">{get_specialty_icon(req["specialty"])} {req["specialty"] or req["main_group"] or "-"}</span>
             {offers_badge}
+            {schedule_html}
         </div>
         <div class="small">الاسم: {req["requester_name"] or "زائر"} • الهاتف: {req["phone"] or "-"}</div>
         <div class="service-request-desc">{req["description"] or "لا يوجد وصف"}</div>
@@ -3318,6 +3335,46 @@ body:has(.musattar-app-shell) .message-floating-wrap{
 .offer-form-card{background:linear-gradient(180deg,#eef6ff,#ffffff);border:1px solid rgba(37,99,235,.16);border-radius:24px;padding:18px;margin-bottom:14px;box-shadow:0 10px 24px rgba(37,99,235,.08)}
 @media(max-width:720px){.offer-grid{grid-template-columns:1fr}.offer-actions{display:grid;grid-template-columns:1fr 1fr}.offer-price{font-size:21px}}
 
+
+/* === SERVICE EXECUTION WORKFLOW === */
+.service-status-scheduled{background:#e0f2fe!important;color:#075985!important;border-color:rgba(7,89,133,.22)!important}
+.service-status-in-progress{background:#dbeafe!important;color:#1d4ed8!important;border-color:rgba(29,78,216,.24)!important}
+.service-status-completed{background:#dcfce7!important;color:#166534!important;border-color:rgba(22,101,52,.24)!important}
+.service-status-disputed{background:#fee2e2!important;color:#991b1b!important;border-color:rgba(153,27,27,.24)!important}
+.execution-shell{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(280px,.85fr);gap:14px;align-items:start}
+.execution-panel,.timeline-panel,.code-panel,.appointment-panel,.dispute-panel,.rating-panel{background:#fff;border:1px solid rgba(37,99,235,.16);border-radius:22px;padding:16px;box-shadow:0 10px 24px rgba(37,99,235,.07)}
+.execution-panel h3,.timeline-panel h3,.code-panel h3,.appointment-panel h3,.dispute-panel h3,.rating-panel h3{margin-bottom:8px}
+.workflow-steps{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:7px;margin:14px 0}
+.workflow-step{position:relative;text-align:center;padding:10px 6px;border-radius:14px;background:#f8fbff;border:1px solid rgba(37,99,235,.12);font-size:11px;font-weight:800;color:#7185a4}
+.workflow-step.done{background:#eaf4ff;color:#2563eb;border-color:rgba(37,99,235,.28)}
+.workflow-step.current{background:linear-gradient(180deg,#fde68a,#facc15);color:#12325f;border-color:rgba(250,204,21,.55);box-shadow:0 8px 18px rgba(250,204,21,.18)}
+.workflow-step .step-icon{display:block;font-size:20px;margin-bottom:4px}
+.timeline-list{display:grid;gap:10px;margin-top:12px}
+.timeline-item{position:relative;padding:12px 14px 12px 14px;background:#f8fbff;border:1px solid rgba(37,99,235,.12);border-radius:16px}
+.timeline-item:before{content:"";position:absolute;right:-5px;top:17px;width:10px;height:10px;border-radius:50%;background:#2563eb;box-shadow:0 0 0 4px rgba(37,99,235,.12)}
+.timeline-title{font-weight:900;color:#12325f}.timeline-detail{font-size:13px;color:#5f78a0;line-height:1.75}.timeline-time{font-size:11px;color:#8799b5;margin-top:4px}
+.execution-code-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.execution-code{background:linear-gradient(180deg,#eef6ff,#fff);border:1px dashed rgba(37,99,235,.32);border-radius:18px;padding:16px;text-align:center}
+.execution-code .label{font-size:12px;color:#5f78a0}.execution-code .value{font-size:32px;letter-spacing:7px;font-weight:900;color:#2563eb;margin-top:5px}
+.execution-note{padding:11px 13px;border-radius:14px;background:#fff8dc;border:1px solid rgba(250,204,21,.38);color:#735c00;font-size:13px;line-height:1.8}
+.selected-worker-mini{display:flex;gap:12px;align-items:center;background:#f8fbff;border:1px solid rgba(37,99,235,.12);border-radius:18px;padding:12px;margin:10px 0}
+.selected-worker-mini .profile-img,.selected-worker-mini .profile-placeholder{width:64px;height:64px}
+.execution-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.execution-actions form{flex:1;min-width:220px}.execution-actions form button{margin:0}
+.dispute-card{background:#fff7f7;border:1px solid rgba(220,38,38,.18);border-radius:18px;padding:14px;margin:10px 0}.dispute-open{color:#b91c1c;font-weight:900}
+.appointment-value{font-size:18px;font-weight:900;color:#2563eb;padding:10px 12px;background:#eef6ff;border-radius:14px;margin:8px 0}
+@media(max-width:900px){.execution-shell{grid-template-columns:1fr}.workflow-steps{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:520px){.workflow-steps{grid-template-columns:repeat(2,1fr)}.execution-code-grid{grid-template-columns:1fr}.execution-code .value{font-size:28px}.execution-actions{display:grid}.execution-actions form{min-width:0}}
+
+
+
+/* === Premium native-like mobile UI update (reference-inspired, safe scoped) === */
+:root{--premium-dark:#071122;--premium-dark-2:#0b1830;--premium-green:#10b981;--premium-blue:#2f80ed;--premium-purple:#6d4df2;--premium-paper:#f7f8fb;--premium-ink:#111827;--premium-muted:#7b8798;}
+body.premium-light-bg{background:#f7f8fb;color:#111827;}
+.almastar-welcome{min-height:100vh;background:radial-gradient(circle at 50% 18%,rgba(16,185,129,.16),transparent 28%),radial-gradient(circle at 12% 75%,rgba(47,128,237,.14),transparent 30%),linear-gradient(180deg,#071122 0%,#0b1830 100%);color:#fff;padding:34px 22px 26px;max-width:520px;margin:0 auto;position:relative;overflow:hidden;}
+.almastar-lang-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin:4px 0 44px;direction:ltr}.almastar-lang-row span{height:46px;border:1px solid rgba(255,255,255,.14);border-radius:24px;display:flex;align-items:center;justify-content:center;color:#cbd5e1;font-weight:900;background:rgba(255,255,255,.045);letter-spacing:.2px}.almastar-lang-row span.active-ar{border-color:rgba(16,185,129,.75);color:#fff;box-shadow:0 0 0 1px rgba(16,185,129,.12) inset}.almastar-orbit{width:126px;height:126px;border-radius:50%;margin:0 auto 46px;position:relative;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle,rgba(255,255,255,.08),rgba(255,255,255,.02));box-shadow:0 0 0 1px rgba(255,255,255,.06) inset}.almastar-orbit:before,.almastar-orbit:after{content:"";position:absolute;border-radius:50%;border:1px solid rgba(255,255,255,.065);inset:18px}.almastar-orbit:after{inset:-10px}.almastar-orbit .tool{font-size:38px;color:#10b981;z-index:1}.almastar-dot{position:absolute;width:12px;height:12px;border-radius:50%;background:#10b981}.almastar-dot.b{background:#2f80ed;top:12px}.almastar-dot.y{background:#facc15;right:12px;top:68px}.almastar-dot.g{left:8px;top:58px}
+.almastar-role-toggle{display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid rgba(255,255,255,.12);border-radius:22px;background:rgba(255,255,255,.055);padding:7px;margin-bottom:26px}.almastar-role-toggle a,.almastar-role-toggle span{text-decoration:none;color:#9aa6ba;height:54px;border-radius:17px;display:flex;align-items:center;justify-content:center;gap:8px;font-weight:900;font-size:16px}.almastar-role-toggle .active{background:#079765;color:#fff;box-shadow:0 12px 26px rgba(16,185,129,.22)}.almastar-welcome h1{font-size:35px;line-height:1.35;margin:10px 0 12px;text-align:center;font-weight:1000;letter-spacing:-.7px}.almastar-welcome p.lead{color:#a9b4c7;text-align:center;line-height:1.85;font-size:16px;margin:0 6px 28px}.almastar-login-card{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:28px;padding:18px;margin:0 0 14px;box-shadow:0 20px 54px rgba(0,0,0,.22);backdrop-filter:blur(12px)}.almastar-login-card input{background:#111c31!important;border:1px solid rgba(255,255,255,.09)!important;color:#fff!important;border-radius:18px!important;height:56px!important;font-size:15px!important;text-align:right}.almastar-login-card input::placeholder{color:#748299!important}.almastar-login-card label{color:#e5e7eb;font-weight:900;margin:8px 4px 8px;display:block;text-align:right}.almastar-main-btn,.almastar-outline-btn,.almastar-guest-btn{width:100%;height:62px;border-radius:22px!important;display:flex;align-items:center;justify-content:center;gap:14px;font-weight:1000!important;font-size:19px!important;text-decoration:none!important;margin:12px 0;border:0!important}.almastar-main-btn{background:linear-gradient(90deg,#0fc27d,#2f80ed)!important;color:#fff!important;box-shadow:0 18px 34px rgba(47,128,237,.24)!important}.almastar-outline-btn{background:transparent!important;color:#fff!important;border:2px solid transparent!important;background-image:linear-gradient(#0b1830,#0b1830),linear-gradient(90deg,#2f80ed,#10b981)!important;background-origin:border-box!important;background-clip:padding-box,border-box!important}.almastar-guest-btn{background:linear-gradient(90deg,rgba(47,128,237,.14),rgba(16,185,129,.13))!important;color:#e2e8f0!important;border:1px solid rgba(255,255,255,.08)!important}.almastar-features{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-top:30px}.almastar-feature{text-align:center;color:#fff;font-weight:900}.almastar-feature .ico{width:62px;height:62px;border-radius:50%;background:rgba(255,255,255,.055);display:flex;align-items:center;justify-content:center;margin:0 auto 9px;font-size:23px;border:1px solid rgba(255,255,255,.08)}.almastar-feature small{display:block;color:#aeb8ca;font-size:12px;margin-top:3px}
+.premium-home{max-width:520px;margin:0 auto;min-height:100vh;background:#f7f8fb;color:#111827;padding-bottom:96px}.premium-top{height:86px;background:#071122;color:#fff;border-bottom:3px solid #2f80ed;display:grid;grid-template-columns:62px 1fr 62px;align-items:center;padding:0 22px}.premium-top .circle{width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);position:relative;color:#10b981;text-decoration:none;font-size:24px}.premium-badge{position:absolute;top:4px;right:0;background:#ef4444;color:#fff;border-radius:999px;min-width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:900}.premium-top-title{text-align:center;font-size:28px;font-weight:1000;letter-spacing:-.4px}.premium-home-pad{padding:18px 22px}.premium-banner{height:210px;border-radius:28px;overflow:hidden;position:relative;background:linear-gradient(135deg,#0f172a,#0ea5e9 45%,#10b981);box-shadow:0 22px 46px rgba(15,23,42,.22)}.premium-banner:before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 20% 25%,rgba(255,255,255,.22),transparent 22%),linear-gradient(90deg,rgba(7,17,34,.24),rgba(7,17,34,.04))}.premium-banner .city-lines{position:absolute;inset:0;background:linear-gradient(90deg,rgba(255,255,255,.08) 1px,transparent 1px),linear-gradient(rgba(255,255,255,.07) 1px,transparent 1px);background-size:38px 38px;opacity:.45}.premium-banner-text{position:absolute;right:22px;bottom:20px;left:22px;background:rgba(7,17,34,.74);border:1px solid rgba(255,255,255,.12);border-radius:22px;padding:14px 16px;color:#fff}.premium-banner-text strong{font-size:22px;display:block;margin-bottom:5px}.premium-banner-text span{color:#a7f3d0;font-size:20px;font-weight:1000;direction:ltr;display:inline-block}.premium-dots{display:flex;justify-content:center;gap:9px;margin:16px 0 18px}.premium-dots i{display:block;width:12px;height:12px;border-radius:999px;background:#d1fae5}.premium-dots i.active{width:44px;background:#10b981}.premium-section-title{display:flex;align-items:center;justify-content:space-between;margin:18px 2px 16px}.premium-section-title h2{font-size:28px;margin:0;color:#111827;font-weight:1000}.premium-section-title span{font-size:24px;color:#6d4df2}.premium-category-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:24px}.premium-cat{background:#fff;border:1px solid #e8edf5;border-radius:24px;min-height:154px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-decoration:none;color:#111827;box-shadow:0 14px 32px rgba(17,24,39,.06);position:relative;overflow:hidden}.premium-cat:before{content:"";position:absolute;top:0;left:22px;right:22px;height:4px;background:linear-gradient(90deg,#6d4df2,#10b981);border-radius:999px}.premium-cat .premium-cat-icon{width:64px;height:64px;border-radius:19px;background:linear-gradient(180deg,#7c5cff,#4f46e5);display:flex;align-items:center;justify-content:center;font-size:29px;color:#fff;margin-bottom:14px;box-shadow:0 14px 22px rgba(79,70,229,.22)}.premium-cat:nth-child(2) .premium-cat-icon{background:linear-gradient(180deg,#facc15,#f59e0b)}.premium-cat:nth-child(3) .premium-cat-icon{background:linear-gradient(180deg,#34d399,#10b981)}.premium-cat strong{font-size:18px}.premium-cat small{margin-top:12px;background:#f3f5f9;color:#10b981;border-radius:999px;padding:5px 12px;font-weight:1000}.premium-request-card{background:#fff;border-radius:24px;padding:18px;margin-bottom:16px;box-shadow:0 16px 35px rgba(17,24,39,.07);border-top:4px solid #6d4df2;display:grid;grid-template-columns:70px 1fr 34px;gap:14px;align-items:center;text-decoration:none;color:#111827}.premium-request-avatar{width:64px;height:64px;border-radius:18px;background:linear-gradient(180deg,#6d4df2,#4f46e5);display:flex;align-items:center;justify-content:center;color:#fff;font-size:29px}.premium-request-card h3{margin:0 0 4px;font-size:21px}.premium-request-card p{margin:0 0 8px;color:#667085;font-weight:700;white-space:nowrap;text-overflow:ellipsis;overflow:hidden}.premium-tags{display:flex;gap:8px;flex-wrap:wrap}.premium-tag{background:#ecfdf5;color:#059669;border-radius:999px;padding:5px 10px;font-size:12px;font-weight:900}.premium-service-cta{display:block;margin:18px 0 8px;border-radius:24px;padding:18px;background:linear-gradient(90deg,#0fc27d,#2f80ed);color:#fff!important;text-decoration:none;text-align:center;font-size:20px;font-weight:1000;box-shadow:0 18px 34px rgba(47,128,237,.22)}.premium-bottom-nav{position:fixed;left:50%;transform:translateX(-50%);bottom:0;width:min(520px,100%);height:82px;background:#071122;display:grid;grid-template-columns:1fr 1fr 1.15fr 1fr 1fr;align-items:center;padding:6px 8px calc(6px + env(safe-area-inset-bottom));z-index:50;box-shadow:0 -18px 30px rgba(7,17,34,.18)}.premium-bottom-nav a{color:#94a3b8;text-decoration:none;text-align:center;font-weight:900;font-size:13px}.premium-bottom-nav span{display:block;font-size:26px;margin-bottom:2px}.premium-bottom-nav a.active{color:#10b981}.premium-bottom-nav a.search-main{margin-top:-28px}.premium-bottom-nav a.search-main span{width:72px;height:72px;margin:0 auto 1px;border-radius:50%;background:#10b981;color:#fff;display:flex;align-items:center;justify-content:center;box-shadow:0 10px 28px rgba(16,185,129,.34);font-size:31px}.premium-results{padding:0 22px 24px}.premium-results .worker-card{background:#fff!important;color:#111827!important;border-color:#e8edf5!important;box-shadow:0 16px 34px rgba(17,24,39,.07)!important;border-radius:24px!important}.premium-results .worker-card *{color:inherit}.premium-results .badge{background:#ecfdf5!important;color:#059669!important}
+@media(max-width:420px){.premium-home-pad{padding:16px}.premium-category-grid{gap:12px}.premium-cat{min-height:135px;border-radius:20px}.premium-cat .premium-cat-icon{width:56px;height:56px}.premium-section-title h2{font-size:24px}.premium-top-title{font-size:25px}.premium-banner{height:190px}.almastar-welcome{padding-left:16px;padding-right:16px}.almastar-welcome h1{font-size:31px}.almastar-lang-row{gap:8px}.almastar-lang-row span{height:42px}}
 </style>
 
 <script>
@@ -3625,72 +3682,33 @@ def onesignal_service_worker():
 
 
 HOME_HTML = STYLE + """
-<div class="container narrow-container" style="margin-top:70px;text-align:center;">
-    <h1 style="font-size:42px;margin-bottom:20px;">المسطر</h1>
-    <div class="section-subtitle" style="margin-bottom:18px;">تسجيل دخول المختصين فقط. الزائر يستطيع الدخول والتصفح مباشرة بدون إنشاء حساب.</div>
-
-    <form action="/login" method="post">
-        <input type="email" name="email" value="{{ last_email }}" placeholder="البريد الإلكتروني للمختص" required>
-        <input type="password" name="password" placeholder="كلمة سر المختص" required>
-        <button type="submit">تسجيل دخول المختص</button>
-    </form>
-
-    <a href="/workers" class="visitor-big-entry">
-        <div class="visitor-big-icon">👤</div>
-        <div class="visitor-big-title">الدخول كزائر</div>
-        <div class="visitor-big-subtitle">تصفح الأقسام والمختصين بدون تسجيل دخول</div>
-    </a>
-
-    <div class="inline" style="justify-content:space-between;margin-top:14px;">
-        <a href="/register" style="color:#ffd966;font-weight:700;">إنشاء حساب مختص</a>
-        <a href="/forgot" style="color:#c8b36a;">نسيت كلمة السر</a>
+<div class="almastar-welcome" dir="rtl">
+    <div class="almastar-lang-row"><span>English</span><span>کوردی</span><span class="active-ar">العربية</span></div>
+    <div class="almastar-orbit"><span class="almastar-dot b"></span><span class="almastar-dot y"></span><span class="almastar-dot g"></span><span class="tool">🛠️</span></div>
+    <div class="almastar-role-toggle"><span>👤 طالب خدمة</span><span class="active">🛠️ مقدم خدمة</span></div>
+    <h1>مرحباً بك شريكنا في المسطر 🛠️</h1>
+    <p class="lead">أفضل منصة للخدمات والحصول على عملاء في العراق. احصل على مشاريع لعملك بضغطة زر.</p>
+    <div class="almastar-login-card">
+        <form action="/login" method="post">
+            <label>اسم المستخدم أو البريد الإلكتروني</label>
+            <input type="email" name="email" value="{{ last_email }}" placeholder="البريد الإلكتروني للمختص" required>
+            <label>كلمة السر</label>
+            <input type="password" name="password" placeholder="كلمة السر" required>
+            <button class="almastar-main-btn" type="submit">تسجيل الدخول <span>←</span></button>
+        </form>
+        <a class="almastar-outline-btn" href="/register">إنشاء حساب جديد 🏢</a>
+        <a class="almastar-guest-btn" href="/workers">تصفح كضيف 👁️</a>
+        <div style="display:flex;justify-content:space-between;gap:12px;margin-top:10px;font-weight:900;">
+            <a href="/forgot" style="color:#10b981;text-decoration:none;">نسيت كلمة السر؟</a>
+            <a href="/visitor/login" style="color:#93c5fd;text-decoration:none;">دخول طالب خدمة</a>
+        </div>
+    </div>
+    <div class="almastar-features">
+        <div class="almastar-feature"><div class="ico">🛡️</div>خدمات موثوقة<small>مراجعة إدارية</small></div>
+        <div class="almastar-feature"><div class="ico">⚡</div>خدمة سريعة<small>إشعارات فورية</small></div>
+        <div class="almastar-feature"><div class="ico">💬</div>تواصل مباشر<small>واتساب</small></div>
     </div>
 </div>
-
-<style>
-.visitor-big-entry{
-    display:block;
-    margin:22px auto 4px;
-    padding:24px 18px;
-    border-radius:26px;
-    background:linear-gradient(180deg,#ffd966 0%,#b8860b 100%);
-    color:#000 !important;
-    border:1px solid rgba(255,217,102,.55);
-    box-shadow:0 14px 32px rgba(212,160,23,.30);
-    text-align:center;
-}
-.visitor-big-icon{
-    width:86px;
-    height:86px;
-    margin:0 auto 10px;
-    border-radius:50%;
-    background:rgba(0,0,0,.14);
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    font-size:48px;
-}
-.visitor-big-title{
-    font-size:25px;
-    font-weight:900;
-    margin-bottom:6px;
-}
-.visitor-big-subtitle{
-    font-size:14px;
-    font-weight:700;
-    opacity:.88;
-}
-.visitor-big-entry:hover{
-    transform:translateY(-2px);
-    filter:brightness(1.04);
-}
-@media(max-width:520px){
-    .visitor-big-entry{padding:20px 14px;border-radius:22px;}
-    .visitor-big-icon{width:74px;height:74px;font-size:40px;}
-    .visitor-big-title{font-size:22px;}
-}
-</style>
-
 <a class="bottom-corner-link bottom-left-link" href="/admin">🛠️</a>
 </body></html>
 """
@@ -4623,6 +4641,75 @@ def build_video_bottom_nav(active="home"):
     return html
 
 
+
+def build_premium_categories():
+    chosen = []
+    for group_name, items in SPECIALTY_GROUPS.items():
+        icon = get_specialty_icon(items[0]) if items else "🛠️"
+        chosen.append((group_name, icon))
+    html = '<div class="premium-category-grid">'
+    for group_name, icon in chosen[:6]:
+        html += f"""
+        <a class="premium-cat" href="/workers-group/{group_name}">
+            <div class="premium-cat-icon">{icon}</div>
+            <strong>{group_name}</strong>
+            <small>+{len(SPECIALTY_GROUPS.get(group_name, [])) * 80 + 98}</small>
+        </a>
+        """
+    html += '</div>'
+    return html
+
+
+def build_premium_latest_requests(limit=3):
+    try:
+        with get_db() as con:
+            rows = con.execute(
+                """
+                SELECT id, customer_name, city, governorate, specialty, description, status
+                FROM service_requests
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (int(limit),)
+            ).fetchall()
+    except Exception:
+        rows = []
+    if not rows:
+        return """
+        <a class="premium-request-card" href="/request-service">
+            <div class="premium-request-avatar">🧰</div>
+            <div><h3>أول طلب خدمة</h3><p>أنشئ طلبك الآن حتى يصل للمختصين.</p><div class="premium-tags"><span class="premium-tag">طلب جديد</span><span class="premium-tag">واتساب</span></div></div>
+            <div style="color:#10b981;font-size:28px;">‹</div>
+        </a>
+        """
+    html = ''
+    for row in rows:
+        name = row.get("customer_name") or "طالب خدمة"
+        spec = row.get("specialty") or "خدمة"
+        place = row.get("city") or row.get("governorate") or "العراق"
+        desc = row.get("description") or "طلب خدمة جديد"
+        status = row.get("status") or "جديد"
+        html += f"""
+        <a class="premium-request-card" href="/service-request-offers/{row['id']}">
+            <div class="premium-request-avatar">👤</div>
+            <div><h3>{name}</h3><p>{desc}</p><div class="premium-tags"><span class="premium-tag">{spec}</span><span class="premium-tag">📍 {place}</span><span class="premium-tag">{status}</span></div></div>
+            <div style="color:#10b981;font-size:28px;">‹</div>
+        </a>
+        """
+    return html
+
+
+def build_premium_bottom_nav(active="home"):
+    account_link = "/settings" if "user" in session else "/"
+    items = [("account", account_link, "♡", "الحساب"),("requests", "/my-service-requests", "▶", "الطلبات"),("search", "/request-service", "⌕", ""),("sections", "/workers", "▦", "الأقسام"),("home", "/workers", "⌂", "الرئيسية")]
+    html = '<div class="premium-bottom-nav">'
+    for key, href, icon, label in items:
+        cls = " active" if key == active else ""
+        if key == "search": cls += " search-main"
+        html += f'<a class="{cls.strip()}" href="{href}"><span>{icon}</span>{label}</a>'
+    html += '</div>'
+    return html
+
 def search_workers_rows(q="", governorate="", specialty="", limit=40):
     q = sanitize_input(q, 80)
     governorate = sanitize_input(governorate, 80)
@@ -4662,69 +4749,49 @@ def workers():
     specialty = sanitize_input(request.args.get("specialty", ""), 80)
     has_search = bool(q or governorate or specialty)
 
-    fast_cards = build_video_fast_categories()
-    bottom_nav = build_video_bottom_nav("home")
-    gov_options = build_governorates_options(governorate)
-    specialty_options = build_specialties_options(specialty, "")
-
+    bottom_nav = build_premium_bottom_nav("home")
     results_html = ""
     if has_search:
         rows = search_workers_rows(q, governorate, specialty)
         if rows:
             cards = "".join(worker_card(row) for row in rows)
-            results_html = f'''
-            <div class="ms-results-wrap">
-                <div class="ms-section-head">
-                    <h2>نتائج البحث</h2>
-                    <a href="/workers">مسح البحث</a>
-                </div>
+            results_html = f"""
+            <div class="premium-results">
+                <div class="premium-section-title"><h2>نتائج البحث</h2><a href="/workers" style="color:#2f80ed;font-weight:900;text-decoration:none;">مسح</a></div>
                 {cards}
             </div>
-            '''
+            """
         else:
-            results_html = '''
-            <div class="ms-results-wrap">
-                <div class="ms-empty-soft">ماكو نتائج مطابقة حالياً. جرّب اسم أو محافظة ثانية.</div>
-            </div>
-            '''
+            results_html = """
+            <div class="premium-results"><div class="ms-empty-soft">ماكو نتائج مطابقة حالياً. جرّب اسم أو محافظة ثانية.</div></div>
+            """
+
+    categories_html = build_premium_categories()
+    latest_requests_html = build_premium_latest_requests()
 
     return render_template_string(
-        STYLE + f'''
-        <div class="musattar-app-shell">
-
-            <div class="musattar-app-top">
-                <a class="ms-round-btn" href="/">‹</a>
-                <div class="ms-title-lockup">
-                    <span>المسطر</span>
-                    <span class="ms-title-logo">🏗️</span>
-                </div>
-                <span class="ms-top-spacer" aria-hidden="true"></span>
+        STYLE + f"""
+        <body class="premium-light-bg">
+        <div class="premium-home" dir="rtl">
+            <div class="premium-top">
+                <a class="circle" href="/favorites">♡<span class="premium-badge">1</span></a>
+                <div class="premium-top-title"><span style="color:#10b981;font-size:23px;vertical-align:middle;">⌂</span> المسطر</div>
+                <a class="circle" href="/settings">🔔<span class="premium-badge">3</span></a>
             </div>
-
-            <!-- تم إلغاء مربع البحث السريع من الصفحة الرئيسية بطلبك -->
-
-            <div class="ms-hero-banner">
-                <div class="ms-hero-kicker">✨ تطبيق خدمات البناء</div>
-                <h1 class="ms-hero-title">كل مختص تحتاجه تلقاه بسرعة</h1>
-                <div class="ms-hero-sub">اختر القسم، شوف الأعمال والفيديوهات، وتواصل واتساب مباشرة.</div>
-                <a class="ms-service-cta" href="/request-service">
-                    <span>🧰 اطلب خدمة الآن</span>
-                    <small>وصل طلبك للمختصين المناسبين مباشرة</small>
-                </a>
+            <div class="premium-home-pad">
+                <div class="premium-banner"><div class="city-lines"></div><div class="premium-banner-text"><strong>منصة المسطر 🏢</strong><span>0770 123 4567</span></div></div>
+                <div class="premium-dots"><i></i><i></i><i></i><i class="active"></i><i></i><i></i></div>
+                <a class="premium-service-cta" href="/request-service">🧰 اطلب خدمة الآن</a>
+                <div class="premium-section-title"><h2>الأقسام</h2><span>▦</span></div>
+                {categories_html}
+                <div class="premium-section-title"><h2>طلبات الخدمات الأخيرة</h2><span>▢</span></div>
+                {latest_requests_html}
             </div>
-
             {results_html}
-
-            <div class="ms-section-head">
-                <h2>الأقسام السريعة</h2>
-                <span></span>
-            </div>
-            {fast_cards}
-
             {bottom_nav}
         </div>
         </body></html>
-        '''
+        """
     )
 
 
@@ -4906,6 +4973,7 @@ def request_service():
             row = con.execute("SELECT id FROM service_requests ORDER BY id DESC LIMIT 1").fetchone()
             request_id = int(row["id"] if row else 0)
 
+        add_service_request_event(request_id, "created", "تم إنشاء طلب الخدمة", f"{specialty} — {governorate} / {city}", requester_id, "requester" if requester_id else "guest")
         notify_matching_workers_service_request(request_id, specialty, governorate, title)
         notify_admin_new_service_request(request_id, requester_name, specialty, governorate)
 
@@ -5011,7 +5079,7 @@ def worker_service_requests():
             WHERE specialty=?
               AND (
                     (status IN ('new','contacted','offers') AND (?='' OR governorate=?))
-                    OR (status='selected' AND assigned_worker_id=?)
+                    OR (status IN ('selected','scheduled','in_progress','completed','disputed') AND assigned_worker_id=?)
                   )
             ORDER BY CASE WHEN status='new' THEN 0 WHEN status='offers' THEN 1 ELSE 2 END, id DESC
             LIMIT ?
@@ -5054,7 +5122,7 @@ def admin_service_requests():
         return redirect(url_for("admin_login"))
     status = sanitize_input(request.args.get("status", ""), 40)
     with get_db() as con:
-        if status in {"new", "offers", "selected", "contacted", "closed", "rejected"}:
+        if status in {"new", "offers", "selected", "contacted", "scheduled", "in_progress", "completed", "disputed", "closed", "rejected"}:
             rows = con.execute("SELECT * FROM service_requests WHERE status=? ORDER BY id DESC LIMIT ?", (status, 200)).fetchall()
         else:
             rows = con.execute("SELECT * FROM service_requests ORDER BY id DESC LIMIT ?", (200,)).fetchall()
@@ -5072,6 +5140,10 @@ def admin_service_requests():
             <a class="link-btn secondary" href="/admin/service-requests?status=offers">وصلت عروض</a>
             <a class="link-btn secondary" href="/admin/service-requests?status=selected">تم اختيار مختص</a>
             <a class="link-btn secondary" href="/admin/service-requests?status=contacted">تم التواصل</a>
+            <a class="link-btn secondary" href="/admin/service-requests?status=scheduled">موعد مؤكد</a>
+            <a class="link-btn secondary" href="/admin/service-requests?status=in_progress">العمل جارٍ</a>
+            <a class="link-btn secondary" href="/admin/service-requests?status=completed">مكتملة</a>
+            <a class="link-btn secondary" href="/admin/service-requests?status=disputed">نزاعات</a>
             <a class="link-btn secondary" href="/admin/service-requests?status=closed">المغلقة</a>
             <a class="link-btn secondary" href="/admin/service-requests?status=rejected">المرفوضة</a>
         </div>
@@ -5085,7 +5157,7 @@ def admin_service_requests():
 def admin_service_request_status(req_id, status):
     if not admin_required():
         return redirect(url_for("admin_login"))
-    if status not in {"new", "offers", "selected", "contacted", "closed", "rejected"}:
+    if status not in {"new", "offers", "selected", "contacted", "scheduled", "in_progress", "completed", "disputed", "closed", "rejected"}:
         status = "new"
     with get_db() as con:
         req = con.execute("SELECT * FROM service_requests WHERE id=?", (req_id,)).fetchone()
@@ -6256,6 +6328,7 @@ def admin_panel():
         pending_approval_count = con.execute("SELECT COUNT(*) AS c FROM users WHERE COALESCE(is_verified,0)=0 AND COALESCE(role,'worker')='worker' AND COALESCE(is_blocked,0)=0").fetchone()["c"]
         service_requests_count = con.execute("SELECT COUNT(*) AS c FROM service_requests").fetchone()["c"]
         new_service_requests_count = con.execute("SELECT COUNT(*) AS c FROM service_requests WHERE status='new'").fetchone()["c"]
+        open_service_disputes_count = con.execute("SELECT COUNT(*) AS c FROM service_disputes WHERE status='open'").fetchone()["c"]
 
         if admin_q:
             like_q = f"%{admin_q}%"
@@ -6340,6 +6413,7 @@ def admin_panel():
                     <a href="/admin/support"><button class="light-btn">الدعم الفني</button></a>
                     <a href="/admin/pending-workers"><button class="light-btn">قيد المراجعة ({pending_approval_count})</button></a>
                     <a href="/admin/service-requests"><button class="light-btn">طلبات الخدمات ({new_service_requests_count})</button></a>
+                    <a href="/admin/service-disputes"><button class="light-btn">النزاعات ({open_service_disputes_count})</button></a>
                     
                     <a href="/admin/logout"><button>خروج الأدمن</button></a>
                 </div>
@@ -6367,6 +6441,7 @@ def admin_panel():
                 <div class="admin-stat"><div class="label">عدد التعليقات</div><div class="value">{comments_count}</div></div>
                 <div class="admin-stat"><div class="label">طلبات الخدمات</div><div class="value">{service_requests_count}</div></div>
                 <div class="admin-stat"><div class="label">قيد المراجعة</div><div class="value">{pending_approval_count}</div></div>
+                <div class="admin-stat"><div class="label">نزاعات مفتوحة</div><div class="value">{open_service_disputes_count}</div></div>
             </div>
 
             <div class="admin-search-box" style="margin-bottom:16px;">
@@ -7677,6 +7752,266 @@ def ensure_service_offers_db():
 ensure_service_offers_db()
 
 
+SERVICE_POST_SELECTION_STATUSES = {"selected", "scheduled", "in_progress", "completed", "disputed", "closed"}
+SERVICE_ACTIVE_EXECUTION_STATUSES = {"selected", "scheduled", "in_progress", "completed", "disputed"}
+
+
+def request_row_value(row, key, default=""):
+    try:
+        value = row[key]
+        return default if value is None else value
+    except Exception:
+        return default
+
+
+def ensure_service_execution_db():
+    try:
+        with get_db() as con:
+            cur = con.cursor()
+            if USING_POSTGRES:
+                for sql in [
+                    "ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS scheduled_at TEXT DEFAULT ''",
+                    "ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS schedule_status TEXT DEFAULT 'none'",
+                    "ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS start_code TEXT DEFAULT ''",
+                    "ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS completion_code TEXT DEFAULT ''",
+                    "ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS started_at TEXT DEFAULT ''",
+                    "ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS completed_at TEXT DEFAULT ''",
+                    "ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS selected_offer_id BIGINT DEFAULT 0",
+                    "ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS rating_submitted INTEGER DEFAULT 0",
+                    "ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS dispute_status TEXT DEFAULT ''",
+                ]:
+                    cur.execute(sql)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS service_request_events(
+                        id BIGSERIAL PRIMARY KEY,
+                        request_id BIGINT NOT NULL,
+                        event_type TEXT DEFAULT '',
+                        title TEXT DEFAULT '',
+                        details TEXT DEFAULT '',
+                        actor_id BIGINT DEFAULT 0,
+                        actor_role TEXT DEFAULT 'system',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS service_disputes(
+                        id BIGSERIAL PRIMARY KEY,
+                        request_id BIGINT NOT NULL,
+                        opened_by_id BIGINT DEFAULT 0,
+                        opened_by_name TEXT DEFAULT '',
+                        opened_by_role TEXT DEFAULT '',
+                        reason TEXT DEFAULT '',
+                        details TEXT DEFAULT '',
+                        attachment TEXT DEFAULT '',
+                        attachment_type TEXT DEFAULT '',
+                        previous_status TEXT DEFAULT 'selected',
+                        status TEXT DEFAULT 'open',
+                        admin_note TEXT DEFAULT '',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        resolved_at TEXT DEFAULT ''
+                    )
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS service_request_ratings(
+                        id BIGSERIAL PRIMARY KEY,
+                        request_id BIGINT UNIQUE NOT NULL,
+                        worker_id BIGINT NOT NULL,
+                        requester_id BIGINT DEFAULT 0,
+                        rating INTEGER DEFAULT 5,
+                        comment TEXT DEFAULT '',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+            else:
+                sqlite_columns = [
+                    ("scheduled_at", "TEXT DEFAULT ''"),
+                    ("schedule_status", "TEXT DEFAULT 'none'"),
+                    ("start_code", "TEXT DEFAULT ''"),
+                    ("completion_code", "TEXT DEFAULT ''"),
+                    ("started_at", "TEXT DEFAULT ''"),
+                    ("completed_at", "TEXT DEFAULT ''"),
+                    ("selected_offer_id", "INTEGER DEFAULT 0"),
+                    ("rating_submitted", "INTEGER DEFAULT 0"),
+                    ("dispute_status", "TEXT DEFAULT ''"),
+                ]
+                for column_name, column_sql in sqlite_columns:
+                    if not column_exists(cur, "service_requests", column_name):
+                        cur.execute(f"ALTER TABLE service_requests ADD COLUMN {column_name} {column_sql}")
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS service_request_events(
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        request_id INTEGER NOT NULL,
+                        event_type TEXT DEFAULT '',
+                        title TEXT DEFAULT '',
+                        details TEXT DEFAULT '',
+                        actor_id INTEGER DEFAULT 0,
+                        actor_role TEXT DEFAULT 'system',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS service_disputes(
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        request_id INTEGER NOT NULL,
+                        opened_by_id INTEGER DEFAULT 0,
+                        opened_by_name TEXT DEFAULT '',
+                        opened_by_role TEXT DEFAULT '',
+                        reason TEXT DEFAULT '',
+                        details TEXT DEFAULT '',
+                        attachment TEXT DEFAULT '',
+                        attachment_type TEXT DEFAULT '',
+                        previous_status TEXT DEFAULT 'selected',
+                        status TEXT DEFAULT 'open',
+                        admin_note TEXT DEFAULT '',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        resolved_at TEXT DEFAULT ''
+                    )
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS service_request_ratings(
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        request_id INTEGER UNIQUE NOT NULL,
+                        worker_id INTEGER NOT NULL,
+                        requester_id INTEGER DEFAULT 0,
+                        rating INTEGER DEFAULT 5,
+                        comment TEXT DEFAULT '',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_service_events_request ON service_request_events(request_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_service_disputes_request ON service_disputes(request_id)")
+            con.commit()
+    except Exception as e:
+        print("SERVICE EXECUTION DB INIT ERROR:", repr(e))
+
+
+ensure_service_execution_db()
+
+
+def generate_service_codes():
+    start_code = str(secrets.randbelow(9000) + 1000)
+    completion_code = str(secrets.randbelow(9000) + 1000)
+    while completion_code == start_code:
+        completion_code = str(secrets.randbelow(9000) + 1000)
+    return start_code, completion_code
+
+
+def ensure_service_request_codes(request_id):
+    try:
+        with get_db() as con:
+            row = con.execute("SELECT start_code, completion_code FROM service_requests WHERE id=?", (request_id,)).fetchone()
+            if not row:
+                return "", ""
+            start_code = request_row_value(row, "start_code", "")
+            completion_code = request_row_value(row, "completion_code", "")
+            if not start_code or not completion_code:
+                start_code, completion_code = generate_service_codes()
+                con.execute("UPDATE service_requests SET start_code=?, completion_code=? WHERE id=?", (start_code, completion_code, request_id))
+                con.commit()
+            return start_code, completion_code
+    except Exception:
+        return "", ""
+
+
+def add_service_request_event(request_id, event_type, title, details="", actor_id=0, actor_role="system"):
+    try:
+        with get_db() as con:
+            con.execute(
+                "INSERT INTO service_request_events (request_id, event_type, title, details, actor_id, actor_role) VALUES (?, ?, ?, ?, ?, ?)",
+                (int(request_id), sanitize_input(event_type, 50), sanitize_input(title, 160), sanitize_input(details, 500), int(actor_id or 0), sanitize_input(actor_role, 30) or "system")
+            )
+            con.commit()
+        return True
+    except Exception as e:
+        print("SERVICE EVENT ERROR:", repr(e))
+        return False
+
+
+def format_service_schedule(value):
+    value = (value or "").strip()
+    if not value:
+        return "غير محدد"
+    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S"):
+        try:
+            dt = datetime.datetime.strptime(value, fmt)
+            return dt.strftime("%Y-%m-%d • %H:%M")
+        except Exception:
+            pass
+    return value
+
+
+def service_request_progress_html(req):
+    status = request_row_value(req, "status", "new") or "new"
+    assigned = int(request_row_value(req, "assigned_worker_id", 0) or 0) > 0
+    schedule_confirmed = request_row_value(req, "schedule_status", "none") == "confirmed"
+    started = bool(request_row_value(req, "started_at", "")) or status in {"in_progress", "completed", "closed"}
+    completed = bool(request_row_value(req, "completed_at", "")) or status in {"completed", "closed"}
+    offers = get_service_offer_count(request_row_value(req, "id", 0)) > 0
+    steps = [
+        ("📝", "إنشاء الطلب", True, status == "new"),
+        ("💰", "وصول عروض", offers or assigned, status == "offers"),
+        ("✅", "اختيار مختص", assigned, status == "selected"),
+        ("📅", "تأكيد الموعد", schedule_confirmed or started or completed, status == "scheduled"),
+        ("🛠️", "بدء العمل", started, status == "in_progress"),
+        ("🏁", "اكتمال الخدمة", completed, status in {"completed", "closed"}),
+    ]
+    html = '<div class="workflow-steps">'
+    for icon, label, done, current in steps:
+        classes = "workflow-step"
+        if done:
+            classes += " done"
+        if current:
+            classes += " current"
+        html += f'<div class="{classes}"><span class="step-icon">{icon}</span>{label}</div>'
+    html += '</div>'
+    return html
+
+
+def service_request_timeline_html(events):
+    if not events:
+        return '<div class="empty-state">سيظهر سجل التنفيذ هنا عند بدء الإجراءات.</div>'
+    blocks = []
+    for event in events:
+        blocks.append(f"""<div class="timeline-item"><div class="timeline-title">{event['title'] or 'تحديث'}</div><div class="timeline-detail">{event['details'] or ''}</div><div class="timeline-time">{format_chat_datetime(event['created_at'] or '')}</div></div>""")
+    return '<div class="timeline-list">' + ''.join(blocks) + '</div>'
+
+
+def service_request_selected_worker(req):
+    worker_id = int(request_row_value(req, "assigned_worker_id", 0) or 0)
+    if not worker_id:
+        return None
+    try:
+        with get_db() as con:
+            return con.execute("SELECT * FROM users WHERE id=?", (worker_id,)).fetchone()
+    except Exception:
+        return None
+
+
+def get_open_service_dispute(request_id):
+    try:
+        with get_db() as con:
+            return con.execute("SELECT * FROM service_disputes WHERE request_id=? AND status='open' ORDER BY id DESC LIMIT 1", (request_id,)).fetchone()
+    except Exception:
+        return None
+
+
+def notify_service_request_user(user_id, title, message, request_id):
+    if not int(user_id or 0):
+        return False
+    return send_push_to_user(int(user_id), title, message, f"/service-request-track/{int(request_id)}")
+
+
+def notify_service_both_parties(req, title, message):
+    sent = False
+    requester_id = int(request_row_value(req, "requester_id", 0) or 0)
+    worker_id = int(request_row_value(req, "assigned_worker_id", 0) or 0)
+    if requester_id:
+        sent = notify_service_request_user(requester_id, title, message, req["id"]) or sent
+    if worker_id:
+        sent = notify_service_request_user(worker_id, title, message, req["id"]) or sent
+    return sent
+
+
 def get_service_offer_count(request_id):
     try:
         with get_db() as con:
@@ -7711,8 +8046,13 @@ def user_can_view_service_request(req, current_user=None):
     if not current_user:
         return False
     try:
-        if int(req["requester_id"] or 0) == int(current_user["id"]):
+        current_id = int(current_user["id"])
+        if int(req["requester_id"] or 0) == current_id:
             return True
+        status = req["status"] or "new"
+        assigned_worker_id = int(request_row_value(req, "assigned_worker_id", 0) or 0)
+        if status in SERVICE_POST_SELECTION_STATUSES or assigned_worker_id:
+            return assigned_worker_id == current_id
         if (current_user["role"] or "worker") != "visitor" and (current_user["section"] or "") == (req["specialty"] or ""):
             worker_gov = current_user["governorate"] or ""
             req_gov = req["governorate"] or ""
@@ -7889,7 +8229,7 @@ def service_request_offers(req_id):
             offers = con.execute(service_offer_worker_join_sql("WHERE o.request_id=? AND o.worker_id=?"), (req_id, current_user["id"])).fetchall()
         else:
             offers = con.execute(service_offer_worker_join_sql("WHERE o.request_id=?"), (req_id,)).fetchall()
-    can_select = bool(is_owner and (req["status"] or "new") not in {"closed", "rejected", "selected"})
+    can_select = bool(is_owner and (req["status"] or "new") in {"new", "offers", "contacted"})
     viewer = "admin" if is_admin else ("owner" if is_owner else "worker")
     cards = "".join(service_offer_card(o, req, viewer, can_select) for o in offers) if offers else '<div class="empty-state">لا توجد عروض على هذا الطلب حتى الآن.</div>'
     back_link = "/admin/service-requests" if is_admin else ("/my-service-requests" if is_owner else "/worker-service-requests")
@@ -7913,6 +8253,7 @@ def service_offer_select(offer_id):
     if not current_user:
         session.clear()
         return redirect(url_for("home"))
+    start_code, completion_code = generate_service_codes()
     with get_db() as con:
         offer = con.execute("SELECT * FROM service_offers WHERE id=?", (offer_id,)).fetchone()
         if not offer:
@@ -7920,14 +8261,327 @@ def service_offer_select(offer_id):
         req = con.execute("SELECT * FROM service_requests WHERE id=?", (offer["request_id"],)).fetchone()
         if not req or int(req["requester_id"] or 0) != int(current_user["id"]):
             return render_template_string(STYLE + '<div class="container narrow-container"><div class="msg">لا تملك صلاحية اختيار هذا العرض</div><a href="/my-service-requests"><button>رجوع</button></a></div></body></html>')
-        if (req["status"] or "new") in {"closed", "rejected", "selected"}:
+        if (req["status"] or "new") not in {"new", "offers", "contacted"}:
             return render_template_string(STYLE + '<div class="container narrow-container"><div class="msg">لا يمكن اختيار عرض لهذا الطلب حالياً</div><a href="/my-service-requests"><button>رجوع</button></a></div></body></html>')
         con.execute("UPDATE service_offers SET status='cancelled', updated_at=CURRENT_TIMESTAMP WHERE request_id=?", (req["id"],))
         con.execute("UPDATE service_offers SET status='selected', updated_at=CURRENT_TIMESTAMP WHERE id=?", (offer_id,))
-        con.execute("UPDATE service_requests SET status='selected', assigned_worker_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (offer["worker_id"], req["id"]))
+        con.execute(
+            """UPDATE service_requests
+               SET status='selected', assigned_worker_id=?, selected_offer_id=?, start_code=?, completion_code=?,
+                   scheduled_at='', schedule_status='none', started_at='', completed_at='', rating_submitted=0,
+                   dispute_status='', updated_at=CURRENT_TIMESTAMP
+               WHERE id=?""",
+            (offer["worker_id"], offer_id, start_code, completion_code, req["id"])
+        )
         con.commit()
+    add_service_request_event(req["id"], "offer_selected", "تم اختيار المختص", "تم اختيار عرض المختص وفتح مرحلة التنفيذ.", current_user["id"], "requester")
     notify_worker_offer_selected(offer["worker_id"], req)
-    return render_template_string(STYLE + f'<div class="container narrow-container"><div class="msg">تم اختيار العرض بنجاح. تقدر الآن تتواصل مع المختص عبر واتساب.</div><a href="/service-request-offers/{req["id"]}"><button>عرض المختص المختار</button></a><a href="/my-service-requests"><button class="light-btn">طلباتي</button></a></div></body></html>')
+    return render_template_string(STYLE + f'<div class="container narrow-container"><div class="msg">تم اختيار العرض بنجاح. هسه تقدر تحدد الموعد وتتابع التنفيذ خطوة بخطوة.</div><a href="/service-request-track/{req["id"]}"><button>متابعة التنفيذ</button></a><a href="/my-service-requests"><button class="light-btn">طلباتي</button></a></div></body></html>')
+
+
+@app.route("/service-request-track/<int:req_id>")
+def service_request_track(req_id):
+    auto_login_from_cookie()
+    current_user = get_current_session_user() if "user" in session else None
+    with get_db() as con:
+        req = con.execute("SELECT * FROM service_requests WHERE id=?", (req_id,)).fetchone()
+    if not req:
+        return render_template_string(STYLE + '<div class="container narrow-container"><div class="msg">الطلب غير موجود</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
+    if not user_can_view_service_request(req, current_user):
+        return render_template_string(STYLE + '<div class="container narrow-container"><div class="msg">لا تملك صلاحية متابعة هذا الطلب</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
+
+    if int(request_row_value(req, "assigned_worker_id", 0) or 0) and (not request_row_value(req, "start_code", "") or not request_row_value(req, "completion_code", "")):
+        ensure_service_request_codes(req_id)
+        with get_db() as con:
+            req = con.execute("SELECT * FROM service_requests WHERE id=?", (req_id,)).fetchone()
+
+    is_admin = admin_required()
+    is_owner = current_user is not None and int(req["requester_id"] or 0) == int(current_user["id"])
+    is_worker = current_user is not None and int(request_row_value(req, "assigned_worker_id", 0) or 0) == int(current_user["id"])
+    selected_worker = service_request_selected_worker(req)
+    with get_db() as con:
+        events = con.execute("SELECT * FROM service_request_events WHERE request_id=? ORDER BY id DESC LIMIT 100", (req_id,)).fetchall()
+        rating_row = con.execute("SELECT * FROM service_request_ratings WHERE request_id=?", (req_id,)).fetchone()
+    dispute = get_open_service_dispute(req_id)
+    status = req["status"] or "new"
+    scheduled_at = request_row_value(req, "scheduled_at", "")
+    schedule_status = request_row_value(req, "schedule_status", "none")
+
+    worker_html = '<div class="empty-state">لم يتم اختيار مختص بعد.</div>'
+    if selected_worker:
+        worker_profile = profile_thumb_html(selected_worker["profile_pic"] or "", "profile-img")
+        worker_phone = selected_worker["phone"] or ""
+        wa = f'<a class="link-btn whatsapp-pill" href="{build_whatsapp_link(worker_phone)}" target="_blank" rel="noopener">واتساب المختص</a>' if worker_phone else ""
+        worker_html = f'''<div class="selected-worker-mini"><div>{worker_profile}</div><div style="flex:1"><strong>{selected_worker["name"] or "مختص"}</strong><div class="small">{selected_worker["section"] or ""} • {selected_worker["governorate"] or ""}</div><div class="execution-actions"><a class="link-btn secondary" href="/worker/{selected_worker["id"]}">فتح الملف</a>{wa}</div></div></div>'''
+
+    owner_actions = ""
+    if is_owner and int(request_row_value(req, "assigned_worker_id", 0) or 0):
+        code_html = ""
+        if status not in {"completed", "closed"}:
+            code_html = f'''<div class="code-panel"><h3>رموز تأكيد التنفيذ</h3><div class="execution-note">لا ترسل الرمز إلا والمختص موجود فعلياً. رمز البدء يفتح العمل، ورمز الإكمال يؤكد انتهاء الخدمة.</div><div class="execution-code-grid"><div class="execution-code"><div class="label">رمز بدء العمل</div><div class="value">{request_row_value(req, "start_code", "----")}</div></div><div class="execution-code"><div class="label">رمز إكمال الخدمة</div><div class="value">{request_row_value(req, "completion_code", "----")}</div></div></div></div>'''
+        schedule_form = ""
+        if status in {"selected", "scheduled"} and not request_row_value(req, "started_at", ""):
+            schedule_input = scheduled_at.replace(" ", "T")[:16] if scheduled_at else ""
+            schedule_form = f'''<div class="appointment-panel"><h3>تحديد موعد التنفيذ</h3><div class="section-subtitle">حدد الموعد، وبعدها المختص يؤكده.</div><form method="post" action="/service-request-schedule/{req_id}"><input type="datetime-local" name="scheduled_at" value="{schedule_input}" required><button>حفظ وإرسال الموعد</button></form></div>'''
+        rating_form = ""
+        if status == "completed" and not rating_row:
+            rating_form = f'''<div class="rating-panel"><h3>قيّم الخدمة المكتملة</h3><form method="post" action="/service-request-rate/{req_id}"><select name="rating" required><option value="5">5 نجوم — ممتاز</option><option value="4">4 نجوم — جيد جداً</option><option value="3">3 نجوم — جيد</option><option value="2">نجمتان</option><option value="1">نجمة واحدة</option></select><textarea name="comment" placeholder="اكتب رأيك بالخدمة" required></textarea><button>إرسال التقييم</button></form></div>'''
+        elif rating_row:
+            rating_form = f'''<div class="rating-panel"><h3>تم إرسال التقييم</h3><div class="rating-pill">⭐ {rating_row["rating"]}/5</div><div>{rating_row["comment"] or ""}</div></div>'''
+        owner_actions = code_html + schedule_form + rating_form
+
+    worker_actions = ""
+    if is_worker:
+        confirm_html = ""
+        if schedule_status == "proposed" and scheduled_at and status in {"selected", "scheduled"}:
+            confirm_html = f'''<div class="appointment-panel"><h3>موعد مقترح</h3><div class="appointment-value">{format_service_schedule(scheduled_at)}</div><form method="post" action="/service-request-confirm-schedule/{req_id}"><button>تأكيد الموعد</button></form></div>'''
+        elif schedule_status == "confirmed" and scheduled_at:
+            confirm_html = f'''<div class="appointment-panel"><h3>الموعد المؤكد</h3><div class="appointment-value">{format_service_schedule(scheduled_at)}</div></div>'''
+        start_html = ""
+        if status in {"selected", "scheduled"}:
+            start_html = f'''<div class="code-panel"><h3>بدء العمل</h3><div class="section-subtitle">اطلب رمز البدء من صاحب الطلب بعد وصولك.</div><form method="post" action="/service-request-start/{req_id}"><input name="code" inputmode="numeric" maxlength="4" placeholder="رمز البدء من 4 أرقام" required><button>بدء العمل</button></form></div>'''
+        complete_html = ""
+        if status == "in_progress":
+            complete_html = f'''<div class="code-panel"><h3>إكمال الخدمة</h3><div class="section-subtitle">بعد إنهاء العمل اطلب رمز الإكمال من صاحب الطلب.</div><form method="post" action="/service-request-complete/{req_id}"><input name="code" inputmode="numeric" maxlength="4" placeholder="رمز الإكمال من 4 أرقام" required><button>تأكيد اكتمال الخدمة</button></form></div>'''
+        worker_actions = confirm_html + start_html + complete_html
+
+    dispute_html = ""
+    if dispute:
+        dispute_html = f'''<div class="dispute-panel"><div class="dispute-open">🚨 يوجد نزاع مفتوح</div><div><strong>{dispute["reason"] or "نزاع على الخدمة"}</strong></div><div class="small">{dispute["details"] or ""}</div>{service_request_attachment_html(dispute)}</div>'''
+    elif (is_owner or is_worker) and status in {"selected", "scheduled", "in_progress", "completed"}:
+        dispute_html = f'''<div class="dispute-panel"><h3>حدثت مشكلة؟</h3><div class="section-subtitle">افتح نزاعاً حتى تراجعه الإدارة.</div><a class="link-btn link-red" href="/service-request-dispute/{req_id}">فتح نزاع</a></div>'''
+
+    admin_actions = ""
+    if is_admin and dispute:
+        admin_actions = f'''<div class="dispute-panel"><h3>إجراء الإدارة</h3><form method="post" action="/admin/service-dispute-action/{dispute["id"]}"><textarea name="admin_note" placeholder="ملاحظة الإدارة"></textarea><div class="execution-actions"><button name="action" value="resume">حل النزاع واستئناف الطلب</button><button name="action" value="close" class="link-red">إغلاق الطلب</button></div></form></div>'''
+
+    role_actions = owner_actions if is_owner else (worker_actions if is_worker else admin_actions)
+    back_link = "/admin/service-requests" if is_admin else ("/my-service-requests" if is_owner else "/worker-service-requests")
+    return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f'''
+    <div class="container">
+        <a href="{back_link}"><button class="light-btn">رجوع</button></a>
+        <div class="hero-panel"><span class="hero-badge">تنفيذ موثوق</span><h2>{req["title"] or "طلب خدمة"}</h2><div class="inline">{service_request_status_badge(status)}<span class="badge">#{req_id}</span></div>{service_request_progress_html(req)}</div>
+        <div class="execution-shell">
+            <div>
+                <div class="execution-panel"><h3>تفاصيل الطلب</h3>{service_request_card(req, "admin" if is_admin else ("worker" if is_worker else "user"))}</div>
+                <div class="timeline-panel"><h3>سجل التنفيذ</h3>{service_request_timeline_html(events)}</div>
+            </div>
+            <div>
+                <div class="execution-panel"><h3>المختص المختار</h3>{worker_html}</div>
+                {role_actions}
+                {dispute_html}
+                {admin_actions if not role_actions else ""}
+            </div>
+        </div>
+    </div>
+    </body></html>
+    ''')
+
+
+@app.route("/service-request-schedule/<int:req_id>", methods=["POST"])
+def service_request_schedule(req_id):
+    if "user" not in session:
+        return redirect(url_for("visitor_login"))
+    current_user = get_current_session_user()
+    scheduled_raw = sanitize_input(request.form.get("scheduled_at", ""), 40)
+    try:
+        dt = datetime.datetime.strptime(scheduled_raw, "%Y-%m-%dT%H:%M")
+        scheduled_at = dt.strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return render_template_string(STYLE + f'<div class="container narrow-container"><div class="msg">صيغة الموعد غير صحيحة</div><a href="/service-request-track/{req_id}"><button>رجوع</button></a></div></body></html>')
+    with get_db() as con:
+        req = con.execute("SELECT * FROM service_requests WHERE id=?", (req_id,)).fetchone()
+        if not req or not current_user or int(req["requester_id"] or 0) != int(current_user["id"]):
+            return render_template_string(STYLE + '<div class="container narrow-container"><div class="msg">لا تملك صلاحية تعديل الموعد</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
+        if not int(request_row_value(req, "assigned_worker_id", 0) or 0) or (req["status"] or "new") not in {"selected", "scheduled"}:
+            return render_template_string(STYLE + f'<div class="container narrow-container"><div class="msg">لا يمكن تحديد موعد لهذا الطلب حالياً</div><a href="/service-request-track/{req_id}"><button>رجوع</button></a></div></body></html>')
+        con.execute("UPDATE service_requests SET scheduled_at=?, schedule_status='proposed', status='selected', updated_at=CURRENT_TIMESTAMP WHERE id=?", (scheduled_at, req_id))
+        con.commit()
+    add_service_request_event(req_id, "schedule_proposed", "تم اقتراح موعد التنفيذ", format_service_schedule(scheduled_at), current_user["id"], "requester")
+    notify_service_request_user(req["assigned_worker_id"], "موعد جديد لطلب خدمة", f"تم اقتراح موعد {format_service_schedule(scheduled_at)}", req_id)
+    return redirect(url_for("service_request_track", req_id=req_id))
+
+
+@app.route("/service-request-confirm-schedule/<int:req_id>", methods=["POST"])
+def service_request_confirm_schedule(req_id):
+    if "user" not in session:
+        return redirect(url_for("login"))
+    current_user = get_current_session_user()
+    with get_db() as con:
+        req = con.execute("SELECT * FROM service_requests WHERE id=?", (req_id,)).fetchone()
+        if not req or not current_user or int(request_row_value(req, "assigned_worker_id", 0) or 0) != int(current_user["id"]):
+            return render_template_string(STYLE + '<div class="container narrow-container"><div class="msg">لا تملك صلاحية تأكيد هذا الموعد</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
+        if request_row_value(req, "schedule_status", "none") != "proposed" or not request_row_value(req, "scheduled_at", ""):
+            return redirect(url_for("service_request_track", req_id=req_id))
+        con.execute("UPDATE service_requests SET schedule_status='confirmed', status='scheduled', updated_at=CURRENT_TIMESTAMP WHERE id=?", (req_id,))
+        con.commit()
+    add_service_request_event(req_id, "schedule_confirmed", "تم تأكيد موعد التنفيذ", format_service_schedule(req["scheduled_at"]), current_user["id"], "worker")
+    notify_service_request_user(req["requester_id"], "تم تأكيد موعد الخدمة", f"المختص أكد موعد {format_service_schedule(req["scheduled_at"])}", req_id)
+    return redirect(url_for("service_request_track", req_id=req_id))
+
+
+@app.route("/service-request-start/<int:req_id>", methods=["POST"])
+def service_request_start(req_id):
+    if "user" not in session:
+        return redirect(url_for("login"))
+    current_user = get_current_session_user()
+    code = sanitize_input(request.form.get("code", ""), 10)
+    with get_db() as con:
+        req = con.execute("SELECT * FROM service_requests WHERE id=?", (req_id,)).fetchone()
+        if not req or not current_user or int(request_row_value(req, "assigned_worker_id", 0) or 0) != int(current_user["id"]):
+            return render_template_string(STYLE + '<div class="container narrow-container"><div class="msg">لا تملك صلاحية بدء هذا الطلب</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
+        if (req["status"] or "new") not in {"selected", "scheduled"}:
+            return redirect(url_for("service_request_track", req_id=req_id))
+        if not secrets.compare_digest(code, str(request_row_value(req, "start_code", ""))):
+            return render_template_string(STYLE + f'<div class="container narrow-container"><div class="msg">رمز بدء العمل غير صحيح</div><a href="/service-request-track/{req_id}"><button>رجوع</button></a></div></body></html>')
+        started_at = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        con.execute("UPDATE service_requests SET status='in_progress', started_at=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (started_at, req_id))
+        con.commit()
+    add_service_request_event(req_id, "started", "بدأ تنفيذ الخدمة", "أكد المختص بدء العمل باستخدام الرمز.", current_user["id"], "worker")
+    notify_service_request_user(req["requester_id"], "بدأ تنفيذ خدمتك", "المختص أكد بدء العمل على طلبك.", req_id)
+    return redirect(url_for("service_request_track", req_id=req_id))
+
+
+@app.route("/service-request-complete/<int:req_id>", methods=["POST"])
+def service_request_complete(req_id):
+    if "user" not in session:
+        return redirect(url_for("login"))
+    current_user = get_current_session_user()
+    code = sanitize_input(request.form.get("code", ""), 10)
+    with get_db() as con:
+        req = con.execute("SELECT * FROM service_requests WHERE id=?", (req_id,)).fetchone()
+        if not req or not current_user or int(request_row_value(req, "assigned_worker_id", 0) or 0) != int(current_user["id"]):
+            return render_template_string(STYLE + '<div class="container narrow-container"><div class="msg">لا تملك صلاحية إكمال هذا الطلب</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
+        if (req["status"] or "new") != "in_progress":
+            return redirect(url_for("service_request_track", req_id=req_id))
+        if not secrets.compare_digest(code, str(request_row_value(req, "completion_code", ""))):
+            return render_template_string(STYLE + f'<div class="container narrow-container"><div class="msg">رمز إكمال الخدمة غير صحيح</div><a href="/service-request-track/{req_id}"><button>رجوع</button></a></div></body></html>')
+        completed_at = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        con.execute("UPDATE service_requests SET status='completed', completed_at=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (completed_at, req_id))
+        con.commit()
+    add_service_request_event(req_id, "completed", "اكتملت الخدمة", "تم تأكيد اكتمال الخدمة باستخدام رمز صاحب الطلب.", current_user["id"], "worker")
+    notify_service_request_user(req["requester_id"], "اكتملت خدمتك", "تم تأكيد إكمال الخدمة. تقدر الآن تقييم المختص.", req_id)
+    return redirect(url_for("service_request_track", req_id=req_id))
+
+
+@app.route("/service-request-rate/<int:req_id>", methods=["POST"])
+def service_request_rate(req_id):
+    if "user" not in session:
+        return redirect(url_for("visitor_login"))
+    current_user = get_current_session_user()
+    try:
+        rating = int(request.form.get("rating", "5"))
+    except Exception:
+        rating = 5
+    rating = max(1, min(5, rating))
+    comment = sanitize_input(request.form.get("comment", ""), 500)
+    if not comment:
+        return render_template_string(STYLE + f'<div class="container narrow-container"><div class="msg">اكتب تعليقك على الخدمة</div><a href="/service-request-track/{req_id}"><button>رجوع</button></a></div></body></html>')
+    try:
+        with get_db() as con:
+            req = con.execute("SELECT * FROM service_requests WHERE id=?", (req_id,)).fetchone()
+            if not req or not current_user or int(req["requester_id"] or 0) != int(current_user["id"]):
+                return render_template_string(STYLE + '<div class="container narrow-container"><div class="msg">لا تملك صلاحية تقييم هذا الطلب</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
+            if (req["status"] or "new") not in {"completed", "closed"}:
+                return redirect(url_for("service_request_track", req_id=req_id))
+            old = con.execute("SELECT id FROM service_request_ratings WHERE request_id=?", (req_id,)).fetchone()
+            if old:
+                return redirect(url_for("service_request_track", req_id=req_id))
+            worker_id = int(request_row_value(req, "assigned_worker_id", 0) or 0)
+            con.execute("INSERT INTO service_request_ratings (request_id, worker_id, requester_id, rating, comment) VALUES (?, ?, ?, ?, ?)", (req_id, worker_id, current_user["id"], rating, comment))
+            con.execute("INSERT INTO comments (user_id, commenter_name, rating, comment) VALUES (?, ?, ?, ?)", (worker_id, current_user["name"] or "مستخدم", rating, comment))
+            con.execute("UPDATE service_requests SET rating_submitted=1, updated_at=CURRENT_TIMESTAMP WHERE id=?", (req_id,))
+            con.commit()
+        add_service_request_event(req_id, "rated", "تم تقييم الخدمة", f"التقييم: {rating}/5", current_user["id"], "requester")
+        notify_new_worker_rating(worker_id, current_user["name"] or "مستخدم", rating, comment)
+    except DB_INTEGRITY_ERRORS:
+        pass
+    return redirect(url_for("service_request_track", req_id=req_id))
+
+
+@app.route("/service-request-dispute/<int:req_id>", methods=["GET", "POST"])
+def service_request_dispute(req_id):
+    if "user" not in session:
+        return redirect(url_for("visitor_login"))
+    current_user = get_current_session_user()
+    with get_db() as con:
+        req = con.execute("SELECT * FROM service_requests WHERE id=?", (req_id,)).fetchone()
+    if not req or not current_user:
+        return redirect(url_for("workers"))
+    is_owner = int(req["requester_id"] or 0) == int(current_user["id"])
+    is_worker = int(request_row_value(req, "assigned_worker_id", 0) or 0) == int(current_user["id"])
+    if not (is_owner or is_worker) or (req["status"] or "new") not in {"selected", "scheduled", "in_progress", "completed"}:
+        return render_template_string(STYLE + '<div class="container narrow-container"><div class="msg">لا يمكن فتح نزاع لهذا الطلب</div><a href="/workers"><button>رجوع</button></a></div></body></html>')
+    if get_open_service_dispute(req_id):
+        return redirect(url_for("service_request_track", req_id=req_id))
+    if request.method == "POST":
+        reason = sanitize_input(request.form.get("reason", ""), 120)
+        details = sanitize_input(request.form.get("details", ""), 1000)
+        if not reason or not details:
+            return render_template_string(STYLE + f'<div class="container narrow-container"><div class="msg">اكتب سبب وتفاصيل النزاع</div><a href="/service-request-dispute/{req_id}"><button>رجوع</button></a></div></body></html>')
+        attachment = ""
+        attachment_type = ""
+        media_file = request.files.get("attachment")
+        if media_file and media_file.filename:
+            try:
+                attachment, attachment_type = save_support_media(media_file)
+            except Exception as e:
+                return render_template_string(STYLE + f'<div class="container narrow-container"><div class="msg">تعذر رفع المرفق: {sanitize_input(str(e), 250)}</div><a href="/service-request-dispute/{req_id}"><button>رجوع</button></a></div></body></html>')
+        role = "requester" if is_owner else "worker"
+        with get_db() as con:
+            con.execute("INSERT INTO service_disputes (request_id, opened_by_id, opened_by_name, opened_by_role, reason, details, attachment, attachment_type, previous_status, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')", (req_id, current_user["id"], current_user["name"] or "مستخدم", role, reason, details, attachment, attachment_type, req["status"] or "selected"))
+            con.execute("UPDATE service_requests SET status='disputed', dispute_status='open', updated_at=CURRENT_TIMESTAMP WHERE id=?", (req_id,))
+            con.commit()
+        add_service_request_event(req_id, "dispute_opened", "تم فتح نزاع", reason, current_user["id"], role)
+        send_push_to_admins("نزاع جديد على طلب خدمة", f"طلب #{req_id}: {reason}", f"/service-request-track/{req_id}")
+        other_id = req["assigned_worker_id"] if is_owner else req["requester_id"]
+        notify_service_request_user(other_id, "تم فتح نزاع على الطلب", reason, req_id)
+        return redirect(url_for("service_request_track", req_id=req_id))
+    return render_template_string(STYLE + (settings_corner() if 'user' in session else '') + f'''
+    <div class="container narrow-container"><a href="/service-request-track/{req_id}"><button class="light-btn">رجوع</button></a><h2>فتح نزاع</h2><div class="section-subtitle">اشرح المشكلة بوضوح، وتقدر ترفق صورة أو فيديو.</div><form method="post" enctype="multipart/form-data"><select name="reason" required><option value="">اختر السبب</option><option value="المختص لم يحضر">المختص لم يحضر</option><option value="الخدمة غير مكتملة">الخدمة غير مكتملة</option><option value="خلاف على السعر">خلاف على السعر</option><option value="مشكلة في التعامل">مشكلة في التعامل</option><option value="سبب آخر">سبب آخر</option></select><textarea name="details" placeholder="تفاصيل النزاع" required></textarea><input type="file" name="attachment" accept="image/*,video/*"><button class="link-red">إرسال النزاع للإدارة</button></form></div></body></html>
+    ''')
+
+
+@app.route("/admin/service-disputes")
+def admin_service_disputes():
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+    with get_db() as con:
+        disputes = con.execute("SELECT * FROM service_disputes ORDER BY CASE WHEN status='open' THEN 0 ELSE 1 END, id DESC LIMIT 200").fetchall()
+    cards = []
+    for dispute in disputes:
+        with get_db() as con:
+            req = con.execute("SELECT * FROM service_requests WHERE id=?", (dispute["request_id"],)).fetchone()
+        attachment_html = service_request_attachment_html(dispute)
+        cards.append(f'''<div class="dispute-card"><div class="inline"><span class="badge">طلب #{dispute["request_id"]}</span><span class="badge">{dispute["status"]}</span></div><h3>{dispute["reason"] or "نزاع"}</h3><div class="small">بواسطة: {dispute["opened_by_name"] or "مستخدم"} — {dispute["created_at"]}</div><div>{dispute["details"] or ""}</div>{attachment_html}<div class="execution-actions"><a class="link-btn" href="/service-request-track/{dispute["request_id"]}">فتح الطلب</a></div></div>''')
+    return render_template_string(STYLE + f'''<div class="container"><div class="topbar"><a href="/admin/panel"><button class="light-btn">رجوع للأدمن</button></a><span class="badge">النزاعات</span></div><h2>نزاعات طلبات الخدمات</h2>{''.join(cards) if cards else '<div class="empty-state">لا توجد نزاعات.</div>'}</div></body></html>''')
+
+
+@app.route("/admin/service-dispute-action/<int:dispute_id>", methods=["POST"])
+def admin_service_dispute_action(dispute_id):
+    if not admin_required():
+        return redirect(url_for("admin_login"))
+    action = sanitize_input(request.form.get("action", "resume"), 20)
+    admin_note = sanitize_input(request.form.get("admin_note", ""), 700)
+    if action not in {"resume", "close"}:
+        action = "resume"
+    with get_db() as con:
+        dispute = con.execute("SELECT * FROM service_disputes WHERE id=?", (dispute_id,)).fetchone()
+        if not dispute or dispute["status"] != "open":
+            return redirect(url_for("admin_service_disputes"))
+        req = con.execute("SELECT * FROM service_requests WHERE id=?", (dispute["request_id"],)).fetchone()
+        next_status = "closed" if action == "close" else (dispute["previous_status"] or "selected")
+        if next_status == "disputed":
+            next_status = "selected"
+        resolved_at = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        con.execute("UPDATE service_disputes SET status='resolved', admin_note=?, resolved_at=? WHERE id=?", (admin_note, resolved_at, dispute_id))
+        con.execute("UPDATE service_requests SET status=?, dispute_status='resolved', updated_at=CURRENT_TIMESTAMP WHERE id=?", (next_status, dispute["request_id"]))
+        con.commit()
+    add_service_request_event(dispute["request_id"], "dispute_resolved", "تمت معالجة النزاع", admin_note or ("تم إغلاق الطلب" if action == "close" else "تم استئناف الطلب"), 0, "admin")
+    if req:
+        notify_service_both_parties(req, "تمت معالجة النزاع", admin_note or "راجعت الإدارة النزاع وتم تحديث حالة الطلب.")
+        log_admin_action("معالجة نزاع خدمة", str(dispute["request_id"]), admin_note or next_status)
+    return redirect(url_for("service_request_track", req_id=dispute["request_id"]))
 
 
 @app.route("/admin/service-offer-delete/<int:offer_id>")
