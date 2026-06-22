@@ -3375,6 +3375,107 @@ body.premium-light-bg{background:#f7f8fb;color:#111827;}
 .almastar-role-toggle{display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid rgba(255,255,255,.12);border-radius:22px;background:rgba(255,255,255,.055);padding:7px;margin-bottom:26px}.almastar-role-toggle a,.almastar-role-toggle span{text-decoration:none;color:#9aa6ba;height:54px;border-radius:17px;display:flex;align-items:center;justify-content:center;gap:8px;font-weight:900;font-size:16px}.almastar-role-toggle .active{background:#079765;color:#fff;box-shadow:0 12px 26px rgba(16,185,129,.22)}.almastar-welcome h1{font-size:35px;line-height:1.35;margin:10px 0 12px;text-align:center;font-weight:1000;letter-spacing:-.7px}.almastar-welcome p.lead{color:#a9b4c7;text-align:center;line-height:1.85;font-size:16px;margin:0 6px 28px}.almastar-login-card{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:28px;padding:18px;margin:0 0 14px;box-shadow:0 20px 54px rgba(0,0,0,.22);backdrop-filter:blur(12px)}.almastar-login-card input{background:#111c31!important;border:1px solid rgba(255,255,255,.09)!important;color:#fff!important;border-radius:18px!important;height:56px!important;font-size:15px!important;text-align:right}.almastar-login-card input::placeholder{color:#748299!important}.almastar-login-card label{color:#e5e7eb;font-weight:900;margin:8px 4px 8px;display:block;text-align:right}.almastar-main-btn,.almastar-outline-btn,.almastar-guest-btn{width:100%;height:62px;border-radius:22px!important;display:flex;align-items:center;justify-content:center;gap:14px;font-weight:1000!important;font-size:19px!important;text-decoration:none!important;margin:12px 0;border:0!important}.almastar-main-btn{background:linear-gradient(90deg,#0fc27d,#2f80ed)!important;color:#fff!important;box-shadow:0 18px 34px rgba(47,128,237,.24)!important}.almastar-outline-btn{background:transparent!important;color:#fff!important;border:2px solid transparent!important;background-image:linear-gradient(#0b1830,#0b1830),linear-gradient(90deg,#2f80ed,#10b981)!important;background-origin:border-box!important;background-clip:padding-box,border-box!important}.almastar-guest-btn{background:linear-gradient(90deg,rgba(47,128,237,.14),rgba(16,185,129,.13))!important;color:#e2e8f0!important;border:1px solid rgba(255,255,255,.08)!important}.almastar-features{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-top:30px}.almastar-feature{text-align:center;color:#fff;font-weight:900}.almastar-feature .ico{width:62px;height:62px;border-radius:50%;background:rgba(255,255,255,.055);display:flex;align-items:center;justify-content:center;margin:0 auto 9px;font-size:23px;border:1px solid rgba(255,255,255,.08)}.almastar-feature small{display:block;color:#aeb8ca;font-size:12px;margin-top:3px}
 .premium-home{max-width:520px;margin:0 auto;min-height:100vh;background:#f7f8fb;color:#111827;padding-bottom:96px}.premium-top{height:86px;background:#071122;color:#fff;border-bottom:3px solid #2f80ed;display:grid;grid-template-columns:62px 1fr 62px;align-items:center;padding:0 22px}.premium-top .circle{width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);position:relative;color:#10b981;text-decoration:none;font-size:24px}.premium-badge{position:absolute;top:4px;right:0;background:#ef4444;color:#fff;border-radius:999px;min-width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:900}.premium-top-title{text-align:center;font-size:28px;font-weight:1000;letter-spacing:-.4px}.premium-home-pad{padding:18px 22px}.premium-banner{height:210px;border-radius:28px;overflow:hidden;position:relative;background:linear-gradient(135deg,#0f172a,#0ea5e9 45%,#10b981);box-shadow:0 22px 46px rgba(15,23,42,.22)}.premium-banner:before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 20% 25%,rgba(255,255,255,.22),transparent 22%),linear-gradient(90deg,rgba(7,17,34,.24),rgba(7,17,34,.04))}.premium-banner .city-lines{position:absolute;inset:0;background:linear-gradient(90deg,rgba(255,255,255,.08) 1px,transparent 1px),linear-gradient(rgba(255,255,255,.07) 1px,transparent 1px);background-size:38px 38px;opacity:.45}.premium-banner-text{position:absolute;right:22px;bottom:20px;left:22px;background:rgba(7,17,34,.74);border:1px solid rgba(255,255,255,.12);border-radius:22px;padding:14px 16px;color:#fff}.premium-banner-text strong{font-size:22px;display:block;margin-bottom:5px}.premium-banner-text span{color:#a7f3d0;font-size:20px;font-weight:1000;direction:ltr;display:inline-block}.premium-dots{display:flex;justify-content:center;gap:9px;margin:16px 0 18px}.premium-dots i{display:block;width:12px;height:12px;border-radius:999px;background:#d1fae5}.premium-dots i.active{width:44px;background:#10b981}.premium-section-title{display:flex;align-items:center;justify-content:space-between;margin:18px 2px 16px}.premium-section-title h2{font-size:28px;margin:0;color:#111827;font-weight:1000}.premium-section-title span{font-size:24px;color:#6d4df2}.premium-category-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:24px}.premium-cat{background:#fff;border:1px solid #e8edf5;border-radius:24px;min-height:154px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-decoration:none;color:#111827;box-shadow:0 14px 32px rgba(17,24,39,.06);position:relative;overflow:hidden}.premium-cat:before{content:"";position:absolute;top:0;left:22px;right:22px;height:4px;background:linear-gradient(90deg,#6d4df2,#10b981);border-radius:999px}.premium-cat .premium-cat-icon{width:64px;height:64px;border-radius:19px;background:linear-gradient(180deg,#7c5cff,#4f46e5);display:flex;align-items:center;justify-content:center;font-size:29px;color:#fff;margin-bottom:14px;box-shadow:0 14px 22px rgba(79,70,229,.22)}.premium-cat:nth-child(2) .premium-cat-icon{background:linear-gradient(180deg,#facc15,#f59e0b)}.premium-cat:nth-child(3) .premium-cat-icon{background:linear-gradient(180deg,#34d399,#10b981)}.premium-cat strong{font-size:18px}.premium-cat small{margin-top:12px;background:#f3f5f9;color:#10b981;border-radius:999px;padding:5px 12px;font-weight:1000}.premium-request-card{background:#fff;border-radius:24px;padding:18px;margin-bottom:16px;box-shadow:0 16px 35px rgba(17,24,39,.07);border-top:4px solid #6d4df2;display:grid;grid-template-columns:70px 1fr 34px;gap:14px;align-items:center;text-decoration:none;color:#111827}.premium-request-avatar{width:64px;height:64px;border-radius:18px;background:linear-gradient(180deg,#6d4df2,#4f46e5);display:flex;align-items:center;justify-content:center;color:#fff;font-size:29px}.premium-request-card h3{margin:0 0 4px;font-size:21px}.premium-request-card p{margin:0 0 8px;color:#667085;font-weight:700;white-space:nowrap;text-overflow:ellipsis;overflow:hidden}.premium-tags{display:flex;gap:8px;flex-wrap:wrap}.premium-tag{background:#ecfdf5;color:#059669;border-radius:999px;padding:5px 10px;font-size:12px;font-weight:900}.premium-service-cta{display:block;margin:18px 0 8px;border-radius:24px;padding:18px;background:linear-gradient(90deg,#0fc27d,#2f80ed);color:#fff!important;text-decoration:none;text-align:center;font-size:20px;font-weight:1000;box-shadow:0 18px 34px rgba(47,128,237,.22)}.premium-bottom-nav{position:fixed;left:50%;transform:translateX(-50%);bottom:0;width:min(520px,100%);height:82px;background:#071122;display:grid;grid-template-columns:1fr 1fr 1.15fr 1fr 1fr;align-items:center;padding:6px 8px calc(6px + env(safe-area-inset-bottom));z-index:50;box-shadow:0 -18px 30px rgba(7,17,34,.18)}.premium-bottom-nav a{color:#94a3b8;text-decoration:none;text-align:center;font-weight:900;font-size:13px}.premium-bottom-nav span{display:block;font-size:26px;margin-bottom:2px}.premium-bottom-nav a.active{color:#10b981}.premium-bottom-nav a.search-main{margin-top:-28px}.premium-bottom-nav a.search-main span{width:72px;height:72px;margin:0 auto 1px;border-radius:50%;background:#10b981;color:#fff;display:flex;align-items:center;justify-content:center;box-shadow:0 10px 28px rgba(16,185,129,.34);font-size:31px}.premium-results{padding:0 22px 24px}.premium-results .worker-card{background:#fff!important;color:#111827!important;border-color:#e8edf5!important;box-shadow:0 16px 34px rgba(17,24,39,.07)!important;border-radius:24px!important}.premium-results .worker-card *{color:inherit}.premium-results .badge{background:#ecfdf5!important;color:#059669!important}
 @media(max-width:420px){.premium-home-pad{padding:16px}.premium-category-grid{gap:12px}.premium-cat{min-height:135px;border-radius:20px}.premium-cat .premium-cat-icon{width:56px;height:56px}.premium-section-title h2{font-size:24px}.premium-top-title{font-size:25px}.premium-banner{height:190px}.almastar-welcome{padding-left:16px;padding-right:16px}.almastar-welcome h1{font-size:31px}.almastar-lang-row{gap:8px}.almastar-lang-row span{height:42px}}
+
+
+/* =========================================================
+   ALMUSATTAR FULL NATIVE-LIKE REDESIGN V3 - SMALL APP TEXT
+   Applies to the whole webview app, not only the home page.
+   ========================================================= */
+:root{
+  --n-dark:#071122;
+  --n-dark2:#0b1830;
+  --n-green:#08a66d;
+  --n-green2:#10b981;
+  --n-blue:#2f80ed;
+  --n-purple:#6d4df2;
+  --n-yellow:#facc15;
+  --n-bg:#f6f8fb;
+  --n-card:#ffffff;
+  --n-ink:#101828;
+  --n-muted:#667085;
+  --n-line:#e8edf5;
+  --n-radius:22px;
+  --n-shadow:0 14px 34px rgba(15,23,42,.075);
+}
+html,body{font-size:14px!important;-webkit-text-size-adjust:100%;text-rendering:geometricPrecision;}
+body{font-family:"Tajawal","Segoe UI",Tahoma,Arial,sans-serif!important;line-height:1.55!important;}
+body:not(.premium-light-bg){background:var(--n-bg)!important;color:var(--n-ink)!important;}
+body:not(.premium-light-bg) *{max-width:100%;}
+h1{font-size:24px!important;line-height:1.35!important;font-weight:900!important;letter-spacing:-.2px!important;}
+h2{font-size:21px!important;line-height:1.35!important;font-weight:900!important;}
+h3{font-size:17px!important;line-height:1.35!important;font-weight:900!important;}
+p,.small,.section-subtitle,.notice,.muted{font-size:13px!important;line-height:1.75!important;color:var(--n-muted)!important;}
+.container,.narrow-container{width:min(94vw,460px)!important;margin:14px auto!important;background:var(--n-card)!important;color:var(--n-ink)!important;border:1px solid var(--n-line)!important;border-radius:24px!important;box-shadow:var(--n-shadow)!important;padding:16px!important;overflow:hidden!important;}
+.narrow-container{max-width:430px!important;}
+.topbar{min-height:58px!important;background:var(--n-dark)!important;color:#fff!important;border-radius:20px!important;padding:8px 10px!important;margin:-4px -4px 14px!important;display:flex!important;align-items:center!important;gap:8px!important;justify-content:space-between!important;border-bottom:2px solid var(--n-blue)!important;}
+.topbar h1,.topbar h2,.topbar span{color:#fff!important;font-size:18px!important;margin:0!important;}
+button,.btn,.link-btn,.light-btn,input[type="submit"],.settings-btn{min-height:44px!important;border-radius:15px!important;font-size:14px!important;font-weight:800!important;padding:10px 14px!important;border:0!important;box-shadow:none!important;}
+button:not(.light-btn),.btn,.link-btn,input[type="submit"]{background:linear-gradient(90deg,var(--n-green2),var(--n-blue))!important;color:#fff!important;}
+.light-btn{background:#f1f5f9!important;color:#1f2937!important;border:1px solid #e2e8f0!important;}
+input,select,textarea{width:100%!important;min-height:48px!important;border-radius:15px!important;border:1px solid #dfe6f0!important;background:#fff!important;color:#111827!important;font-size:14px!important;font-weight:700!important;padding:11px 13px!important;box-shadow:0 5px 14px rgba(15,23,42,.025)!important;outline:none!important;}
+textarea{min-height:104px!important;resize:vertical!important;}
+label{font-size:13px!important;font-weight:900!important;color:#1f2937!important;margin:9px 3px 6px!important;display:block!important;}
+form{display:grid!important;gap:9px!important;}
+.card,.worker-card,.service-request-card,.offer-card,.timeline-card,.dispute-card,.admin-card,.stat-card,.profile-card,.report-card,.message-card,.comment-card{background:#fff!important;color:#111827!important;border:1px solid var(--n-line)!important;border-radius:22px!important;box-shadow:0 10px 28px rgba(15,23,42,.055)!important;padding:14px!important;margin:10px 0!important;}
+.badge,.pill,.status-pill{display:inline-flex!important;align-items:center!important;justify-content:center!important;min-height:26px!important;padding:5px 10px!important;border-radius:999px!important;font-size:12px!important;font-weight:900!important;background:#ecfdf5!important;color:#059669!important;border:0!important;}
+.msg,.empty-state,.ms-empty-soft{background:#f8fafc!important;color:#334155!important;border:1px solid #e2e8f0!important;border-radius:18px!important;padding:14px!important;font-size:14px!important;line-height:1.7!important;text-align:center!important;}
+.inline{display:flex!important;gap:8px!important;flex-wrap:wrap!important;align-items:center!important;}
+.grid,.service-request-grid,.admin-grid,.cards-grid{display:grid!important;grid-template-columns:1fr!important;gap:12px!important;}
+@media(min-width:700px){.grid,.admin-grid,.cards-grid{grid-template-columns:1fr 1fr!important}.container{max-width:760px!important}}
+
+/* Welcome/login screen redesigned from scratch look, smaller sizes */
+.almastar-welcome{min-height:100vh!important;max-width:430px!important;margin:0 auto!important;padding:22px 18px 22px!important;background:radial-gradient(circle at 50% 18%,rgba(16,185,129,.15),transparent 26%),radial-gradient(circle at 14% 78%,rgba(47,128,237,.12),transparent 28%),linear-gradient(180deg,#071122 0%,#0b1830 100%)!important;color:#fff!important;}
+.almastar-lang-row{gap:8px!important;margin:0 0 30px!important;}
+.almastar-lang-row span{height:38px!important;border-radius:19px!important;font-size:13px!important;font-weight:800!important;}
+.almastar-orbit{width:96px!important;height:96px!important;margin:0 auto 30px!important;}
+.almastar-orbit .tool{font-size:28px!important;}
+.almastar-dot{width:9px!important;height:9px!important;}
+.almastar-role-toggle{border-radius:18px!important;padding:5px!important;margin-bottom:22px!important;}
+.almastar-role-toggle a,.almastar-role-toggle span{height:46px!important;border-radius:14px!important;font-size:13px!important;font-weight:850!important;}
+.almastar-welcome h1{font-size:24px!important;line-height:1.45!important;margin:8px 0 10px!important;letter-spacing:0!important;}
+.almastar-welcome p.lead{font-size:13px!important;line-height:1.75!important;margin:0 3px 20px!important;color:#aab6c8!important;}
+.almastar-login-card{border-radius:22px!important;padding:14px!important;margin:0 0 12px!important;background:rgba(255,255,255,.055)!important;}
+.almastar-login-card input{height:48px!important;font-size:13px!important;border-radius:15px!important;background:#111c31!important;color:#fff!important;}
+.almastar-login-card label{font-size:12px!important;color:#dce7f7!important;margin:6px 4px 5px!important;}
+.almastar-main-btn,.almastar-outline-btn,.almastar-guest-btn{height:52px!important;border-radius:17px!important;font-size:15px!important;margin:10px 0!important;font-weight:900!important;}
+.almastar-features{gap:10px!important;margin-top:24px!important;}
+.almastar-feature{font-size:12px!important;}
+.almastar-feature .ico{width:48px!important;height:48px!important;font-size:19px!important;margin-bottom:7px!important;}
+.almastar-feature small{font-size:10.5px!important;}
+
+/* Premium home smaller and cleaner */
+.premium-home{max-width:430px!important;padding-bottom:78px!important;background:#f7f8fb!important;color:#111827!important;}
+.premium-top{height:66px!important;grid-template-columns:48px 1fr 48px!important;padding:0 14px!important;border-bottom:2px solid var(--n-blue)!important;}
+.premium-top .circle{width:42px!important;height:42px!important;font-size:20px!important;}
+.premium-badge{min-width:18px!important;height:18px!important;font-size:10px!important;}
+.premium-top-title{font-size:20px!important;}
+.premium-home-pad{padding:14px!important;}
+.premium-banner{height:148px!important;border-radius:22px!important;}
+.premium-banner-text{right:14px!important;left:14px!important;bottom:12px!important;border-radius:18px!important;padding:10px 12px!important;}
+.premium-banner-text strong{font-size:16px!important;margin-bottom:2px!important;}
+.premium-banner-text span{font-size:15px!important;}
+.premium-dots{gap:7px!important;margin:10px 0 14px!important;}
+.premium-dots i{width:9px!important;height:9px!important;}.premium-dots i.active{width:34px!important;}
+.premium-service-cta{font-size:15px!important;border-radius:18px!important;padding:13px!important;margin:12px 0!important;}
+.premium-section-title{margin:14px 1px 11px!important;}
+.premium-section-title h2{font-size:21px!important;}.premium-section-title span{font-size:20px!important;}
+.premium-category-grid{gap:10px!important;margin-bottom:16px!important;}
+.premium-cat{min-height:116px!important;border-radius:18px!important;}
+.premium-cat .premium-cat-icon{width:48px!important;height:48px!important;border-radius:15px!important;font-size:22px!important;margin-bottom:9px!important;}
+.premium-cat strong{font-size:14px!important;}.premium-cat small{font-size:11px!important;padding:3px 9px!important;margin-top:7px!important;}
+.premium-request-card{border-radius:18px!important;padding:12px!important;grid-template-columns:52px 1fr 24px!important;gap:10px!important;}
+.premium-request-avatar{width:48px!important;height:48px!important;border-radius:14px!important;font-size:22px!important;}.premium-request-card h3{font-size:15px!important;}.premium-request-card p{font-size:12px!important;}.premium-tag{font-size:10.5px!important;padding:4px 8px!important;}
+.premium-bottom-nav{height:66px!important;width:min(430px,100%)!important;padding:4px 6px calc(4px + env(safe-area-inset-bottom))!important;}
+.premium-bottom-nav a{font-size:11px!important;}.premium-bottom-nav span{font-size:21px!important;}.premium-bottom-nav a.search-main span{width:58px!important;height:58px!important;font-size:25px!important;}.premium-bottom-nav a.search-main{margin-top:-22px!important;}
+
+/* Profile, settings, service workflow pages native feel */
+.profile-header,.settings-card,.execution-panel,.execution-actions,.service-offer-card{border-radius:22px!important;background:#fff!important;border:1px solid var(--n-line)!important;box-shadow:0 10px 28px rgba(15,23,42,.055)!important;padding:14px!important;color:#111827!important;}
+.execution-actions{display:grid!important;grid-template-columns:1fr!important;gap:9px!important;}
+.timeline-item{display:grid!important;grid-template-columns:34px 1fr!important;gap:9px!important;margin:10px 0!important;}.timeline-item:before{width:28px!important;height:28px!important;border-radius:50%!important;background:linear-gradient(180deg,var(--n-green2),var(--n-blue))!important;content:"✓";display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:12px;}
+img,video{border-radius:18px!important;}
+.table-wrap,table{font-size:12px!important;}
+@media(max-width:430px){.container{width:calc(100vw - 20px)!important;margin:10px auto!important;padding:13px!important}.premium-category-grid{grid-template-columns:1fr 1fr 1fr!important}.almastar-welcome{max-width:100%!important}.premium-home{max-width:100%!important}}
+
 </style>
 
 <script>
@@ -3683,24 +3784,35 @@ def onesignal_service_worker():
 
 HOME_HTML = STYLE + """
 <div class="almastar-welcome" dir="rtl">
-    <div class="almastar-lang-row"><span>English</span><span>کوردی</span><span class="active-ar">العربية</span></div>
-    <div class="almastar-orbit"><span class="almastar-dot b"></span><span class="almastar-dot y"></span><span class="almastar-dot g"></span><span class="tool">🛠️</span></div>
-    <div class="almastar-role-toggle"><span>👤 طالب خدمة</span><span class="active">🛠️ مقدم خدمة</span></div>
-    <h1>مرحباً بك شريكنا في المسطر 🛠️</h1>
-    <p class="lead">أفضل منصة للخدمات والحصول على عملاء في العراق. احصل على مشاريع لعملك بضغطة زر.</p>
+    <div class="almastar-lang-row">
+        <span>English</span>
+        <span>کوردی</span>
+        <span class="active-ar">العربية</span>
+    </div>
+    <div class="almastar-orbit">
+        <span class="almastar-dot b"></span>
+        <span class="almastar-dot y"></span>
+        <span class="almastar-dot g"></span>
+        <span class="tool">🛠️</span>
+    </div>
+    <div class="almastar-role-toggle">
+        <span>👤 طالب خدمة</span>
+        <span class="active">🛠️ مقدم خدمة</span>
+    </div>
+    <h1>مرحباً بك شريكنا في المسطر</h1>
+    <p class="lead">منصة عراقية للخدمات والطلبات والعروض. سجّل دخولك لإدارة عملك واستلام طلبات جديدة.</p>
     <div class="almastar-login-card">
         <form action="/login" method="post">
-            <label>اسم المستخدم أو البريد الإلكتروني</label>
-            <input type="email" name="email" value="{{ last_email }}" placeholder="البريد الإلكتروني للمختص" required>
+            <label>البريد الإلكتروني</label>
+            <input type="email" name="email" value="{{ last_email }}" placeholder="اكتب البريد الإلكتروني" required>
             <label>كلمة السر</label>
             <input type="password" name="password" placeholder="كلمة السر" required>
             <button class="almastar-main-btn" type="submit">تسجيل الدخول <span>←</span></button>
         </form>
         <a class="almastar-outline-btn" href="/register">إنشاء حساب جديد 🏢</a>
         <a class="almastar-guest-btn" href="/workers">تصفح كضيف 👁️</a>
-        <div style="display:flex;justify-content:space-between;gap:12px;margin-top:10px;font-weight:900;">
-            <a href="/forgot" style="color:#10b981;text-decoration:none;">نسيت كلمة السر؟</a>
-            <a href="/visitor/login" style="color:#93c5fd;text-decoration:none;">دخول طالب خدمة</a>
+        <div style="text-align:center;margin-top:8px">
+            <a href="/forgot" style="color:#34d399;font-size:13px;font-weight:800;text-decoration:none;">نسيت كلمة السر؟</a>
         </div>
     </div>
     <div class="almastar-features">
@@ -3709,25 +3821,8 @@ HOME_HTML = STYLE + """
         <div class="almastar-feature"><div class="ico">💬</div>تواصل مباشر<small>واتساب</small></div>
     </div>
 </div>
-<a class="bottom-corner-link bottom-left-link" href="/admin">🛠️</a>
 </body></html>
 """
-
-
-@app.route("/")
-def home():
-    auto_login_from_cookie()
-
-    if "user" in session:
-        return redirect(url_for("workers"))
-
-    return render_template_string(
-        HOME_HTML,
-        last_email=(
-            session.get("last_email")
-            or request.cookies.get("remember_email", "")
-        )
-    )
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
